@@ -55,11 +55,18 @@ async function callGroq(model, messages, temperature = 0.1) {
 
 /** Limpia JSON que el modelo a veces envuelve en ```json ... ``` */
 function cleanJson(raw) {
-  return raw
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  // Intentar encontrar un bloque de código JSON
+  const match = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (match) {
+    return match[1].trim();
+  }
+  // Si no hay bloque, intentar encontrar el primer '{' y el último '}'
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    return raw.substring(start, end + 1).trim();
+  }
+  return raw.trim();
 }
 
 // ──────────────────────────────────────────────────────────────
