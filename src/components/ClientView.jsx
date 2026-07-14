@@ -562,6 +562,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
           handleCepSearch={edit.handleCepSearch}
           toIsoDate={toIsoDate}
           toSlashDate={toSlashDate}
+          onCreateField={edit.handleCreateFieldDefinition}
         />
 
         <ClientViewExtractionModal

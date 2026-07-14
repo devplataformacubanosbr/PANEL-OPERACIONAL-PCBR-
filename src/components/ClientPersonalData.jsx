@@ -25,6 +25,27 @@ const ClientPersonalData = ({
   // We can just iterate directly over the sections now that we don't depend on the old categorias table
   // targetCats logic can be removed, we just render the sections that have matching fixedFields.
 
+  // ── Documentos dinámicos emparejados con sus fechas ─────────────────────────
+  // Convención: si un admin crea un documento (ej. identificador `cnh`) y sus
+  // fechas como campos tipo fecha cuyo identificador contiene el del documento
+  // (ej. `fecha_vencimiento_cnh`, `fecha_emision_cnh`), acá se detecta el par y
+  // el documento se muestra como tarjeta en "Documentos Asociados" con sus
+  // fechas debajo, igual que Pasaporte/RNM/Refugio. Los campos sin par siguen
+  // saliendo en el listado genérico de su categoría.
+  const isDateLikeField = (f) => f.tipo === 'date' || /fecha|vencimiento|emision|validade/.test(String(f.id));
+  const customDocFields = fixedFields.filter(f =>
+    f.is_custom_json && f.category_name === 'Documentos de Identidad' && !DOC_GROUP_FIELD_IDS.has(f.id)
+  );
+  const customDocDateFields = customDocFields.filter(isDateLikeField);
+  const dynamicDocGroups = customDocFields
+    .filter(f => !isDateLikeField(f))
+    .map(base => ({
+      base,
+      dates: customDocDateFields.filter(df => df.id !== base.id && String(df.id).includes(String(base.id)))
+    }))
+    .filter(g => g.dates.length > 0);
+  const DYNAMIC_DOC_CARD_IDS = new Set(dynamicDocGroups.flatMap(g => [g.base.id, ...g.dates.map(d => d.id)]));
+
   return (
     <section id="personal-data" className="glass-panel" style={{ padding: '2rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
@@ -56,7 +77,7 @@ const ClientPersonalData = ({
           // Extract data
           const sectionData = [];
           sectionFields.forEach(campo => {
-            if (catName === 'Documentos de Identidad' && DOC_GROUP_FIELD_IDS.has(campo.id)) return;
+            if (catName === 'Documentos de Identidad' && (DOC_GROUP_FIELD_IDS.has(campo.id) || DYNAMIC_DOC_CARD_IDS.has(campo.id))) return;
 
             let val = '';
             if (campo.is_custom_json) {
@@ -166,7 +187,7 @@ const ClientPersonalData = ({
                       {campo.nombre_campo}
                     </div>
                     <div style={{ flex: 1, fontSize: '0.875rem', color: 'var(--color-text-primary)', fontWeight: 500, paddingRight: '1rem', wordBreak: 'break-word' }}>
-                      {dato.valor}
+                      {(campo.is_custom_json && campo.tipo === 'date') ? formatDate(dato.valor) : dato.valor}
                     </div>
                     <button onClick={() => handleCopy(dato.valor, campo.id)} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
                       {copiedId === campo.id ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
@@ -233,6 +254,23 @@ const ClientPersonalData = ({
             }
           ];
 
+          // Tarjetas para documentos creados por el admin, con sus fechas
+          // (vencimiento/emisión) debajo de su respectivo documento.
+          const DYNAMIC_CARD_COLORS = ['#7C5CBF', '#2A9D8F', '#C0507E', '#5C7CBF', '#8A8455'];
+          dynamicDocGroups.forEach((g, i) => {
+            docGroups.push({
+              id: g.base.id,
+              label: g.base.nombre_campo,
+              icon: '📄',
+              fields: [
+                { id: g.base.id, label: g.base.nombre_campo, custom: true },
+                ...g.dates.map(d => ({ id: d.id, label: d.nombre_campo, custom: true, isDate: true }))
+              ],
+              fieldValue,
+              color: DYNAMIC_CARD_COLORS[i % DYNAMIC_CARD_COLORS.length]
+            });
+          });
+
           const hasAnyData = docGroups.some(g => g.fields.some(f => g.fieldValue(f.id, f.custom)));
           if (!hasAnyData) return null;
 
@@ -285,7 +323,7 @@ const ClientPersonalData = ({
                               </span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                                 <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-primary)', textAlign: 'right', wordBreak: 'break-word' }}>
-                                  {String(field.id).includes('fecha') ? formatDate(val) : val}
+                                  {(field.isDate || String(field.id).includes('fecha')) ? formatDate(val) : val}
                                 </span>
                                 <button onClick={() => handleCopy(val, `${group.id}-${field.id}`)} className="btn btn-ghost" style={{ padding: '0.15rem', borderRadius: '4px', flexShrink: 0 }}>
                                   {copiedId === `${group.id}-${field.id}` ? <Check size={11} color="var(--color-success)" /> : <Copy size={11} />}

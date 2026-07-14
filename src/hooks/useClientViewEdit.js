@@ -164,6 +164,8 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
         valor: valor,
         es_fijo: true,
         is_custom_json: f.is_custom_json,
+        category_name: f.category_name,
+        tipo: f.tipo,
         ...extraArgs
       });
     });
@@ -199,6 +201,78 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
   // ── Add custom field ───────────────────────────────────────────────────────
   const handleAddCustomField = () => {
     setNewFields([...newFields, { id: Date.now(), campo_id: '', valor: '', customName: '' }]);
+  };
+
+  // ── Create a brand-new field definition from the edit modal ────────────────
+  // Da de alta el campo en config_campos_clientes (mismo catálogo que
+  // Configuración > Campos Base) y lo agrega al formulario abierto para que el
+  // usuario pueda cargarle valor de inmediato. El valor se persiste en
+  // clientes.campos_personalizados al Guardar (handleSaveEdits).
+  const handleCreateFieldDefinition = async ({ nombre_campo, categoria, tipo }) => {
+    const nombre = (nombre_campo || '').trim();
+    if (!nombre) {
+      toast.error('El nombre del campo es obligatorio');
+      return false;
+    }
+    const identificador = nombre
+      .toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    if (!identificador) {
+      toast.error('El nombre no genera un identificador válido');
+      return false;
+    }
+    if (mergedFields.some(f => f.id === identificador)) {
+      toast.error('Ya existe un campo con este identificador');
+      return false;
+    }
+
+    try {
+      const { data: maxRow } = await supabase
+        .from('config_campos_clientes')
+        .select('orden')
+        .order('orden', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const { error } = await supabase.from('config_campos_clientes').insert([{
+        nombre_campo: nombre,
+        identificador,
+        categoria,
+        tipo,
+        requerido: false,
+        orden: (maxRow?.orden || 0) + 1
+      }]);
+
+      if (error) {
+        if (error.code === '23505') {
+          toast.error('Ya existe un campo con este identificador');
+        } else {
+          throw error;
+        }
+        return false;
+      }
+
+      setEditFormData(prev => ([...prev, {
+        id: identificador,
+        campo_id: identificador,
+        nombre_campo: nombre,
+        valor: '',
+        es_fijo: true,
+        is_custom_json: true,
+        category_name: categoria,
+        tipo
+      }]));
+
+      toast.success(`Campo "${nombre}" creado`);
+      // Refrescar el catálogo (customFieldsConfig) sin cerrar el modal
+      await fetchClientData();
+      return true;
+    } catch (err) {
+      handleError(err, 'Error creando el campo');
+      return false;
+    }
   };
 
   // ── Save all edits ─────────────────────────────────────────────────────────
@@ -332,6 +406,7 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
     handleSaveEdits,
     handleDeleteFieldData,
     handleAddCustomField,
+    handleCreateFieldDefinition,
     handleCepSearch,
   };
 }
