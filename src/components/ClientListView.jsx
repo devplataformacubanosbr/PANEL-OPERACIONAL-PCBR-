@@ -54,10 +54,15 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
         // hace falta castear a ::date. nullsFirst: false siempre, para que los
         // clientes sin ese campo cargado queden al final (asc y desc por igual).
         const orderExpr = FIXED_SORT_COLUMNS.has(sortField) ? sortField : `campos_personalizados->>${sortField}`;
+        // `id` como desempate: cientos de clientes comparten el mismo creado_en
+        // exacto (migración masiva) y sin un desempate único Postgres no
+        // garantiza el mismo orden entre una página y la siguiente — algunos
+        // quedaban afuera del total traído.
         let query = supabase
           .from('clientes')
           .select('*')
           .order(orderExpr, { ascending: sortOrder === 'asc', nullsFirst: false })
+          .order('id', { ascending: sortOrder === 'asc' })
           .range(from, from + FETCH_PAGE_SIZE - 1);
 
         if (activeTab !== 'todos') {

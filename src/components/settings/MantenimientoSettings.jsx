@@ -26,6 +26,7 @@ export default function MantenimientoSettings() {
                 const { data, error } = await supabase
                     .from('clientes')
                     .select('*')
+                    .order('id', { ascending: true })
                     .range(from, from + step - 1);
                 
                 if (error) throw error;

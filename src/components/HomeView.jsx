@@ -19,7 +19,12 @@ const MISSING_TABLE_CODE = '42P01';
 
 // Supabase corta cada request en 1000 filas — para mostrar TODOS los
 // trámites de un pipeline (no solo los primeros) hay que paginar en loop
-// en vez de un solo .limit(N) fijo.
+// en vez de un solo .limit(N) fijo. Ordenar solo por creado_en no alcanza:
+// varios cientos de entradas comparten EXACTAMENTE el mismo timestamp (las
+// que entraron juntas en la migración masiva), y sin un desempate único
+// Postgres no garantiza el mismo orden entre una página y la siguiente —
+// eso hacía que algunas entradas se salteen o se dupliquen entre .range()
+// sucesivos y terminaran faltando en el pipeline. `id` desempata siempre.
 async function fetchAllEntradas(pipelineId) {
   const PAGE_SIZE = 1000;
   let all = [];
@@ -30,6 +35,7 @@ async function fetchAllEntradas(pipelineId) {
       .select('*, clientes(*)')
       .eq('pipeline_id', pipelineId)
       .order('creado_en', { ascending: false })
+      .order('id', { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
     all = all.concat(data || []);
