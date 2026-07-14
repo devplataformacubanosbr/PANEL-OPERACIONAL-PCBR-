@@ -194,7 +194,9 @@ const CLIENTES_JSON_DATE_FIELDS = [
 function transformCliente(row) {
   const camposJson = row.campos_personalizados || {};
   const out = stripOrg(row);
-  delete out.campos_personalizados;
+  // campos_personalizados se mantiene como espejo completo del JSONB de
+  // Avante — las columnas fijas de abajo son lo que usa la app, el JSONB es
+  // solo copia de respaldo/compatibilidad, a pedido explícito del usuario.
 
   for (const field of CLIENTES_JSON_FIELDS) {
     const dedicated = row[field];

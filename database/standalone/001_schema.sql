@@ -192,6 +192,10 @@ CREATE TABLE public.clientes (
   fecha_emision_pasaporte date,
   lugar_nacimiento text,
   bot_activo boolean DEFAULT false,
+  -- Espejo completo del JSONB de Avante (a pedido explícito del usuario,
+  -- 2026-07-14) — las columnas de arriba son lo que usa la app; esta
+  -- columna es solo copia de respaldo, no hace falta que el front la lea.
+  campos_personalizados jsonb DEFAULT '{}'::jsonb,
   CONSTRAINT clientes_pkey PRIMARY KEY (id),
   CONSTRAINT clientes_estado_cliente_check CHECK (estado_cliente = ANY (ARRAY['nuevo'::text, 'verificado'::text, 'inactivo'::text, 'vip'::text]))
 );

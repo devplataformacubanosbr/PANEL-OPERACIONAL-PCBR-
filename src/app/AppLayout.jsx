@@ -14,6 +14,7 @@ import { useSearch } from '../hooks/useSearch';
 // Auth
 import { useAuth } from '../features/auth/context/AuthContext';
 import LoginForm from '../features/auth/components/LoginForm';
+import SetPasswordForm from '../features/auth/components/SetPasswordForm';
 import { LoadingSpinner } from '../shared/components/ui/LoadingSpinner';
 
 // AI Chat
@@ -81,6 +82,15 @@ export default function AppLayout() {
   // --- New Client Modal ---
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
 
+  // --- Invitación / recuperación de contraseña ---
+  // El link de invite-team-member (o un futuro "olvidé mi contraseña") deja
+  // a Supabase Auth con una sesión válida pero sin contraseña puesta —
+  // detectamos el ?type=invite/recovery del hash antes de que se limpie.
+  const [needsPasswordSetup, setNeedsPasswordSetup] = useState(() => {
+    const hash = window.location.hash;
+    return hash.includes('type=invite') || hash.includes('type=recovery');
+  });
+
   // --- Loading State ---
   if (loading) {
     return (
@@ -97,6 +107,10 @@ export default function AppLayout() {
   // admin desde Equipo).
   if (!isAuthenticated) {
     return <LoginForm initialError={authError} />;
+  }
+
+  if (needsPasswordSetup) {
+    return <SetPasswordForm onDone={() => setNeedsPasswordSetup(false)} />;
   }
 
   // --- Main Layout ---
