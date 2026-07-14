@@ -35,7 +35,7 @@ export default function ClientViewRelateModal({
               />
               <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', maxHeight: '300px', overflowY: 'auto', background: 'var(--color-bg-elevated)' }}>
                 {(() => {
-                  const list = searchQuery.trim().length >= 2 ? searchResults : allClientes.filter(c => c.nombre.toLowerCase().includes(searchQuery.toLowerCase()));
+                  const list = searchQuery.trim().length >= 2 ? searchResults : allClientes.filter(c => (c.nombre || '').toLowerCase().includes(searchQuery.toLowerCase()));
                   const filteredList = list.filter(c => c.id !== clientId).slice(0, 50);
                   
                   if (filteredList.length === 0) {
@@ -48,7 +48,7 @@ export default function ClientViewRelateModal({
                       style={{ padding: '0.75rem 1rem', cursor: 'pointer', background: selectedId === c.id ? 'var(--color-primary)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.05)', color: selectedId === c.id ? 'white' : 'var(--color-text-primary)', transition: 'background 0.2s', fontSize: '0.9rem' }}
                       onClick={() => onSelectId(c.id)}
                     >
-                      {c.nombre} ({c.cpf || 'Sin CPF'})
+                      {c.nombre || 'Sin nombre'} ({c.cpf || 'Sin CPF'})
                     </div>
                   ));
                 })()}
