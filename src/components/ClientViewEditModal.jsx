@@ -226,7 +226,7 @@ export default function ClientViewEditModal({
               </select>
             )}
 
-            <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
+            <div style={{ position: 'relative', marginLeft: 'auto', width: '250px' }}>
               <Search size={16} color="var(--color-text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
               <input
                 type="text"
