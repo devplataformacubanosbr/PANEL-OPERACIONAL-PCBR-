@@ -28,6 +28,28 @@ const LOCAL_FIXED_FIELDS = [
   { id: 'estado_federal', name: 'Estado (cliente)', entity: 'leads' },
   { id: 'policia_federal', name: 'Policía Federal (cliente)', entity: 'leads' },
   { id: 'atendente', name: 'Atendente (cliente)', entity: 'leads' },
+
+  // ── Campos Base ────────────────────────────────────────────────────────────
+  // En el SaaS estos viven en un catálogo dinámico (campos_personalizados JSON);
+  // acá son columnas fijas de `clientes` (ver clientView.constants.js), así que
+  // se mapean igual que cualquier otro campo fijo, sin sistema aparte.
+  { id: 'fecha_nacimiento', name: 'Fecha Nacimiento', entity: 'contacts', group: 'Campos Base' },
+  { id: 'estado_civil', name: 'Estado Civil', entity: 'contacts', group: 'Campos Base' },
+  { id: 'sexo', name: 'Sexo', entity: 'contacts', group: 'Campos Base' },
+  { id: 'nacionalidad', name: 'Nacionalidad', entity: 'contacts', group: 'Campos Base' },
+  { id: 'lugar_nacimiento', name: 'Lugar de Nacimiento', entity: 'contacts', group: 'Campos Base' },
+  { id: 'direccion', name: 'Dirección Completa', entity: 'contacts', group: 'Campos Base' },
+  { id: 'rnm', name: 'RNM', entity: 'contacts', group: 'Campos Base' },
+  { id: 'numero_refugio', name: 'Protocolo de Refugio', entity: 'contacts', group: 'Campos Base' },
+  { id: 'fecha_vencimiento_refugio', name: 'Fecha Vencimiento Refugio', entity: 'contacts', group: 'Campos Base' },
+  { id: 'numero_pasaporte', name: 'Pasaporte', entity: 'contacts', group: 'Campos Base' },
+  { id: 'fecha_emision_pasaporte', name: 'Fecha Emisión Pasaporte', entity: 'contacts', group: 'Campos Base' },
+  { id: 'fecha_vencimiento_pasaporte', name: 'Fecha Vencimiento Pasaporte', entity: 'contacts', group: 'Campos Base' },
+  { id: 'fecha_entrada_brasil', name: 'Entrada a Brasil', entity: 'contacts', group: 'Campos Base' },
+  { id: 'lugar_entrada_brasil', name: 'Lugar Entrada', entity: 'contacts', group: 'Campos Base' },
+  { id: 'nombre_madre', name: 'Nombre Madre', entity: 'contacts', group: 'Campos Base' },
+  { id: 'nombre_padre', name: 'Nombre Padre', entity: 'contacts', group: 'Campos Base' },
+  { id: 'tramite', name: 'Trámite Solicitado (cliente)', entity: 'contacts', group: 'Campos Base' },
 ];
 
 export default function KommoSettings() {
@@ -71,7 +93,7 @@ export default function KommoSettings() {
       }
 
       // 2. Load Local Fields
-      const allLocalFields = LOCAL_FIXED_FIELDS.map(f => ({ ...f, type: 'fixed', group: 'Campos Principales' }));
+      const allLocalFields = LOCAL_FIXED_FIELDS.map(f => ({ ...f, type: 'fixed', group: f.group || 'Campos Principales' }));
       setLocalFields(allLocalFields);
 
       // 3. Load Mappings
@@ -432,8 +454,13 @@ export default function KommoSettings() {
                           onChange={(e) => handleMappingChange(activeTab === 'mappings_contacts' ? 'contacts' : 'leads', kf, e.target.value)}
                        >
                           <option value="">-- No Importar --</option>
-                          <optgroup label="Campos Fijos">
-                             {localFields.filter(f => f.type === 'fixed' && f.entity === (activeTab === 'mappings_contacts' ? 'contacts' : 'leads')).map(f => (
+                          <optgroup label="Campos Principales">
+                             {localFields.filter(f => f.type === 'fixed' && f.group === 'Campos Principales' && f.entity === (activeTab === 'mappings_contacts' ? 'contacts' : 'leads')).map(f => (
+                                <option key={f.id} value={f.id}>{f.name}</option>
+                             ))}
+                          </optgroup>
+                          <optgroup label="Campos Base">
+                             {localFields.filter(f => f.type === 'fixed' && f.group === 'Campos Base' && f.entity === (activeTab === 'mappings_contacts' ? 'contacts' : 'leads')).map(f => (
                                 <option key={f.id} value={f.id}>{f.name}</option>
                              ))}
                           </optgroup>
