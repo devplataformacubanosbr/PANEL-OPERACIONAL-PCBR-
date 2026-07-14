@@ -1,0 +1,12 @@
+-- DEPRECADO 2026-07-11 — no ejecutar.
+-- Este script abría notas_kommo a cualquiera (SELECT/INSERT/UPDATE/DELETE con
+-- USING(true)/WITH CHECK(true), sin cláusula TO, es decir también para
+-- 'public'), sin filtro de organización. notas_kommo ya está en la lista de
+-- 27 tablas de saas/03_create_rls_helpers_and_policies.sql, que aplica
+-- tenant_isolation_policy y elimina cualquier policy previa (incluida esta)
+-- al re-ejecutarse. Ver auditoría 2026-07-11, hallazgo crítico "Políticas RLS
+-- USING(true)".
+--
+-- Si n8n necesita insertar/actualizar notas_kommo, debe hacerlo autenticado
+-- (vía el edge function correspondiente, no con acceso anónimo directo a la
+-- tabla) para que tenant_isolation_policy lo scope correctamente.

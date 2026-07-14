@@ -1,0 +1,205 @@
+{
+  "name": "Recibir WhatsApp (Evolution API -> Dashboard)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recibir-whatsapp-evolution",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook Evolution (Messages Upsert)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "recibir-whatsapp-evolution-id"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.body.data.key.fromMe }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "2",
+      "name": "Es de un Cliente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "telefono",
+              "value": "={{ $json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $json.body.data.message.conversation || $json.body.data.message.extendedTextMessage.text || '[Mensaje multimedia o no soportado]' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3",
+      "name": "Extraer Datos",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        640,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT id FROM clientes WHERE telefono LIKE '%{{ $json.telefono }}%' LIMIT 1;"
+      },
+      "id": "4",
+      "name": "Buscar Cliente BD",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        860,
+        280
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "CREDENTIAL_ID_AQUI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "5",
+      "name": "Cliente Encontrado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "notas_kommo",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "cliente_id",
+              "fieldValue": "={{ $json.id }}"
+            },
+            {
+              "fieldId": "texto",
+              "fieldValue": "={{ $('Extraer Datos').item.json.texto }}"
+            },
+            {
+              "fieldId": "remitente",
+              "fieldValue": "incoming"
+            }
+          ]
+        }
+      },
+      "id": "6",
+      "name": "Guardar en Dashboard",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        260
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "CREDENTIAL_ID_AQUI",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Evolution (Messages Upsert)": {
+      "main": [
+        [
+          {
+            "node": "Es de un Cliente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es de un Cliente?": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos": {
+      "main": [
+        [
+          {
+            "node": "Buscar Cliente BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Cliente BD": {
+      "main": [
+        [
+          {
+            "node": "Cliente Encontrado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cliente Encontrado?": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ebcdeee-1234-abcd-9876-000000000"
+}

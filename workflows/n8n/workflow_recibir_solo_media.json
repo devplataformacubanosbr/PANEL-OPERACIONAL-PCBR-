@@ -1,0 +1,529 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/notas_kommo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente_id",
+              "value": "={{ $('Buscar Cliente BD1').item.json.length > 0 ? ($('Buscar Cliente BD1').item.json[0].id_kommo || $('Buscar Cliente BD1').item.json[0].id) : null }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $('Extraer Datos Entrantes1').item.json.texto }}"
+            },
+            {
+              "name": "remitente",
+              "value": "outgoing"
+            },
+            {
+              "name": "telefono",
+              "value": "={{ $('Extraer Datos Entrantes1').item.json.telefono }}"
+            },
+            {
+              "name": "media_url",
+              "value": "={{ $if($('Extraer URL Publica').isExecuted, $('Extraer URL Publica').item.json.media_url, null) }}"
+            },
+            {
+              "name": "media_type",
+              "value": "={{ $if($('Extraer URL Publica').isExecuted, $('Extraer URL Publica').item.json.media_type, null) }}"
+            },
+            {
+              "name": "media_name",
+              "value": "={{ $if($('Extraer URL Publica').isExecuted, $('Extraer URL Publica').item.json.media_name, null) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bed794ca-43d0-450b-bc1f-8677c21df8b2",
+      "name": "Guardar Mensaje Kommo BD1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1632,
+        1456
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/notas_kommo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente_id",
+              "value": "={{ $('Buscar Cliente BD1').item.json.length > 0 ? ($('Buscar Cliente BD1').item.json[0].id_kommo || $('Buscar Cliente BD1').item.json[0].id) : null }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $('Extraer Datos Entrantes1').item.json.texto }}"
+            },
+            {
+              "name": "remitente",
+              "value": "incoming"
+            },
+            {
+              "name": "telefono",
+              "value": "={{ $('Extraer Datos Entrantes1').item.json.telefono }}"
+            },
+            {
+              "name": "media_url",
+              "value": "={{ $if($('Extraer URL Publica').isExecuted, $('Extraer URL Publica').item.json.media_url, null) }}"
+            },
+            {
+              "name": "media_type",
+              "value": "={{ $if($('Extraer URL Publica').isExecuted, $('Extraer URL Publica').item.json.media_type, null) }}"
+            },
+            {
+              "name": "media_name",
+              "value": "={{ $if($('Extraer URL Publica').isExecuted, $('Extraer URL Publica').item.json.media_name, null) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "34244fda-da42-456d-80a0-0100202fe066",
+      "name": "Guardar Mensaje Cliente BD1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1632,
+        1648
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Extraer Datos Entrantes1').item.json.fromMe }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "f1585365-8348-4aeb-b4c8-29eb05ad93f7",
+      "name": "Enviado por Mí (Kommo/Celular)?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1408,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/clientes?telefono=like.*{{ $('Extraer Datos Entrantes1').item.json.telefono }}*&select=id,id_kommo&limit=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "97c9e28f-5146-45ea-88fc-cd7f9e1e6efe",
+      "name": "Buscar Cliente BD1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1184,
+        1552
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "telefono",
+              "value": "={{ $json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $json.body.data.message?.conversation || $json.body.data.message?.extendedTextMessage?.text || '[Mensaje multimedia o no soportado]' }}"
+            },
+            {
+              "name": "fromMe",
+              "value": "={{ $json.body.data.key.fromMe }}"
+            },
+            {
+              "name": "mediaType",
+              "value": "={{ ($json.body.data.message?.imageMessage || $json.body.data.message?.audioMessage || $json.body.data.message?.videoMessage || $json.body.data.message?.documentMessage || $json.body.data.message?.stickerMessage) ? 'media' : 'text' }}"
+            },
+            {
+              "name": "messageId",
+              "value": "={{ $json.body.data.key.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d6405761-1cd6-488a-8d08-6fab1ce9b5e3",
+      "name": "Extraer Datos Entrantes1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        736,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recibir-whatsapp-evolution",
+        "options": {}
+      },
+      "id": "14ccc0d0-5925-4a97-a275-a31da137bb1d",
+      "name": "Webhook (Recibir desde Evolution API)1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        512,
+        1552
+      ],
+      "webhookId": "24a1f133-9fff-4b84-9b2e-2f31c4adbb94"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mediaType }}",
+                    "rightValue": "media",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.mediaType }}",
+                    "rightValue": "text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-media",
+      "name": "Es Media?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        960,
+        1450
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://TU_EVOLUTION_API/chat/getBase64FromMediaMessage/DASHBOARD%20PLATAFORMA",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_GLOBAL_API_KEY_AQUI"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"key\": {{ JSON.stringify($('Webhook (Recibir desde Evolution API)1').first().json.body.data.key || {}) }},\n    \"message\": {{ JSON.stringify($('Webhook (Recibir desde Evolution API)1').first().json.body.data.message || {}) }}\n  }\n}",
+        "options": {}
+      },
+      "id": "http-evo-base64",
+      "name": "Obtener Base64 Evolution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1184,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64 = $json.base64 || '';\nconst msgData = $('Webhook (Recibir desde Evolution API)1').first().json.body.data.message || {};\nconst mimeType = msgData.imageMessage?.mimetype || msgData.audioMessage?.mimetype || msgData.videoMessage?.mimetype || msgData.documentMessage?.mimetype || 'application/octet-stream';\nconst ext = mimeType.split('/')[1]?.split(';')[0] || 'bin';\nconst fileName = 'media_' + Date.now() + '.' + ext;\n\nitem.binary = {\n  data: {\n    data: base64,\n    mimeType: mimeType,\n    fileName: fileName\n  }\n};\n\nreturn item;"
+      },
+      "id": "code-binary",
+      "name": "Base64 a Binario",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://rcqkmaxkuxllcyjzqbvn.supabase.co/storage/v1/object/whatsapp_media/{{ $binary.data.fileName }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "={{ $binary.data.mimeType }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "={{ $binary.data.mimeType }}",
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {},
+        "sendBinaryData": true,
+        "binaryPropertyName": "data"
+      },
+      "id": "http-supa-upload",
+      "name": "Subir a Supabase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1632,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "media_url",
+              "value": "=https://rcqkmaxkuxllcyjzqbvn.supabase.co/storage/v1/object/public/whatsapp_media/{{ $binary.data.fileName }}"
+            },
+            {
+              "name": "media_type",
+              "value": "={{ $binary.data.mimeType }}"
+            },
+            {
+              "name": "media_name",
+              "value": "={{ $binary.data.fileName }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-media-url",
+      "name": "Extraer URL Publica",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        1300
+      ]
+    }
+  ],
+  "connections": {
+    "Enviado por Mí (Kommo/Celular)?1": {
+      "main": [
+        [
+          {
+            "node": "Guardar Mensaje Kommo BD1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar Mensaje Cliente BD1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Cliente BD1": {
+      "main": [
+        [
+          {
+            "node": "Enviado por Mí (Kommo/Celular)?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos Entrantes1": {
+      "main": [
+        [
+          {
+            "node": "Es Media?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (Recibir desde Evolution API)1": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos Entrantes1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es Media?": {
+      "main": [
+        [
+          {
+            "node": "Obtener Base64 Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Buscar Cliente BD1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Base64 Evolution": {
+      "main": [
+        [
+          {
+            "node": "Base64 a Binario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 a Binario": {
+      "main": [
+        [
+          {
+            "node": "Subir a Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subir a Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "Extraer URL Publica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer URL Publica": {
+      "main": [
+        [
+          {
+            "node": "Buscar Cliente BD1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "db0cb74972bcc08991723ce67e0af6a9272904c7894e9a307eded2d5020ea127"
+  }
+}

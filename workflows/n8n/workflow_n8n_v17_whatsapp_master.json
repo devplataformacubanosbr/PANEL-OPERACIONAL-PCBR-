@@ -1,0 +1,639 @@
+{
+  "name": "WhatsApp Master (Enviar y Recibir + Kommo Chats)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "enviar-whatsapp",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "GET, POST, OPTIONS"
+              }
+            ]
+          }
+        },
+        "responseMode": "onReceived"
+      },
+      "id": "webhook-enviar",
+      "name": "Webhook (Enviar desde Dashboard)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        200
+      ],
+      "webhookId": "enviar-whatsapp-master"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.url_archivo }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-es-media",
+      "name": "Es Archivo Multimedia?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "FLOW",
+        "remoteJid": "={{ $(\"Webhook (Enviar desde Dashboard)\").first().json.body.telefono }}",
+        "messageText": "={{ $(\"Webhook (Enviar desde Dashboard)\").first().json.body.texto }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        550,
+        320
+      ],
+      "id": "send-text-evolution",
+      "name": "Enviar Texto a Evolution",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "number",
+              "value": "={{ $json.body.telefono }}"
+            },
+            {
+              "name": "media",
+              "value": "={{ $json.body.url_archivo }}"
+            },
+            {
+              "name": "fileName",
+              "value": "={{ $json.body.nombre_archivo }}"
+            },
+            {
+              "name": "mediatype",
+              "value": "={{ $json.body.tipo_archivo.split('/')[0] === 'audio' ? 'audio' : ($json.body.tipo_archivo.split('/')[0] === 'video' ? 'video' : 'document') }}"
+            },
+            {
+              "name": "mimetype",
+              "value": "={{ $json.body.tipo_archivo }}"
+            },
+            {
+              "name": "cliente_id",
+              "value": "={{ $json.body.cliente_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-media",
+      "name": "Preparar Datos Media",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        550,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flujo-escala-evolution-api.l2b1t2.easypanel.host/message/sendMedia/FLOW",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_GLOBAL_API_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $json.number }}"
+            },
+            {
+              "name": "mediatype",
+              "value": "={{ $json.mediatype }}"
+            },
+            {
+              "name": "mimetype",
+              "value": "={{ $json.mimetype }}"
+            },
+            {
+              "name": "media",
+              "value": "={{ $json.media }}"
+            },
+            {
+              "name": "fileName",
+              "value": "={{ $json.fileName }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $json.fileName }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-media-evolution",
+      "name": "Enviar Media a Evolution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        750,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/notas_kommo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjcWttYXhrdXhsbGN5anpxYnZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MzU3NzQsImV4cCI6MjA5NjIxMTc3NH0.3JlpvnK5OqjMWGAP3jl97VXknCi98Bks70owBe1jOz8"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente_id",
+              "value": "={{ $('Webhook (Enviar desde Dashboard)').first().json.body.cliente_id || null }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $('Webhook (Enviar desde Dashboard)').first().json.body.texto }}"
+            },
+            {
+              "name": "remitente",
+              "value": "outgoing"
+            },
+            {
+              "name": "telefono",
+              "value": "={{ $('Webhook (Enviar desde Dashboard)').first().json.body.telefono }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "save-text-history",
+      "name": "Guardar Texto BD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        750,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/notas_kommo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjcWttYXhrdXhsbGN5anpxYnZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MzU3NzQsImV4cCI6MjA5NjIxMTc3NH0.3JlpvnK5OqjMWGAP3jl97VXknCi98Bks70owBe1jOz8"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente_id",
+              "value": "={{ $('Preparar Datos Media').first().json.cliente_id || null }}"
+            },
+            {
+              "name": "texto",
+              "value": "=[Archivo enviado] {{ $('Preparar Datos Media').first().json.fileName }}"
+            },
+            {
+              "name": "remitente",
+              "value": "outgoing"
+            },
+            {
+              "name": "telefono",
+              "value": "={{ $('Preparar Datos Media').first().json.number }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "save-media-history",
+      "name": "Guardar Media BD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        950,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recibir-whatsapp-evolution",
+        "options": {}
+      },
+      "id": "webhook-recibir",
+      "name": "Webhook (Recibir desde Evolution API)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        600
+      ],
+      "webhookId": "recibir-whatsapp-evolution-id"
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "telefono",
+              "value": "={{ $json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $json.body.data.message?.conversation || $json.body.data.message?.extendedTextMessage?.text || '[Mensaje multimedia o no soportado]' }}"
+            },
+            {
+              "name": "fromMe",
+              "value": "={{ $json.body.data.key.fromMe }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-incoming",
+      "name": "Extraer Datos Entrantes",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        300,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/clientes?telefono=like.*{{ $json.telefono }}*&select=id,id_kommo&limit=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjcWttYXhrdXhsbGN5anpxYnZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MzU3NzQsImV4cCI6MjA5NjIxMTc3NH0.3JlpvnK5OqjMWGAP3jl97VXknCi98Bks70owBe1jOz8"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "search-client-db",
+      "name": "Buscar Cliente BD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        500,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Extraer Datos Entrantes').first().json.fromMe }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-from-me",
+      "name": "Enviado por Mí (Kommo/Celular)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        700,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/notas_kommo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjcWttYXhrdXhsbGN5anpxYnZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MzU3NzQsImV4cCI6MjA5NjIxMTc3NH0.3JlpvnK5OqjMWGAP3jl97VXknCi98Bks70owBe1jOz8"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente_id",
+              "value": "={{ $('Buscar Cliente BD').first().json.length > 0 ? ($('Buscar Cliente BD').first().json[0].id_kommo || $('Buscar Cliente BD').first().json[0].id) : null }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $('Extraer Datos Entrantes').first().json.texto }}"
+            },
+            {
+              "name": "remitente",
+              "value": "incoming"
+            },
+            {
+              "name": "telefono",
+              "value": "={{ $('Extraer Datos Entrantes').first().json.telefono }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "save-incoming",
+      "name": "Guardar Mensaje Cliente BD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        950,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/notas_kommo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjcWttYXhrdXhsbGN5anpxYnZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MzU3NzQsImV4cCI6MjA5NjIxMTc3NH0.3JlpvnK5OqjMWGAP3jl97VXknCi98Bks70owBe1jOz8"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente_id",
+              "value": "={{ $('Buscar Cliente BD').first().json.length > 0 ? ($('Buscar Cliente BD').first().json[0].id_kommo || $('Buscar Cliente BD').first().json[0].id) : null }}"
+            },
+            {
+              "name": "texto",
+              "value": "={{ $('Extraer Datos Entrantes').first().json.texto }}"
+            },
+            {
+              "name": "remitente",
+              "value": "outgoing"
+            },
+            {
+              "name": "telefono",
+              "value": "={{ $('Extraer Datos Entrantes').first().json.telefono }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "save-kommo-outgoing",
+      "name": "Guardar Mensaje Kommo BD",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        950,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "OPTIONS",
+        "path": "enviar-whatsapp",
+        "responseMode": "onReceived",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "GET, POST, OPTIONS"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-options-cors",
+      "name": "Webhook (CORS Options)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        100,
+        50
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook (Enviar desde Dashboard)": {
+      "main": [
+        [
+          {
+            "node": "Es Archivo Multimedia?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es Archivo Multimedia?": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos Media",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar Texto a Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos Media": {
+      "main": [
+        [
+          {
+            "node": "Enviar Media a Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Media a Evolution": {
+      "main": [
+        [
+          {
+            "node": "Guardar Media BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Texto a Evolution": {
+      "main": [
+        [
+          {
+            "node": "Guardar Texto BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (Recibir desde Evolution API)": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos Entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos Entrantes": {
+      "main": [
+        [
+          {
+            "node": "Buscar Cliente BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Cliente BD": {
+      "main": [
+        [
+          {
+            "node": "Enviado por Mí (Kommo/Celular)?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviado por Mí (Kommo/Celular)?": {
+      "main": [
+        [
+          {
+            "node": "Guardar Mensaje Kommo BD",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar Mensaje Cliente BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f7823c9c-497b-4d43-a20c-c6db822a16d8"
+}

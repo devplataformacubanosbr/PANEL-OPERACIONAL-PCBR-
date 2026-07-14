@@ -1,0 +1,968 @@
+/**
+ * templateService.js
+ * Servicio para gestión de plantillas de documentos con IA.
+ * 
+ * - Subida de plantillas al storage de Supabase
+ * - Análisis IA con Groq Vision para detectar campos
+ * - CRUD de mappings (posiciones de campos en el documento)
+ * - Generación de PDF final con datos del cliente usando pdf-lib
+ */
+
+import { supabase } from '../supabaseClient';
+import { PDFDocument, rgb, StandardFonts, PDFName, PDFBool } from 'pdf-lib';
+
+const BUCKET = 'documentos_operacionales';
+const TABLE = 'plantillas_documentos';
+
+// Helper robusto para descargar bytes evitando expiración de URLs firmadas
+async function fetchTemplateBytes(urlOrPath) {
+  let path = urlOrPath;
+  if (path && path.startsWith('http')) {
+    const urlParts = path.split(`/${BUCKET}/`);
+    if (urlParts.length === 2) {
+      path = urlParts[1].split('?')[0]; // Limpiar query params (ej. tokens de expiración)
+      // Decode URI component just in case
+      path = decodeURIComponent(path);
+    }
+  }
+
+  // Intentar descargar directo desde Supabase para usar la sesión actual (no expira en 60s)
+  if (path && !path.startsWith('http')) {
+    const { data, error } = await supabase.storage.from(BUCKET).download(path);
+    if (!error && data) {
+      return await data.arrayBuffer();
+    }
+    console.warn('[templateService] Falló descarga directa de supabase, cayendo a fetch.', error);
+  }
+
+  // Fallback a fetch normal (puede ser URL pública externa)
+  const res = await fetch(urlOrPath);
+  if (!res.ok) {
+    throw new Error(`Error al descargar el archivo: HTTP ${res.status} ${res.statusText}`);
+  }
+  return await res.arrayBuffer();
+}
+
+// ──────────────────────────────────────────────
+// Campos disponibles del cliente para mapear
+// ──────────────────────────────────────────────
+export const AVAILABLE_CLIENT_FIELDS = [
+  { id: 'nombre', label: 'Nombre Completo' },
+  { id: 'cpf', label: 'CPF' },
+  { id: 'rnm', label: 'RNM' },
+  { id: 'email', label: 'Email' },
+  { id: 'telefono', label: 'Teléfono (Completo)' },
+  { id: 'telefono:ddd', label: 'Teléfono (Solo Código Área DDD)' },
+  { id: 'telefono:numero', label: 'Teléfono (Solo Número Local)' },
+  { id: 'telefono:pais', label: 'Teléfono (Solo Código País ej. +55)' },
+  { id: 'fecha_nacimiento', label: 'Fecha de Nacimiento (Completa)' },
+  { id: 'fecha_nacimiento:dia', label: 'Fecha de Nacimiento (Solo Día DD)' },
+  { id: 'fecha_nacimiento:mes', label: 'Fecha de Nacimiento (Solo Mes MM)' },
+  { id: 'fecha_nacimiento:anio', label: 'Fecha de Nacimiento (Solo Año YYYY)' },
+  { id: 'estado_civil', label: 'Estado Civil' },
+  { id: 'sexo', label: 'Sexo' },
+  { id: 'nacionalidad', label: 'Nacionalidad' },
+  { id: 'pais', label: 'País de Origen' },
+  { id: 'lugar_nacimiento', label: 'Lugar de Nacimiento' },
+  { id: 'estado_federal', label: 'Estado de Origen' },
+  { id: 'ciudad', label: 'Ciudad de Origen' },
+  { id: 'fecha_entrada_brasil', label: 'Entrada a Brasil (Completa)' },
+  { id: 'fecha_entrada_brasil:dia', label: 'Entrada a Brasil (Solo Día)' },
+  { id: 'fecha_entrada_brasil:mes', label: 'Entrada a Brasil (Solo Mes)' },
+  { id: 'fecha_entrada_brasil:anio', label: 'Entrada a Brasil (Solo Año)' },
+  { id: 'lugar_entrada_brasil', label: 'Lugar Entrada' },
+  { id: 'numero_pasaporte', label: 'Pasaporte' },
+  { id: 'fecha_emision_pasaporte', label: 'Fecha Emisión Pasaporte (Completa)' },
+  { id: 'fecha_emision_pasaporte:dia', label: 'Fecha Emisión Pasaporte (Solo Día)' },
+  { id: 'fecha_emision_pasaporte:mes', label: 'Fecha Emisión Pasaporte (Solo Mes)' },
+  { id: 'fecha_emision_pasaporte:anio', label: 'Fecha Emisión Pasaporte (Solo Año)' },
+  { id: 'fecha_vencimiento_pasaporte', label: 'Fecha Vencimiento Pasaporte (Completa)' },
+  { id: 'fecha_vencimiento_pasaporte:dia', label: 'Fecha Vencimiento Pasaporte (Solo Día)' },
+  { id: 'fecha_vencimiento_pasaporte:mes', label: 'Fecha Vencimiento Pasaporte (Solo Mes)' },
+  { id: 'fecha_vencimiento_pasaporte:anio', label: 'Fecha Vencimiento Pasaporte (Solo Año)' },
+  { id: 'numero_refugio', label: 'Protocolo de Refugio' },
+  { id: 'fecha_vencimiento_refugio', label: 'Fecha Vencimiento Refugio (Completa)' },
+  { id: 'fecha_vencimiento_refugio:dia', label: 'Fecha Vencimiento Refugio (Solo Día)' },
+  { id: 'fecha_vencimiento_refugio:mes', label: 'Fecha Vencimiento Refugio (Solo Mes)' },
+  { id: 'fecha_vencimiento_refugio:anio', label: 'Fecha Vencimiento Refugio (Solo Año)' },
+  { id: 'carnet_identidad', label: 'Carnet de Identidad' },
+  { id: 'nombre_madre', label: 'Nombre Madre' },
+  { id: 'nombre_padre', label: 'Nombre Padre' },
+  { id: 'direccion', label: 'Dirección (Completa)' },
+  { id: 'direccion:endereco', label: 'Dirección (Calle / Rua)' },
+  { id: 'direccion:numero', label: 'Dirección (Número)' },
+  { id: 'direccion:endereco_numero', label: 'Dirección (Calle con Número)' },
+  { id: 'direccion:complemento', label: 'Dirección (Complemento)' },
+  { id: 'direccion:bairro', label: 'Dirección (Barrio / Bairro)' },
+  { id: 'direccion:cidade', label: 'Dirección (Ciudad / Cidade)' },
+  { id: 'direccion:estado', label: 'Dirección (Estado / UF)' },
+  { id: 'direccion:cidade_estado', label: 'Dirección (Ciudad - Estado)' },
+  { id: 'direccion:cep', label: 'Dirección (CEP)' },
+  { id: 'fecha_hoy', label: 'Fecha de Hoy (Completa)' },
+  { id: 'fecha_hoy:dia', label: 'Fecha de Hoy (Solo Día DD)' },
+  { id: 'fecha_hoy:mes', label: 'Fecha de Hoy (Solo Mes texto)' },
+  { id: 'fecha_hoy:anio', label: 'Fecha de Hoy (Solo Año YYYY)' },
+];
+
+let cachedExtendedFields = null;
+
+export const getExtendedClientFields = async () => {
+  if (cachedExtendedFields) return cachedExtendedFields;
+
+  try {
+    const { data, error } = await supabase
+      .from('tramites_catalogo')
+      .select('nombre, campos_config')
+      .eq('activo', true);
+      
+    if (error) throw error;
+    
+    let extraFields = [];
+    let seenIds = new Set();
+    if (data) {
+      data.forEach(cat => {
+        if (cat.campos_config && Array.isArray(cat.campos_config)) {
+          cat.campos_config.forEach(campo => {
+            const fieldId = `custom:${campo.id}`;
+            if (!seenIds.has(fieldId)) {
+              seenIds.add(fieldId);
+              extraFields.push({
+                id: fieldId,
+                label: `[${cat.nombre}] ${campo.label}`
+              });
+            }
+          });
+        }
+      });
+    }
+    
+    cachedExtendedFields = [...AVAILABLE_CLIENT_FIELDS, ...extraFields];
+    return cachedExtendedFields;
+  } catch (err) {
+    console.error('Error fetching extended fields:', err);
+    return AVAILABLE_CLIENT_FIELDS;
+  }
+};
+
+export const clearExtendedFieldsCache = () => {
+  cachedExtendedFields = null;
+};
+
+// ──────────────────────────────────────────────
+// 1. Subir plantilla
+// ──────────────────────────────────────────────
+export async function uploadTemplate(file, nombre) {
+  try {
+    const ext = file.name.split('.').pop().toLowerCase();
+    const uniqueName = `plantillas/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .upload(uniqueName, file, { upsert: false });
+
+    if (uploadError) throw uploadError;
+
+    const { data: record, error: dbError } = await supabase
+      .from(TABLE)
+      .insert({
+        nombre: nombre || file.name,
+        url_archivo: uniqueName,
+        tipo_contenido: file.type,
+        field_mappings: [],
+      })
+      .select()
+      .single();
+
+    if (dbError) throw dbError;
+    return { data: record, error: null };
+  } catch (err) {
+    console.error('[templateService] uploadTemplate error:', err);
+    return { data: null, error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// 1.5 Crear plantilla HTML
+// ──────────────────────────────────────────────
+export async function createHtmlTemplate(htmlContent, nombre) {
+  try {
+    const uniqueName = `plantillas/${Date.now()}_${Math.random().toString(36).slice(2)}.html`;
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .upload(uniqueName, blob, { upsert: false });
+
+    if (uploadError) throw uploadError;
+
+    const { data: record, error: dbError } = await supabase
+      .from(TABLE)
+      .insert({
+        nombre: nombre || 'Plantilla HTML',
+        url_archivo: uniqueName,
+        tipo_contenido: 'text/html',
+        field_mappings: [],
+      })
+      .select()
+      .single();
+
+    if (dbError) throw dbError;
+    return { data: record, error: null };
+  } catch (err) {
+    console.error('[templateService] createHtmlTemplate error:', err);
+    return { data: null, error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// 2. Obtener todas las plantillas
+// ──────────────────────────────────────────────
+export async function getTemplates() {
+  try {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .order('creado_en', { ascending: false });
+
+    if (error) throw error;
+
+    const updatedData = await Promise.all((data || []).map(async (tmpl) => {
+      let path = tmpl.url_archivo;
+      if (path && path.startsWith('http')) {
+        const urlParts = path.split(`/${BUCKET}/`);
+        if (urlParts.length === 2) {
+          path = urlParts[1];
+        }
+      }
+      if (path) {
+        try {
+          const { data: signedData, error: signedError } = await supabase.storage
+            .from(BUCKET)
+            .createSignedUrl(path, 60);
+          if (!signedError && signedData?.signedUrl) {
+            return { ...tmpl, url_archivo: signedData.signedUrl };
+          }
+        } catch (err) {
+          console.warn('Error signing template URL:', err);
+        }
+      }
+      return tmpl;
+    }));
+
+    return { data: updatedData, error: null };
+  } catch (err) {
+    console.error('[templateService] getTemplates error:', err);
+    return { data: [], error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// 3. Guardar mappings de una plantilla
+// ──────────────────────────────────────────────
+export async function saveTemplateMapping(templateId, mappings) {
+  try {
+    const { error } = await supabase
+      .from(TABLE)
+      .update({
+        field_mappings: mappings,
+        actualizado_en: new Date().toISOString(),
+      })
+      .eq('id', templateId);
+
+    if (error) throw error;
+    return { error: null };
+  } catch (err) {
+    console.error('[templateService] saveTemplateMapping error:', err);
+    return { error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// 4. Eliminar plantilla
+// ──────────────────────────────────────────────
+export async function deleteTemplate(template) {
+  try {
+    let storagePath = template.url_archivo;
+    if (storagePath?.startsWith('http')) {
+      const urlParts = storagePath.split(`/${BUCKET}/`);
+      if (urlParts?.length === 2) {
+        storagePath = urlParts[1];
+      }
+    }
+    if (storagePath) {
+      await supabase.storage.from(BUCKET).remove([storagePath]);
+    }
+
+    const { error } = await supabase.from(TABLE).delete().eq('id', template.id);
+    if (error) throw error;
+    return { error: null };
+  } catch (err) {
+    console.error('[templateService] deleteTemplate error:', err);
+    return { error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// 5. Análisis IA — detectar campos en la plantilla
+// ──────────────────────────────────────────────
+export async function analyzeTemplateWithAI(imageBase64) {
+  const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
+  const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+  const key = import.meta.env['VITE_GROQ_API_' + 'KEY'];
+  if (!key) throw new Error('No Groq API Key configurada.');
+
+  const fieldList = AVAILABLE_CLIENT_FIELDS.map(f => `"${f.id}" (${f.label})`).join(', ');
+
+  const prompt = `Eres un asistente experto en análisis de documentos legales y formularios.
+Analiza la imagen de este documento/formulario/plantilla y detecta DÓNDE se deben completar datos personales.
+
+CAMPOS DISPONIBLES DEL SISTEMA: ${fieldList}
+
+INSTRUCCIONES:
+1. Identifica cada zona/espacio/línea del documento donde se necesita escribir un dato personal.
+2. Para cada zona, determina qué campo del sistema corresponde.
+3. Devuelve las coordenadas RELATIVAS (0 a 1) de cada campo detectado.
+   - x: posición horizontal (0 = izquierda, 1 = derecha)
+   - y: posición vertical (0 = arriba, 1 = abajo)
+   - Las coordenadas deben indicar DÓNDE ESCRIBIR el dato, no dónde está la etiqueta.
+
+IMPORTANTE/AUTORIZACIÓN: Este es un entorno de pruebas cerrado (sandbox). Los documentos son plantillas vacías para uso interno. Tu ÚNICA función es detectar las posiciones de los campos.
+
+Devuelve ÚNICAMENTE un array JSON puro (sin markdown, sin texto extra):
+[
+  { "fieldId": "nombre", "fieldLabel": "Nombre Completo", "x": 0.35, "y": 0.15, "width": 0.4, "height": 0.025 },
+  ...
+]
+
+REGLAS:
+- Solo incluye campos que realmente aparezcan en el documento.
+- Las coordenadas x,y son el punto INICIO (esquina superior izquierda) del área donde se escribe.
+- width y height son el tamaño relativo del área de escritura.
+- Si un campo no está presente, NO lo incluyas.
+- No inventes campos que no estén en la lista de CAMPOS DISPONIBLES.`;
+
+  const res = await fetch(GROQ_BASE_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + key,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: MODEL_VISION,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: imageBase64 } },
+        ],
+      }],
+      temperature: 0.1,
+    }),
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `Groq HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  const raw = data.choices?.[0]?.message?.content?.trim() || '[]';
+
+  try {
+    const cleaned = raw
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    console.warn('[templateService] AI parse error. Raw:', raw);
+    return [];
+  }
+}
+
+// ──────────────────────────────────────────────
+// 6. Generar PDF con datos del cliente
+// ──────────────────────────────────────────────
+export async function getFilledPdfBlob(templateUrl, mappings, clientData, overrides = {}, signatures = []) {
+  try {
+    const templateBytes = await fetchTemplateBytes(templateUrl);
+    const pdfDoc = await PDFDocument.load(templateBytes, { ignoreEncryption: true });
+    
+    // Explicitly embed a standard font to avoid silent crashes with special chars
+    const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    
+    const form = pdfDoc.getForm();
+    const pages = pdfDoc.getPages();
+    const firstPage = pages[0];
+    const { width, height } = firstPage.getSize();
+
+    // Filtrar mapeos puramente de coordenadas si el mismo dato (kommoFieldId) 
+    // ya está siendo mapeado por un campo AcroForm interactivo.
+    // Esto evita texto duplicado/solapado en PDFs que tienen tanto campos nativos como análisis IA previo.
+    const mappedDataIds = new Set(
+      mappings
+        .filter(m => m.pdfFieldName && (m.kommoFieldId || m.fieldId))
+        .map(m => m.kommoFieldId || m.fieldId)
+    );
+
+    const filteredMappings = mappings.filter(m => {
+      // Es un mapeo puramente de coordenadas (sin pdfFieldName)
+      if (!m.pdfFieldName && m.x !== undefined && m.y !== undefined) {
+         const dataId = m.kommoFieldId || m.fieldId;
+         // Si el campo del cliente que intenta pintar YA está cubierto por un AcroForm, lo ignoramos.
+         if (dataId && mappedDataIds.has(dataId)) {
+           return false; 
+         }
+      }
+      return true;
+    });
+
+    for (const mapping of filteredMappings) {
+      let value = '';
+      if (mapping.isCustomText) {
+        value = mapping.fieldLabel || mapping.customValue || '';
+      } else {
+        const kommoId = mapping.kommoFieldId || mapping.fieldId;
+        value = getClientFieldValue(clientData, kommoId);
+      }
+      
+      // Override con valores editados en la vista previa
+      if (overrides[mapping.pdfFieldName || mapping.fieldId] !== undefined) {
+        value = overrides[mapping.pdfFieldName || mapping.fieldId];
+      }
+
+      // Remover caracteres no compatibles con WinAnsi para TODO tipo de PDF
+      const safeValue = String(value).replace(/[^\x20-\x7E\xA0-\xFF]/g, '').trim();
+
+      if (!safeValue) continue;
+
+      // Intentar llenar como campo AcroForm interactivo si tiene pdfFieldName
+      let fieldSet = false;
+      if (mapping.pdfFieldName) {
+        try {
+          const field = form.getField(mapping.pdfFieldName);
+          if (field) {
+            if (typeof field.setText === 'function') {
+              if (typeof field.enableMultiline === 'function') {
+                field.enableMultiline();
+              }
+              field.setText(safeValue);
+            } else if (typeof field.select === 'function') {
+              try {
+                field.select(safeValue);
+              } catch (_e) {
+                console.warn(`No se pudo seleccionar ${safeValue} en el campo ${mapping.pdfFieldName}`);
+              }
+            } else if (typeof field.check === 'function') {
+              if (safeValue && safeValue.toLowerCase() !== 'false' && safeValue !== '0') {
+                field.check();
+              }
+            }
+            fieldSet = true;
+          }
+        } catch (err) {
+          console.warn(`[templateService] No se pudo setear el campo interactivo ${mapping.pdfFieldName}`, err);
+        }
+      }
+
+      // Si no se pudo llenar como campo interactivo (ej. es un PDF plano o el campo no existe), 
+      // y tenemos coordenadas de IA, dibujamos el texto
+      if (!fieldSet && mapping.x !== undefined && mapping.y !== undefined) {
+        try {
+          const posX = mapping.x * width;
+          const posY = height - (mapping.y * height) - 10; // Ajuste por la altura del texto
+
+          firstPage.drawText(safeValue, {
+            x: posX,
+            y: posY,
+            size: 11,
+            font: helveticaFont,
+            color: rgb(0.1, 0.1, 0.1),
+          });
+        } catch (err) {
+          console.warn(`[templateService] Error dibujando campo plano ${mapping.fieldId}`, err);
+        }
+      }
+    }
+
+    // Forzar la regeneración de las apariencias con la fuente Helvetica estándar
+    try {
+      form.updateFieldAppearances(helveticaFont);
+    } catch (e) {
+      console.warn("Could not update field appearances:", e);
+    }
+    
+    // NOTA: Hemos deshabilitado form.flatten() porque corrompe ciertos PDFs 
+    // oficiales complejos (ej. formularios de Cuba/Brasil) haciéndolos fallar al cargar en el navegador.
+    // En su lugar, hacemos que todos los campos sean de solo lectura (Read-Only)
+    try {
+      const allFields = form.getFields();
+      allFields.forEach(f => {
+        f.enableReadOnly();
+      });
+    } catch (e) {
+      console.warn("Error setting fields to read-only:", e);
+    }
+
+    // ── Insertar Firmas ──
+    if (signatures && signatures.length > 0) {
+      for (const sig of signatures) {
+        if (!sig.url) continue;
+        try {
+          const isBase64 = sig.url.startsWith('data:');
+          let imgBytes;
+          if (isBase64) {
+             const base64Data = sig.url.split(',')[1];
+             imgBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+          } else {
+             imgBytes = await fetch(sig.url).then(r => r.arrayBuffer());
+          }
+          
+          let embeddedImage;
+          if (sig.url.includes('png') || sig.url.startsWith('data:image/png')) {
+             embeddedImage = await pdfDoc.embedPng(imgBytes);
+          } else {
+             embeddedImage = await pdfDoc.embedJpg(imgBytes);
+          }
+          
+          const targetPage = pages[sig.page || 0];
+          const targetWidth = targetPage.getSize().width;
+          const targetHeight = targetPage.getSize().height;
+
+          const posX = sig.x * targetWidth;
+          const posY = targetHeight - (sig.y * targetHeight) - (sig.height * targetHeight);
+          
+          targetPage.drawImage(embeddedImage, {
+             x: posX,
+             y: posY,
+             width: sig.width * targetWidth,
+             height: sig.height * targetHeight
+          });
+
+        } catch (e) {
+          console.error("[templateService] Error embedding signature:", e);
+        }
+      }
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    return new Blob([pdfBytes], { type: 'application/pdf' });
+  } catch (err) {
+    console.error('[templateService] getFilledPdfBlob error:', err);
+    throw err;
+  }
+}
+
+export async function generateFilledPDF(templateUrl, mappings, clientData) {
+  try {
+    const blob = await getFilledPdfBlob(templateUrl, mappings, clientData);
+    const url = URL.createObjectURL(blob);
+
+    // Descargar automáticamente
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `documento_generado_${Date.now()}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    return { error: null, url };
+  } catch (err) {
+    console.error('[templateService] generateFilledPDF error:', err);
+    return { error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// Extraer campos de un formulario PDF (AcroForm)
+// ──────────────────────────────────────────────
+export async function getPDFFormFields(templateUrl) {
+  try {
+    const templateBytes = await fetchTemplateBytes(templateUrl);
+    const pdfDoc = await PDFDocument.load(templateBytes, { ignoreEncryption: true });
+    const form = pdfDoc.getForm();
+    const fields = form.getFields();
+    
+    return fields.map(f => {
+      let tooltip = '';
+      try {
+        const dict = f.acroField.dict;
+        if (dict && dict.has(PDFName.of('TU'))) {
+          const tu = dict.get(PDFName.of('TU'));
+          if (tu && typeof tu.decodeText === 'function') {
+            tooltip = tu.decodeText();
+          }
+        }
+      } catch (_e) {
+        // Ignorar errores al intentar leer el tooltip
+      }
+
+      // Intentamos limpiar un poco el nombre si tiene caracteres nulos
+      const rawName = f.getName();
+      const cleanName = rawName.replace(/\x00/g, '');
+
+      return {
+        name: rawName, 
+        displayName: tooltip || cleanName,
+        type: f.constructor.name
+      };
+    });
+  } catch (err) {
+    console.error('[templateService] getPDFFormFields error:', err);
+    return [];
+  }
+}
+
+// ──────────────────────────────────────────────
+// Helper: obtener el valor de un campo del cliente
+// ──────────────────────────────────────────────
+export function getClientFieldValue(clientData, fieldId) {
+  if (!clientData || !fieldId) return '';
+
+  let baseFieldId = fieldId;
+  let modifier = null;
+
+  if (fieldId.includes(':')) {
+    [baseFieldId, modifier] = fieldId.split(':');
+  }
+
+  // Buscar en campos dinámicos de las entradas del cliente si el id empieza con custom:
+  if (fieldId.startsWith('custom:')) {
+    const customKey = fieldId.replace('custom:', '');
+    if (clientData.entradas && Array.isArray(clientData.entradas)) {
+      // Tomar el valor del primer trámite (el más reciente) que tenga este campo no vacío
+      for (const ent of clientData.entradas) {
+        if (ent.datos_personalizados && ent.datos_personalizados[customKey] !== undefined && ent.datos_personalizados[customKey] !== '') {
+          return ent.datos_personalizados[customKey];
+        }
+      }
+    }
+    return '';
+  }
+
+  // Campos generados automáticamente (no dependen de clientData directamente)
+  if (baseFieldId === 'fecha_hoy') {
+    const today = new Date();
+    if (modifier === 'dia') return String(today.getDate()).padStart(2, '0');
+    if (modifier === 'mes') {
+      const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+      return meses[today.getMonth()];
+    }
+    if (modifier === 'anio') return String(today.getFullYear());
+    
+    // Completa
+    const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    return `${today.getDate()} de ${meses[today.getMonth()]} de ${today.getFullYear()}`;
+  }
+
+  const val = clientData ? clientData[baseFieldId] : null;
+  if (!val && baseFieldId !== 'fecha_hoy') return '';
+
+  if (modifier) {
+    try {
+      let dateObj;
+      if (!isNaN(val) && String(val).length >= 10) {
+        const isMs = String(val).length > 10;
+        dateObj = new Date(Number(val) * (isMs ? 1 : 1000));
+      } else if (typeof val === 'string') {
+        if (val.includes('/')) {
+          const parts = val.split('/');
+          if (parts.length === 3) dateObj = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+        } else {
+          dateObj = new Date(val);
+        }
+      }
+
+      if (dateObj && !isNaN(dateObj.getTime())) {
+        if (modifier === 'dia') return String(dateObj.getDate()).padStart(2, '0');
+        if (modifier === 'mes') return String(dateObj.getMonth() + 1).padStart(2, '0');
+        if (modifier === 'anio') return String(dateObj.getFullYear());
+      }
+    } catch (e) {
+      console.warn('Error parseando fecha', e);
+    }
+    
+    // Si es teléfono
+    if (baseFieldId === 'telefono') {
+      const numOnly = String(val).replace(/\D/g, '');
+      let pais = '';
+      let ddd = '';
+      let numero = '';
+
+      if (numOnly.startsWith('55') && numOnly.length >= 12) {
+        pais = '55';
+        ddd = numOnly.substring(2, 4);
+        numero = numOnly.substring(4);
+      } else if (numOnly.length === 10 || numOnly.length === 11) {
+        ddd = numOnly.substring(0, 2);
+        numero = numOnly.substring(2);
+      } else {
+        // Fallback
+        numero = numOnly;
+      }
+
+      if (modifier === 'ddd') return ddd;
+      if (modifier === 'numero') return numero;
+      if (modifier === 'pais') return pais ? `+${pais}` : '';
+    }
+  }
+
+  // Si es dirección (JSON)
+  if (baseFieldId === 'direccion') {
+    try {
+      let dirObj = val;
+      if (typeof val === 'string') dirObj = JSON.parse(val);
+
+      if (modifier) {
+        if (modifier === 'endereco_numero') {
+          return [dirObj.endereco, dirObj.numero].filter(Boolean).join(', ');
+        }
+        if (modifier === 'cidade_estado') {
+          return [dirObj.cidade, dirObj.estado].filter(Boolean).join(' - ');
+        }
+        return String(dirObj[modifier] || '');
+      }
+
+      // Concatenar si no hay modificador
+      const parts = [
+        dirObj.endereco,
+        dirObj.numero,
+        dirObj.complemento,
+        dirObj.bairro,
+        dirObj.cidade,
+        dirObj.estado,
+        dirObj.cep ? `CEP: ${dirObj.cep}` : null,
+      ].filter(Boolean);
+      return parts.join(', ');
+    } catch {
+      return String(val);
+    }
+  }
+
+  return String(val);
+}
+
+// ──────────────────────────────────────────────
+// Helper: renderizar página de PDF como imagen
+// ──────────────────────────────────────────────
+export async function renderPdfPageAsImage(url, pageNum = 1, scale = 2) {
+  // Usar la instancia estática de pdfjs-dist ya configurada por pdfToImage.js
+  const pdfjsLib = await import('pdfjs-dist');
+
+  // El worker ya se configura en pdfToImage.js, pero aseguramos que esté
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+  }
+
+  const loadingTask = pdfjsLib.getDocument({ 
+    url, 
+    cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/standard_fonts/`,
+  });
+  const pdf = await loadingTask.promise;
+  const page = await pdf.getPage(pageNum);
+  const viewport = page.getViewport({ scale });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext('2d');
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas.toDataURL('image/png');
+}
+
+// ──────────────────────────────────────────────
+// 6. Generar Documento (.docx)
+// ──────────────────────────────────────────────
+import PizZip from 'pizzip';
+import Docxtemplater from 'docxtemplater';
+import { saveAs } from 'file-saver';
+import html2pdf from 'html2pdf.js';
+
+export async function getDocxFields(templateUrl) {
+  try {
+    const templateBytes = await fetchTemplateBytes(templateUrl);
+    const zip = new PizZip(templateBytes);
+    const doc = new Docxtemplater(zip, {
+      paragraphLoop: true,
+      linebreaks: true,
+    });
+    
+    // Extraer texto completo del documento
+    let text = '';
+    if (typeof doc.getFullText === 'function') {
+      text = doc.getFullText();
+    }
+    
+    // Fallback: si docxtemplater falla o no encuentra texto, extraemos directo de los XML
+    if (!text || text.trim() === '') {
+      const xmlFiles = Object.keys(zip.files).filter(name => name.endsWith('.xml') && name.startsWith('word/'));
+      for (const fileName of xmlFiles) {
+        const content = zip.file(fileName).asText();
+        // Extraer todo lo que esté entre > y < (el texto real de los nodos)
+        text += content.replace(/<[^>]+>/g, '');
+      }
+    }
+
+    // Limpiar caracteres invisibles (zero-width spaces) que Google Docs o Word suelen meter
+    text = text.replace(/[\u200B-\u200D\uFEFF]/g, '');
+
+    // Buscar etiquetas del tipo {{nombre}}, {nombre}, o <<nombre>> permitiendo cualquier caracter interno
+    // Usamos lazy matching (.*?) para no atrapar texto entre dos etiquetas distintas
+    const regex = /(?:\{\{|\{|«)\s*(.*?)\s*(?:\}\}|\}|»)/g;
+    const tags = new Set();
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      const tag = match[1].trim();
+      // Filtrar cosas muy largas que probablemente no sean etiquetas sino uso normal de llaves
+      if (tag && tag.length < 50 && !tag.includes('{') && !tag.includes('}')) {
+        tags.add(tag);
+      }
+    }
+    
+    const result = Array.from(tags).map(tag => ({
+      name: tag,
+      displayName: `{{${tag}}}`,
+      type: 'Etiqueta Word'
+    }));
+
+    if (result.length === 0) {
+      console.warn('[templateService] No se encontraron etiquetas {{...}} en el documento. Texto extraído (primeros 200 chars):', text.substring(0, 200));
+      // Devolvemos un campo de ayuda para que el usuario entienda qué pasa
+      return [{
+        name: 'ayuda_etiquetas',
+        displayName: '⚠️ No se encontraron etiquetas {{...}}',
+        type: 'Ayuda',
+        isCustomText: true,
+        customValue: 'Revisa que tu Word tenga etiquetas como {{nombre}}'
+      }];
+    }
+
+    return result;
+  } catch (err) {
+    console.error('[templateService] getDocxFields error:', err);
+    return [];
+  }
+}
+
+export async function generateFilledDocx(templateUrl, clientData, templateName, mappings = [], overrides = {}) {
+  try {
+    const templateBytes = await fetch(templateUrl).then(r => r.arrayBuffer());
+    const zip = new PizZip(templateBytes);
+    const doc = new Docxtemplater(zip, {
+      paragraphLoop: true,
+      linebreaks: true,
+    });
+
+    const data = {};
+    
+    // 1. Cargar campos disponibles por defecto (por si el usuario usó los IDs exactos)
+    AVAILABLE_CLIENT_FIELDS.forEach(field => {
+      data[field.id] = getClientFieldValue(clientData, field.id) || '';
+    });
+
+    if (clientData.direccion) {
+      let dir = clientData.direccion;
+      if (typeof dir === 'string') {
+        try { dir = JSON.parse(dir); } catch { dir = {}; }
+      }
+      data['direccion.endereco'] = dir.endereco || '';
+      data['direccion.numero'] = dir.numero || '';
+      data['direccion.bairro'] = dir.bairro || '';
+      data['direccion.cidade'] = dir.cidade || '';
+      data['direccion.estado'] = dir.estado || '';
+      data['direccion.cep'] = dir.cep || '';
+    }
+    
+    // Fechas dinámicas muy comunes
+    const hoy = new Date();
+    data['fecha_hoy'] = hoy.toLocaleDateString('es-ES');
+    data['fecha_actual'] = data['fecha_hoy'];
+
+    // 2. Aplicar mapeos personalizados (sobreescriben los defectos si hay choque)
+    for (const mapping of mappings) {
+      if (mapping.pdfFieldName) {
+        let value = '';
+        if (mapping.isCustomText) {
+          value = mapping.fieldLabel || mapping.customValue || '';
+        } else {
+          value = getClientFieldValue(clientData, mapping.kommoFieldId) || '';
+        }
+        data[mapping.pdfFieldName] = value;
+      }
+    }
+    
+    // 3. Aplicar overrides manuales desde la vista previa
+    for (const [key, val] of Object.entries(overrides)) {
+      data[key] = val;
+    }
+
+    doc.render(data);
+
+    const out = doc.getZip().generate({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+
+    saveAs(out, `${templateName.replace(/\.[^/.]+$/, "")}_${clientData.nombre || 'documento'}.docx`);
+    return { error: null };
+  } catch (err) {
+    console.error('[templateService] generateFilledDocx error:', err);
+    return { error: err.message };
+  }
+}
+
+// ──────────────────────────────────────────────
+// 7. Generar Documento (HTML a PDF)
+// ──────────────────────────────────────────────
+export async function generateFilledHtmlPdf(templateUrl, clientData, templateName) {
+  try {
+    let htmlContent = await fetch(templateUrl).then(r => r.text());
+
+    AVAILABLE_CLIENT_FIELDS.forEach(field => {
+      const val = getClientFieldValue(clientData, field.id) || '';
+      const regex = new RegExp(`{{${field.id}}}`, 'g');
+      htmlContent = htmlContent.replace(regex, val);
+    });
+
+    if (clientData.direccion) {
+      let dir = clientData.direccion;
+      if (typeof dir === 'string') {
+        try { dir = JSON.parse(dir); } catch { dir = {}; }
+      }
+      const dirFields = ['endereco', 'numero', 'bairro', 'cidade', 'estado', 'cep'];
+      dirFields.forEach(k => {
+        const val = dir[k] || '';
+        const regex = new RegExp(`{{direccion.${k}}}`, 'g');
+        htmlContent = htmlContent.replace(regex, val);
+      });
+    }
+
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = htmlContent;
+    tempDiv.style.padding = '20px';
+    tempDiv.style.width = '210mm';
+    tempDiv.style.boxSizing = 'border-box';
+    tempDiv.style.fontFamily = 'Arial, sans-serif';
+
+    const opt = {
+      margin:       10,
+      filename:     `${templateName.replace(/\.[^/.]+$/, "")}_${clientData.nombre || 'documento'}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2 },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    await html2pdf().from(tempDiv).set(opt).save();
+    return { error: null };
+  } catch (err) {
+    console.error('[templateService] generateFilledHtmlPdf error:', err);
+    return { error: err.message };
+  }
+}

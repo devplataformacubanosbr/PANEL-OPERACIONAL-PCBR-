@@ -1,0 +1,127 @@
+{
+  "name": "Enviar WhatsApp (Dashboard -> Evolution API)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "enviar-whatsapp-evolution",
+        "options": {}
+      },
+      "id": "e4c1f964-b816-433f-9273-04b3252f53fb",
+      "name": "Webhook (Recibe del Dashboard)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "enviar-whatsapp-evolution-id"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=TU_EVOLUTION_URL/message/sendText/TU_INSTANCIA",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_GLOBAL_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $('Webhook (Recibe del Dashboard)').item.json.body.telefono }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $('Webhook (Recibe del Dashboard)').item.json.body.texto }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a931e51b-5ef7-471a-ae9a-5bb49f8481be",
+      "name": "Enviar a Evolution API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "notas_kommo",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "cliente_id",
+              "fieldValue": "={{ $('Webhook (Recibe del Dashboard)').item.json.body.cliente_id }}"
+            },
+            {
+              "fieldId": "texto",
+              "fieldValue": "={{ $('Webhook (Recibe del Dashboard)').item.json.body.texto }}"
+            },
+            {
+              "fieldId": "remitente",
+              "fieldValue": "outgoing"
+            }
+          ]
+        }
+      },
+      "id": "c1f7a79e-4b71-46ab-a27b-58ccbfefc4d2",
+      "name": "Guardar en Historial",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "CREDENTIAL_ID_AQUI",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook (Recibe del Dashboard)": {
+      "main": [
+        [
+          {
+            "node": "Enviar a Evolution API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar a Evolution API": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Historial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f7823c9c-497b-4d43-a20c-c6db822a16d8"
+}

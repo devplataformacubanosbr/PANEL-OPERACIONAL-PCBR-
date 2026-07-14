@@ -1,0 +1,70 @@
+version: '3.9'
+
+services:
+  dashboard-operacional:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+        - VITE_GROQ_API_KEY=${VITE_GROQ_API_KEY}
+        - VITE_OPENROUTER_API_KEY=${VITE_OPENROUTER_API_KEY}
+        - VITE_N8N_WEBHOOK_URL=${VITE_N8N_WEBHOOK_URL}
+        - VITE_KOMMO_WEBHOOK_URL=${VITE_KOMMO_WEBHOOK_URL}
+        - VITE_CHATWOOT_TOKEN=${VITE_CHATWOOT_TOKEN}
+    container_name: dashboard-operacional-app
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard-operacional.rule=Host(`tu-dominio.com`)"
+      - "traefik.http.routers.dashboard-operacional.entrypoints=websecure"
+      - "traefik.http.routers.dashboard-operacional.tls.certresolver=letsencrypt"
+
+  # Servicio de desarrollo con hot reload — REQUIERE crear Dockerfile.dev
+  # dashboard-operacional-dev:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.dev
+  #   container_name: dashboard-operacional-dev
+  #   ports:
+  #     - "5173:5173"
+  #   volumes:
+  #     - .:/app
+  #     - /app/node_modules
+  #   environment:
+  #     - NODE_ENV=development
+  #     - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+  #     - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+  #     - VITE_GROQ_API_KEY=${VITE_GROQ_API_KEY}
+  #     - VITE_OPENROUTER_API_KEY=${VITE_OPENROUTER_API_KEY}
+  #     - VITE_N8N_WEBHOOK_URL=${VITE_N8N_WEBHOOK_URL}
+  #     - VITE_KOMMO_WEBHOOK_URL=${VITE_KOMMO_WEBHOOK_URL}
+  #     - VITE_CHATWOOT_TOKEN=${VITE_CHATWOOT_TOKEN}
+  #   stdin_open: true
+  #   tty: true
+  #   restart: "no"
+
+# Para usar con Traefik (SSL automático) descomenta la red:
+# networks:
+#   default:
+#     external:
+#       name: traefik-public

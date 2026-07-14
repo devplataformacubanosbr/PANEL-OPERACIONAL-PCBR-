@@ -1,0 +1,918 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "plataformadashboard",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        512,
+        2448
+      ],
+      "id": "07c25a1c-1c8d-43bf-8920-41fb2b371f9d",
+      "name": "Webhook",
+      "webhookId": "cf2f6e48-48f7-413c-be2d-98cd003f00a4"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body['leads[status][0][status_id]'] }}",
+              "value2": "142"
+            }
+          ]
+        }
+      },
+      "id": "5bad0ca0-23ab-439a-a1a2-a92462f19da3",
+      "name": "IF: ¿Status = 142?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        736,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://plataformaoficial.kommo.com/api/v4/leads/{{ $json.body['leads[status][0][id]'] }}?with=contacts,custom_fields_values",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": false,
+        "options": {}
+      },
+      "id": "65de189a-c4a1-442f-a929-84df2e968136",
+      "name": "Consultar Lead Kommo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        960,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const leadData = $input.first().json.data;\nconst lead = typeof leadData === 'string' ? JSON.parse(leadData) : leadData;\n\nconst contactoId = lead._embedded?.contacts?.[0]?.id;\n\nif (!contactoId) {\n  throw new Error('No hay contacto vinculado al lead');\n}\n\nreturn [{\n  json: {\n    contactoId: contactoId,\n    leadId: lead.id,\n    presupuesto: lead.price || 0,\n    leadData: lead\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        2448
+      ],
+      "id": "b2bc75cc-7bfc-40fb-9a98-4b1504212011",
+      "name": "Extraer contactoId"
+    },
+    {
+      "parameters": {
+        "url": "=https://plataformaoficial.kommo.com/api/v4/contacts/{{ $json.contactoId }}?with=custom_fields_values",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": false,
+        "options": {}
+      },
+      "id": "ef38348d-f73a-4882-b90c-3cc96b581eea",
+      "name": "Consultar Contacto Kommo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1408,
+        2448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const contactoRaw = $input.first().json.data;\nconst contacto = typeof contactoRaw === 'string' ? JSON.parse(contactoRaw) : contactoRaw;\n\nconst leadNode = $('Extraer contactoId').item.json;\nconst lead = leadNode.leadData || {};\n\nconst camposContacto = contacto.custom_fields_values || [];\nconst camposLead = lead.custom_fields_values || [];\n\nconst getField = (campos, nombre) => {\n  const field = campos.find(f =>\n    f.field_name?.toLowerCase().includes(nombre.toLowerCase())\n  );\n  return field?.values?.[0]?.value ?? '';\n};\n\nconst telefonoCampo = camposContacto.find(f => f.field_code === 'PHONE');\nconst emailCampo    = camposContacto.find(f => f.field_code === 'EMAIL');\n\nconst now = new Date();\nconst mes = now.getMonth() + 1;\nconst ano = now.getFullYear();\n\nreturn [{ json: {\n  id_kommo:        String(contacto.id || ''),\n  nombre:          lead.name || contacto.name || '',\n  telefono:        telefonoCampo?.values?.[0]?.value || '',\n  email:           emailCampo?.values?.[0]?.value    || '',\n  cpf:             getField(camposContacto, 'cpf'),\n  valor_total:     parseFloat(leadNode.presupuesto)  || 0,\n  pais:            getField(camposLead, 'país origen'),\n  ciudad:          getField(camposLead, 'ciudad'),\n  estado:          getField(camposLead, 'estado'),\n  atendente:       getField(camposLead, 'atendente'),\n  tramite:         getField(camposLead, 'trámite'),\n  nombre_pix:      getField(camposLead, 'nombre pix'),\n  policia_federal: getField(camposLead, 'policia federal'),\n  prioridad:       getField(camposLead, 'prioridad'),\n  recorrencia:     getField(camposLead, 'recorrencia') || 'NUEVO',\n  utm_source:      getField(camposLead, 'utm_source'),\n  utm_campaign:    getField(camposLead, 'utm_campaign'),\n  utm_content:     getField(camposLead, 'utm_content'),\n  utm_medium:      getField(camposLead, 'utm_medium'),\n  id_lead:         String(lead.id || ''),\n  pipeline_id:     String(lead.pipeline_id || ''),\n  status_id:       String(lead.status_id   || ''),\n  mes,\n  ano,\n  fecha:           now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        2448
+      ],
+      "id": "ab7c831c-8a94-40c0-9aa4-3c68a3a37446",
+      "name": "Mapear Datos Completos"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "clientes",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id_kommo",
+              "condition": "eq",
+              "keyValue": "={{ $json.id_kommo }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1856,
+        2448
+      ],
+      "id": "e7a9b6c7-42f9-4fe5-8da5-0f756cdca9c5",
+      "name": "Buscar Cliente en BD",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "7dcbMZavL5HiWiwq",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "clientes",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id_kommo",
+              "condition": "eq",
+              "keyValue": "={{ $json.id_kommo }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "recorrencia",
+              "fieldValue": "={{ ($('Buscar Cliente en BD').item.json.recorrencia || 1) + 1 }}"
+            },
+            {
+              "fieldId": "valor_total",
+              "fieldValue": "={{ ($('Buscar Cliente en BD').item.json.valor_total || 0) + $('Mapear Datos Completos').item.json.valor_total }}"
+            },
+            {
+              "fieldId": "cantidad_tramites",
+              "fieldValue": "={{ ($('Buscar Cliente en BD').item.json.cantidad_tramites || 0) + 1 }}"
+            },
+            {
+              "fieldId": "fecha_ultimo_contacto",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            },
+            {
+              "fieldId": "actualizado_en",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2304,
+        2352
+      ],
+      "id": "62461df4-628d-4261-bf51-158b34f5a877",
+      "name": "Actualizar Cliente",
+      "credentials": {
+        "supabaseApi": {
+          "id": "7dcbMZavL5HiWiwq",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "clientes",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "id_kommo",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.id_kommo }}"
+            },
+            {
+              "fieldId": "fecha",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.fecha }}"
+            },
+            {
+              "fieldId": "cpf",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.cpf }}"
+            },
+            {
+              "fieldId": "nombre",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.nombre }}"
+            },
+            {
+              "fieldId": "telefono",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.telefono }}"
+            },
+            {
+              "fieldId": "email",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.email }}"
+            },
+            {
+              "fieldId": "valor_total",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.valor_total }}"
+            },
+            {
+              "fieldId": "pais",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.pais }}"
+            },
+            {
+              "fieldId": "ciudad",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.ciudad }}"
+            },
+            {
+              "fieldId": "estado",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.estado }}"
+            },
+            {
+              "fieldId": "canal_adquisicion",
+              "fieldValue": "KOMMO CRM"
+            },
+            {
+              "fieldId": "atendente",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.atendente }}"
+            },
+            {
+              "fieldId": "creado_en",
+              "fieldValue": "={{ $now.toISO() }}"
+            },
+            {
+              "fieldId": "estado_cliente",
+              "fieldValue": "=nuevo"
+            },
+            {
+              "fieldId": "recorrencia",
+              "fieldValue": "0"
+            },
+            {
+              "fieldId": "cantidad_tramites",
+              "fieldValue": "1"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2304,
+        2544
+      ],
+      "id": "0adfac59-cb2f-4ec7-887b-eba75323891f",
+      "name": "Crear Cliente",
+      "credentials": {
+        "supabaseApi": {
+          "id": "7dcbMZavL5HiWiwq",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let idCliente = null;\n\ntry {\n  const data = $('Actualizar Cliente').first().json;\n  idCliente = Array.isArray(data) ? data[0]?.id : data?.id;\n} catch(e) { /* rama no ejecutada */ }\n\nif (!idCliente) {\n  try {\n    const data = $('Crear Cliente').first().json;\n    idCliente = Array.isArray(data) ? data[0]?.id : data?.id;\n  } catch(e) { /* rama no ejecutada */ }\n}\n\nif (!idCliente) throw new Error('No se obtuvo ID del cliente de ninguna rama');\n\nconst datos = $('Mapear Datos Completos').item.json;\n\nreturn [{ json: {\n  id_cliente:     idCliente,\n  id_kommo:       datos.id_kommo,\n  nombre_pix:     datos.nombre_pix,\n  valor:          datos.valor_total,\n  servicio:       datos.tramite,\n  cliente:        datos.nombre,\n  telefono:       datos.telefono,\n  email:          datos.email,\n  pais:           datos.pais,\n  ciudad:         datos.ciudad,\n  estado:         datos.estado,\n  cpf:            datos.cpf,\n  atendente:      datos.atendente,\n  recorrencia:    datos.recorrencia,\n  utm_source:     datos.utm_source,\n  utm_campaign:   datos.utm_campaign,\n  utm_content:    datos.utm_content,\n  utm_medium:     datos.utm_medium,\n  mes:            datos.mes,\n  ano:            datos.ano,\n  fecha:          datos.fecha,\n  estado_tramite: 'pendiente',\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2976,
+        2448
+      ],
+      "id": "c8639c5a-fcd7-4ce8-aabe-2cc99d8759d4",
+      "name": "Preparar Entrada"
+    },
+    {
+      "parameters": {
+        "tableId": "entradas",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "id_cliente",
+              "fieldValue": "={{ $json.id_cliente }}"
+            },
+            {
+              "fieldId": "id_kommo",
+              "fieldValue": "={{ $json.id_kommo }}"
+            },
+            {
+              "fieldId": "fecha",
+              "fieldValue": "={{ DateTime.fromFormat($json.fecha, \"dd/MM/yyyy HH:mm\").toISO() }}"
+            },
+            {
+              "fieldId": "nombre_pix",
+              "fieldValue": "={{ $json.nombre_pix }}"
+            },
+            {
+              "fieldId": "valor",
+              "fieldValue": "={{ $json.valor }}"
+            },
+            {
+              "fieldId": "servicio",
+              "fieldValue": "={{ $json.servicio }}"
+            },
+            {
+              "fieldId": "cliente",
+              "fieldValue": "={{ $json.cliente }}"
+            },
+            {
+              "fieldId": "telefono",
+              "fieldValue": "={{ $json.telefono }}"
+            },
+            {
+              "fieldId": "email",
+              "fieldValue": "={{ $json.email }}"
+            },
+            {
+              "fieldId": "pais",
+              "fieldValue": "={{ $json.pais }}"
+            },
+            {
+              "fieldId": "cpf",
+              "fieldValue": "={{ $json.cpf }}"
+            },
+            {
+              "fieldId": "estado",
+              "fieldValue": "={{ $json.estado }}"
+            },
+            {
+              "fieldId": "atendente",
+              "fieldValue": "={{ $json.atendente }}"
+            },
+            {
+              "fieldId": "ciudad",
+              "fieldValue": "={{ $json.ciudad }}"
+            },
+            {
+              "fieldId": "recorrencia",
+              "fieldValue": "={{ $json.recorrencia }}"
+            },
+            {
+              "fieldId": "utm_source",
+              "fieldValue": "={{ $json.utm_source }}"
+            },
+            {
+              "fieldId": "utm_campaign",
+              "fieldValue": "={{ $json.utm_campaign }}"
+            },
+            {
+              "fieldId": "utm_content",
+              "fieldValue": "={{ $json.utm_content }}"
+            },
+            {
+              "fieldId": "utm_medium",
+              "fieldValue": "={{ $json.utm_medium }}"
+            },
+            {
+              "fieldId": "estado_tramite",
+              "fieldValue": "pendiente"
+            },
+            {
+              "fieldId": "id_lead",
+              "fieldValue": "={{ $('Mapear Datos Completos').item.json.id_lead }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        2448
+      ],
+      "id": "2489b0d8-3a0a-4672-9e38-a4c03d455d36",
+      "name": "Insertar Entrada",
+      "credentials": {
+        "supabaseApi": {
+          "id": "7dcbMZavL5HiWiwq",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "de56b0ad-7a86-40d6-98c3-b30bb032039f",
+              "leftValue": "={{ $('Buscar Cliente en BD').first().json.id_kommo }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2080,
+        2448
+      ],
+      "id": "871a4d49-a376-4b7a-8bd0-9e717be42073",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b8b48e47-a52e-4efc-af43-57bae1c2755b",
+              "leftValue": "={{ $('Get many rows').item.json.id_lead.toString() }}",
+              "rightValue": "=",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2752,
+        2448
+      ],
+      "id": "4b6992ac-f25d-4656-afe7-14de525582a2",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "entradas",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id_lead",
+              "condition": "eq",
+              "keyValue": "={{ $('Mapear Datos Completos').item.json.id_lead }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2528,
+        2448
+      ],
+      "id": "ec6a3acf-2fcf-41fe-8f71-488a25aae8de",
+      "name": "Get many rows",
+      "executeOnce": false,
+      "retryOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "7dcbMZavL5HiWiwq",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "N400VeAgPKPo4sxY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/N400VeAgPKPo4sxY",
+          "cachedResultName": "CARPETA A DRIVE GENERAL"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1808,
+        2688
+      ],
+      "id": "5a32eb20-40c2-4d66-907b-e0250e8bab2d",
+      "name": "Call 'CARPETA A DRIVE GENERAL'"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://plataformaoficial.kommo.com/api/v4/leads/' + JSON.parse($json.data)._embedded.leads[0].id + '/notes' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a3d8a6b5-8ce3-495e-a510-ec58029cdca0",
+      "name": "Kommo API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1360,
+        3120
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "historial",
+              "value": "={{ (JSON.parse($json.data)._embedded?.notes || []).filter(n => n.note_type === 'message' || n.note_type === 'common').map(n => '[' + new Date(n.created_at * 1000).toLocaleString() + '] ' + (n.params?.text || '')).join('\\n\\n') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b4b649b-713c-4d94-88f2-1880240786a7",
+      "name": "Parsear Notas",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        3120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"historial\": $json.historial } }}",
+        "options": {}
+      },
+      "id": "f32b83d3-0501-461c-bb75-3c0165238cbc",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1808,
+        3120
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://plataformaoficial.kommo.com/api/v4/contacts/{{ $json.body.id_crm }}?with=leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        3104
+      ],
+      "id": "16e12a8d-d0d3-40f0-9ca1-23cba9c735bc",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "clientes",
+        "filters": {
+          "conditions": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2016,
+        3120
+      ],
+      "id": "7c3d73f2-e37f-4fac-83ae-ff8d84bd9511",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "7dcbMZavL5HiWiwq",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat-historial",
+        "options": {}
+      },
+      "id": "c2b7b36d-dcab-4a16-a1a9-cd701ed73c42",
+      "name": "Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        960,
+        3104
+      ],
+      "webhookId": "generar-un-id-unico-en-tu-n8n"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://rcqkmaxkuxllcyjzqbvn.supabase.co/rest/v1/notas_kommo?telefono=eq.{{ $('Mapear Datos Completos').item.json.telefono.replace(/\\D/g, '') }}&cliente_id=is.null",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_SUPABASE_ANON_KEY_AQUI"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente_id",
+              "value": "={{ $('Mapear Datos Completos').item.json.id_kommo }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "asociar-historial-flotante-http",
+      "name": "Vincular Historial (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3400,
+        2448
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "IF: ¿Status = 142?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: ¿Status = 142?": {
+      "main": [
+        [
+          {
+            "node": "Consultar Lead Kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Lead Kommo": {
+      "main": [
+        [
+          {
+            "node": "Extraer contactoId",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer contactoId": {
+      "main": [
+        [
+          {
+            "node": "Consultar Contacto Kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Contacto Kommo": {
+      "main": [
+        [
+          {
+            "node": "Mapear Datos Completos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mapear Datos Completos": {
+      "main": [
+        [
+          {
+            "node": "Buscar Cliente en BD",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Call 'CARPETA A DRIVE GENERAL'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Cliente en BD": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar Cliente": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Cliente": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Entrada": {
+      "main": [
+        [
+          {
+            "node": "Insertar Entrada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Actualizar Cliente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear Cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Preparar Entrada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kommo API": {
+      "main": [
+        [
+          {
+            "node": "Parsear Notas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Notas": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Kommo API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar Entrada": {
+      "main": [
+        [
+          {
+            "node": "Vincular Historial (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "db0cb74972bcc08991723ce67e0af6a9272904c7894e9a307eded2d5020ea127"
+  }
+}

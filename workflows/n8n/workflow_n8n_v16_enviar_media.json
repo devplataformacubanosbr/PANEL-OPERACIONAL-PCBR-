@@ -1,0 +1,196 @@
+{
+  "name": "Enviar WhatsApp Media (Dashboard -> Evolution API)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "enviar-whatsapp-media",
+        "options": {}
+      },
+      "id": "webhook-media-node",
+      "name": "Webhook (Recibe del Dashboard)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "enviar-whatsapp-media-id"
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "number",
+              "value": "={{ $json.body.telefono }}"
+            },
+            {
+              "name": "media",
+              "value": "={{ $json.body.url_archivo }}"
+            },
+            {
+              "name": "fileName",
+              "value": "={{ $json.body.nombre_archivo }}"
+            },
+            {
+              "name": "mediatype",
+              "value": "={{ $json.body.tipo_archivo.split('/')[0] === 'audio' ? 'audio' : ($json.body.tipo_archivo.split('/')[0] === 'video' ? 'video' : 'document') }}"
+            },
+            {
+              "name": "mimetype",
+              "value": "={{ $json.body.tipo_archivo }}"
+            },
+            {
+              "name": "cliente_id",
+              "value": "={{ $json.body.cliente_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-media-params",
+      "name": "Preparar Datos Media",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=TU_EVOLUTION_URL/message/sendMedia/TU_INSTANCIA",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "TU_GLOBAL_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $json.number }}"
+            },
+            {
+              "name": "mediatype",
+              "value": "={{ $json.mediatype }}"
+            },
+            {
+              "name": "mimetype",
+              "value": "={{ $json.mimetype }}"
+            },
+            {
+              "name": "media",
+              "value": "={{ $json.media }}"
+            },
+            {
+              "name": "fileName",
+              "value": "={{ $json.fileName }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $json.fileName }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-media-evolution",
+      "name": "Enviar a Evolution API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "notas_kommo",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "cliente_id",
+              "fieldValue": "={{ $('Preparar Datos Media').item.json.cliente_id }}"
+            },
+            {
+              "fieldId": "texto",
+              "fieldValue": "=[Archivo enviado] {{ $('Preparar Datos Media').item.json.fileName }}"
+            },
+            {
+              "fieldId": "remitente",
+              "fieldValue": "outgoing"
+            }
+          ]
+        }
+      },
+      "id": "save-history",
+      "name": "Guardar en Historial",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "CREDENTIAL_ID_AQUI",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook (Recibe del Dashboard)": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos Media": {
+      "main": [
+        [
+          {
+            "node": "Enviar a Evolution API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar a Evolution API": {
+      "main": [
+        [
+          {
+            "node": "Guardar en Historial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f7823c9c-media-workflow"
+}
