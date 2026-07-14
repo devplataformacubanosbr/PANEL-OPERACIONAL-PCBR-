@@ -214,10 +214,9 @@ export default function KommoSettings() {
     }
   };
 
-  // El nombre de trámite y el interruptor "activa registro" se guardan en la misma fila de
-  // kommo_stage_mappings pero se editan por separado (un checkbox no debe pisar lo que se
-  // escribió en el input de texto, y viceversa) — por eso este helper hace merge en vez de
-  // reemplazar toda la fila.
+  // tramite ya no se pide por input de texto (se sacó de la UI) — la columna
+  // sigue siendo NOT NULL en la base, así que usamos el nombre de la etapa
+  // de Kommo como valor por defecto cuando se activa el registro.
   const upsertStageMapping = (pipeline, stage, updates) => {
     setStageMappings(prev => {
       const idx = prev.findIndex(m => m.kommo_pipeline_id === pipeline.id.toString() && m.kommo_stage_id === stage.id.toString());
@@ -226,24 +225,20 @@ export default function KommoSettings() {
         kommo_pipeline_name: pipeline.name,
         kommo_stage_id: stage.id.toString(),
         kommo_stage_name: stage.name,
-        tramite: '',
+        tramite: stage.name,
         activa_registro: false,
       };
       const updated = { ...existing, ...updates };
       const rest = idx >= 0 ? prev.filter((_, i) => i !== idx) : prev;
 
-      // Sin nombre de trámite y sin activar registro, no hay nada que guardar para esta etapa.
-      if (!updated.tramite?.trim() && !updated.activa_registro) return rest;
+      // Sin activar registro, no hay nada que guardar para esta etapa.
+      if (!updated.activa_registro) return rest;
       return [...rest, updated];
     });
   };
 
-  const handleStageTramiteChange = (pipeline, stage, tramite) => {
-    upsertStageMapping(pipeline, stage, { tramite: tramite.trim() });
-  };
-
   const handleStageActivaRegistroChange = (pipeline, stage, activaRegistro) => {
-    upsertStageMapping(pipeline, stage, { activa_registro: activaRegistro });
+    upsertStageMapping(pipeline, stage, { activa_registro: activaRegistro, tramite: stage.name });
   };
 
   const saveStageMappings = async () => {
@@ -492,12 +487,11 @@ export default function KommoSettings() {
         <div style={{ background: 'var(--color-bg-surface)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
-                 <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1rem' }}>Mapeo de Etapas a Trámites</h3>
+                 <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1rem' }}>Mapeo de Etapas</h3>
                  <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', margin: 0 }}>
-                    Cada pipeline de Kommo tiene sus propias columnas. El nombre de trámite se usa para actualizar
-                    el trámite en el Panel y la ficha del cliente cuando un lead pasa por esa columna. Marcá
-                    "Activa registro" solo en la etapa donde querés que se cree el cliente y el trámite si todavía
-                    no existen — las demás columnas pueden tener nombre de trámite sin disparar un alta nueva.
+                    Cada pipeline de Kommo tiene sus propias columnas. Marcá "Activa registro" en la etapa donde
+                    querés que se cree el cliente y el trámite si todavía no existen — las demás columnas solo
+                    actualizan un trámite que ya exista, sin disparar un alta nueva.
                  </p>
               </div>
               <button className="btn btn-primary" onClick={saveStageMappings} disabled={saving}>
@@ -510,23 +504,15 @@ export default function KommoSettings() {
               <div key={pipeline.id} style={{ marginBottom: '1.5rem' }}>
                  <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.9375rem', color: 'var(--color-text-primary)' }}>{pipeline.name}</h4>
                  <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 140px', gap: '1rem', padding: '0.5rem 1rem', background: 'var(--color-bg-elevated)', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--color-text-muted)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: '1rem', padding: '0.5rem 1rem', background: 'var(--color-bg-elevated)', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--color-text-muted)' }}>
                        <div>Etapa</div>
-                       <div>Trámite</div>
                        <div style={{ textAlign: 'center' }}>Activa registro</div>
                     </div>
                     {pipeline.stages.map(stage => {
                        const current = stageMappings.find(m => m.kommo_pipeline_id === pipeline.id.toString() && m.kommo_stage_id === stage.id.toString());
                        return (
-                          <div key={stage.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 140px', gap: '1rem', padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)', alignItems: 'center' }}>
+                          <div key={stage.id} style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: '1rem', padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)', alignItems: 'center' }}>
                              <div style={{ fontSize: '0.875rem' }}>{stage.name}</div>
-                             <input
-                                type="text"
-                                className="form-input"
-                                placeholder="Ej. RNM, Pasaporte..."
-                                defaultValue={current?.tramite || ''}
-                                onBlur={(e) => handleStageTramiteChange(pipeline, stage, e.target.value)}
-                             />
                              <div style={{ display: 'flex', justifyContent: 'center' }}>
                                 <input
                                    type="checkbox"
