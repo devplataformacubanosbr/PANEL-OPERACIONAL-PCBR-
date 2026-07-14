@@ -11,7 +11,10 @@ import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { analyzeDocumentImage } from '../services/aiService';
 import { normalizeDateToDDMMYYYY } from '../utils/dateFormatter';
-import { toIsoDate } from '../components/clientView.constants';
+import { toIsoDate, FIXED_FIELDS_CATALOG } from '../components/clientView.constants';
+
+/** Columnas reales de `clientes` (los 13 campos migratorios + el resto de campos fijos) */
+const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
 
 /** Mapeo de claves IA → columnas de la tabla `clientes` */
 const AI_FIELD_MAP = {
@@ -54,6 +57,11 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
     setIsSaving(true);
     try {
       const updates = {};
+      // Fuente de `campos_personalizados` actual del cliente destino, para no
+      // pisar otros campos JSON ya guardados al hacer el merge.
+      const targetClientData = extractionTargetClientData || client;
+      const customJsonUpdates = { ...(targetClientData?.campos_personalizados || {}) };
+      let hasCustomJsonUpdates = false;
 
       for (const [key, value] of Object.entries(extractedData)) {
         if (!value) continue;
@@ -70,8 +78,20 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
             finalValue = String(value).toUpperCase();
           }
 
-          updates[mappedCol] = finalValue;
+          // Los campos que no son columnas fijas de `clientes` (es decir, que
+          // vienen de un campo dinámico creado en Configuración > Campos Base)
+          // se guardan en clientes.campos_personalizados en vez de una columna.
+          if (FIXED_COLUMN_IDS.has(mappedCol)) {
+            updates[mappedCol] = finalValue;
+          } else {
+            customJsonUpdates[mappedCol] = finalValue;
+            hasCustomJsonUpdates = true;
+          }
         }
+      }
+
+      if (hasCustomJsonUpdates) {
+        updates.campos_personalizados = customJsonUpdates;
       }
 
       if (Object.keys(updates).length > 0) {

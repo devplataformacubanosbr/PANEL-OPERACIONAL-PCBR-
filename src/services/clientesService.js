@@ -19,6 +19,19 @@ export const getClientesBase = async () => {
   return data || [];
 };
 
+// Catálogo de campos personalizados dinámicos (creados desde Configuración >
+// Campos Base). No incluye los 13 campos migratorios de FIXED_FIELDS_CATALOG
+// (esos son columnas fijas de `clientes`) — solo campos nuevos que un admin
+// define en tiempo real, guardados dentro de clientes.campos_personalizados.
+export const getConfigCamposClientes = async () => {
+  const { data, error } = await supabase.from('config_campos_clientes')
+    .select('*')
+    .eq('activo', true)
+    .order('orden', { ascending: true });
+  if (error) throw error;
+  return data || [];
+};
+
 export const createCliente = async (clienteData) => {
   const { data, error } = await supabase.from('clientes').insert([clienteData]).select().single();
   if (error) throw error;

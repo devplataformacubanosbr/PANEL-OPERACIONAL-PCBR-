@@ -10,7 +10,8 @@ import HeaderSettings from './settings/HeaderSettings';
 import EtiquetasSettings from './settings/EtiquetasSettings';
 import AiBotBuilder from './settings/AiBotBuilder';
 import ImportClientesSettings from './settings/ImportClientesSettings';
-import { Settings as SettingsIcon, FileText, UserSquare, Wand2, Link as LinkIcon, User, Palette, LayoutTemplate, Tags, Bot, Upload } from 'lucide-react';
+import ConfigCamposClientesSettings from './settings/ConfigCamposClientesSettings';
+import { Settings as SettingsIcon, FileText, UserSquare, Wand2, Link as LinkIcon, User, Palette, FileJson, LayoutTemplate, Tags, Bot, Upload } from 'lucide-react';
 
 // fluid: true = el panel tiene su propia tabla/grid que aprovecha mejor el ancho completo.
 // fluid: false (default) = formulario de campos angostos, se ve mejor con un ancho legible acotado.
@@ -29,6 +30,7 @@ const NAV_SECTIONS = [
       { id: 'etiquetas', label: 'Etiquetas', icon: Tags, adminOnly: true, fluid: true },
       { id: 'importar_clientes', label: 'Importar Clientes', icon: Upload, adminOnly: true, fluid: true },
       { id: 'ai_bots', label: 'Agentes IA', icon: Bot, adminOnly: true, fluid: true },
+      { id: 'config_campos', label: 'Campos Base', icon: FileJson, adminOnly: true, fluid: true },
     ],
   },
   {
@@ -49,6 +51,7 @@ const PANELS = {
   etiquetas: () => <EtiquetasSettings />,
   importar_clientes: () => <ImportClientesSettings />,
   ai_bots: () => <AiBotBuilder />,
+  config_campos: () => <ConfigCamposClientesSettings />,
   marca: () => <MarcaSettings />,
   integraciones: () => <IntegrationsHub />,
   cabecera_clientes: () => <HeaderSettings />,

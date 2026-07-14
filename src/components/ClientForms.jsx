@@ -8,9 +8,11 @@ import { getConfig } from '../services/configService';
 
 export default function ClientForms({
   clientId,
+  client = {},
   formularios = [],
   onRefresh,
   onSendToExtension,
+  customFieldsConfig = []
 }) {
   const [viewingForm, setViewingForm] = useState(null);
   const [isSectionExpanded, setIsSectionExpanded] = useState(false);
@@ -42,6 +44,8 @@ export default function ClientForms({
     
     try {
       let clientUpdates = {};
+      let customJsonUpdates = { ...(client.campos_personalizados || {}) };
+      let hasCustomUpdates = false;
 
       const mappingFijos = {
         'nombres': 'nombre',
@@ -61,21 +65,28 @@ export default function ClientForms({
       Object.entries(viewingForm.respuestas).forEach(([keyRaw, value]) => {
         if (!value) return;
         const key = keyRaw.toLowerCase().trim();
-        
+
         if (key === 'nombres') nombres = value;
         if (key === 'apellidos') apellidos = value;
-        
-        const mappedFixed = mappingFijos[key];
+
+        let mappedFixed = mappingFijos[key];
         if (mappedFixed && mappedFixed !== 'nombre') {
            clientUpdates[mappedFixed] = value;
+        } else {
+           const configMatch = customFieldsConfig.find(c => c?.nombre_campo?.toLowerCase().trim() === key);
+           if (configMatch) {
+             customJsonUpdates[configMatch.identificador] = value;
+             hasCustomUpdates = true;
+           }
         }
-        // Las claves de formulario que no mapean a un campo fijo conocido se
-        // ignoran: en la versión standalone no existe un catálogo de campos
-        // personalizados dinámicos para guardarlas.
       });
 
       if (nombres || apellidos) {
         clientUpdates.nombre = `${nombres} ${apellidos}`.trim();
+      }
+
+      if (hasCustomUpdates) {
+        clientUpdates.campos_personalizados = customJsonUpdates;
       }
 
       if (Object.keys(clientUpdates).length > 0) {

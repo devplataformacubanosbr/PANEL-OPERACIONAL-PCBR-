@@ -659,7 +659,12 @@ export function getClientFieldValue(clientData, fieldId) {
     return `${today.getDate()} de ${meses[today.getMonth()]} de ${today.getFullYear()}`;
   }
 
-  const val = clientData ? clientData[baseFieldId] : null;
+  let val = clientData ? clientData[baseFieldId] : null;
+  // Fallback: los campos dinámicos nuevos (config_campos_clientes) viven en
+  // clientes.campos_personalizados y no como columna plana.
+  if (!val && clientData?.campos_personalizados) {
+    val = clientData.campos_personalizados[baseFieldId];
+  }
   if (!val && baseFieldId !== 'fecha_hoy') return '';
 
   if (modifier) {

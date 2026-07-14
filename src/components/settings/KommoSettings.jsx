@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
+import { getConfigCamposClientes } from '../../services/clientesService';
 import { Loader2, Save, Link, RefreshCw, AlertTriangle, Key, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -30,9 +31,13 @@ const LOCAL_FIXED_FIELDS = [
   { id: 'atendente', name: 'Atendente (cliente)', entity: 'leads' },
 
   // ── Campos Base ────────────────────────────────────────────────────────────
-  // En el SaaS estos viven en un catálogo dinámico (campos_personalizados JSON);
-  // acá son columnas fijas de `clientes` (ver clientView.constants.js), así que
-  // se mapean igual que cualquier otro campo fijo, sin sistema aparte.
+  // Los 13 campos migratorios (antes en campos_personalizados JSON) ahora son
+  // columnas fijas de `clientes` (ver clientView.constants.js), así que se
+  // mapean como cualquier otro campo fijo (local_field_type: 'fixed').
+  // Los campos NUEVOS que un admin cree en Configuración > Campos Base
+  // (tabla config_campos_clientes) se cargan aparte en loadData() y se
+  // agregan a localFields con type: 'json' — esos sí van a
+  // clientes.campos_personalizados (ver optgroup "Campos Personalizados" abajo).
   { id: 'fecha_nacimiento', name: 'Fecha Nacimiento', entity: 'contacts', group: 'Campos Base' },
   { id: 'estado_civil', name: 'Estado Civil', entity: 'contacts', group: 'Campos Base' },
   { id: 'sexo', name: 'Sexo', entity: 'contacts', group: 'Campos Base' },
@@ -92,8 +97,14 @@ export default function KommoSettings() {
         setIsTested(true); // Assuming they are tested if they exist
       }
 
-      // 2. Load Local Fields
-      const allLocalFields = LOCAL_FIXED_FIELDS.map(f => ({ ...f, type: 'fixed', group: f.group || 'Campos Principales' }));
+      // 2. Load Local Fields (fijos + dinámicos definidos en Configuración > Campos Base)
+      const customFields = await getConfigCamposClientes();
+      const allLocalFields = [
+        ...LOCAL_FIXED_FIELDS.map(f => ({ ...f, type: 'fixed', group: f.group || 'Campos Principales' })),
+        // Los campos dinámicos no tienen columna propia, así que no restringimos
+        // por `entity`: se ofrecen igual en el mapeo de contactos y de leads.
+        ...customFields.map(f => ({ id: f.identificador, name: f.nombre_campo, type: 'json', group: 'Campos Personalizados' })),
+      ];
       setLocalFields(allLocalFields);
 
       // 3. Load Mappings
@@ -456,6 +467,11 @@ export default function KommoSettings() {
                           </optgroup>
                           <optgroup label="Campos Base">
                              {localFields.filter(f => f.type === 'fixed' && f.group === 'Campos Base' && f.entity === (activeTab === 'mappings_contacts' ? 'contacts' : 'leads')).map(f => (
+                                <option key={f.id} value={f.id}>{f.name}</option>
+                             ))}
+                          </optgroup>
+                          <optgroup label="Campos Personalizados">
+                             {localFields.filter(f => f.type === 'json').map(f => (
                                 <option key={f.id} value={f.id}>{f.name}</option>
                              ))}
                           </optgroup>

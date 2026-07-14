@@ -35,10 +35,16 @@ export default function ClientViewHeader({
      if (fieldId === 'origen') return `${client.ciudad || 'DESC'}, ${client.estado_federal || client.estado || 'N/A'}, ${client.nacionalidad || 'N/A'}`;
      if (fieldId === 'creado_en') return client.creado_en ? formatDate(client.creado_en) : 'N/A';
 
-     // 1. Columna directa del cliente (todos los campos son columnas fijas en esta versión)
+     // 1. Campos personalizados (JSON): campos dinámicos nuevos creados desde
+     //    Configuración > Campos Base (config_campos_clientes), sin columna propia.
+     if (client.campos_personalizados && client.campos_personalizados[fieldId]) {
+         return client.campos_personalizados[fieldId];
+     }
+
+     // 2. Columna directa del cliente (los 13 campos migratorios + el resto de columnas fijas)
      if (client[fieldId]) return client[fieldId];
 
-     // 2. Campos dinámicos (compatibilidad con `clienteDatos`, si algún llamador lo pasa)
+     // 3. Campos dinámicos (compatibilidad con `clienteDatos`, si algún llamador lo pasa)
      const dynamic = clienteDatos.find(d => d.campo_id === fieldId);
      if (dynamic && dynamic.valor) return dynamic.valor;
 

@@ -57,8 +57,13 @@ const ClientPersonalData = ({
           const sectionData = [];
           sectionFields.forEach(campo => {
             if (catName === 'Documentos de Identidad' && DOC_GROUP_FIELD_IDS.has(campo.id)) return;
-            
-            const val = client[campo.id];
+
+            let val = '';
+            if (campo.is_custom_json) {
+              val = client.campos_personalizados?.[campo.id];
+            } else {
+              val = client[campo.id];
+            }
             if (val) sectionData.push({ campo_id: campo.id, valor: val });
           });
 

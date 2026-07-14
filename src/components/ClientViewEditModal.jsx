@@ -80,6 +80,8 @@ export default function ClientViewEditModal({
         } else if (!ignoredFields.includes(field.id) && !ignoredFields.includes(field.nombre_campo?.toLowerCase())) {
           if (field.id && relClient && relClient[field.id]) {
             newVal = relClient[field.id];
+          } else if (field.is_custom_json && relClient && relClient.campos_personalizados) {
+            newVal = relClient.campos_personalizados[field.id];
           }
         }
         

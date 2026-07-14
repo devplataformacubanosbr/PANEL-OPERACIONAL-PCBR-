@@ -70,6 +70,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
     entradas,
     formularios,
     duplicateContacts,
+    customFieldsConfig,
     isLoading,
     isError,
     error: clientDataError,
@@ -104,6 +105,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   const edit = useClientViewEdit({
     clientId,
     client,
+    customFieldsConfig,
     fetchClientData,
   });
 
@@ -131,9 +133,24 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
     handleSendAiMessage,
   } = useClientAiChat(client, [], entradas);
 
-  // Todos los campos del cliente son columnas fijas de `clientes` (versión standalone,
-  // ya no existe un catálogo de campos dinámicos por organización).
-  const mergedFields = FIXED_FIELDS_CATALOG;
+  // ── Merge custom fields with fixed fields ──────────────────────────────────
+  // Los 13 campos migratorios de FIXED_FIELDS_CATALOG siguen siendo columnas
+  // fijas de `clientes`. Los campos dinámicos nuevos (creados desde
+  // Configuración > Campos Base, tabla config_campos_clientes) se guardan en
+  // clientes.campos_personalizados y se marcan con is_custom_json para que el
+  // resto de los componentes sepan leer/escribir ahí en vez de en una columna.
+  const mergedFields = [
+    ...FIXED_FIELDS_CATALOG,
+    ...(customFieldsConfig || []).map(cf => ({
+      id: cf.identificador,
+      nombre_campo: cf.nombre_campo,
+      requerido: cf.requerido,
+      es_fijo: true,
+      category_name: cf.categoria,
+      is_custom_json: true,
+      tipo: cf.tipo,
+    }))
+  ];
 
   // ── Simple handlers ────────────────────────────────────────────────────────
   const handleCopy = (text, id) => {
@@ -441,9 +458,11 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
           
           <ClientForms
             clientId={clientId}
+            client={client}
             formularios={formularios}
             onRefresh={() => fetchClientData(true)}
             onSendToExtension={handleSendToExtension}
+            customFieldsConfig={customFieldsConfig}
           />
           
           <TemplateManager defaultExpanded={false} client={client} entradas={entradas} />

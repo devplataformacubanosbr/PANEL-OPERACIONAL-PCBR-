@@ -12,9 +12,24 @@ import toast from 'react-hot-toast';
 import { handleError } from '../utils/errorHandler';
 import { FIXED_FIELDS_CATALOG } from '../components/clientView.constants';
 
-export default function useClientViewEdit({ clientId, client, fetchClientData }) {
-  // Todos los campos del cliente son columnas fijas de `clientes` (versión standalone).
-  const fixedFields = FIXED_FIELDS_CATALOG;
+export default function useClientViewEdit({ clientId, client, customFieldsConfig = [], fetchClientData }) {
+  // Los 13 campos migratorios de FIXED_FIELDS_CATALOG son columnas fijas de
+  // `clientes`. Los campos dinámicos nuevos (config_campos_clientes) se
+  // mergean acá y se marcan is_custom_json para leer/escribir en
+  // clientes.campos_personalizados en vez de una columna real.
+  const mergedFields = [
+    ...FIXED_FIELDS_CATALOG,
+    ...customFieldsConfig.map(cf => ({
+      id: cf.identificador,
+      nombre_campo: cf.nombre_campo,
+      requerido: cf.requerido,
+      es_fijo: true, // We treat them as fixed for the form generation logic
+      category_name: cf.categoria,
+      is_custom_json: true, // flag to know how to save it
+      tipo: cf.tipo,
+    }))
+  ];
+  const fixedFields = mergedFields;
 
   // Modal state
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -86,8 +101,8 @@ export default function useClientViewEdit({ clientId, client, fetchClientData })
         const fullName = (client[f.id] || '').trim().toUpperCase();
         const parts = fullName.split(' ');
 
-        const padreName = (client.nombre_padre || '').trim().toUpperCase().split(' ');
-        const madreName = (client.nombre_madre || '').trim().toUpperCase().split(' ');
+        const padreName = (client.campos_personalizados?.nombre_padre || client.nombre_padre || '').trim().toUpperCase().split(' ');
+        const madreName = (client.campos_personalizados?.nombre_madre || client.nombre_madre || '').trim().toUpperCase().split(' ');
 
         let splitIndex = 1;
 
@@ -135,7 +150,12 @@ export default function useClientViewEdit({ clientId, client, fetchClientData })
         extraArgs._estado = dirData.estado || '';
         extraArgs._ponto_referencia = dirData.ponto_referencia || '';
       }
-      const valor = client[f.id] || '';
+      let valor = '';
+      if (f.is_custom_json) {
+        valor = client.campos_personalizados?.[f.id] || '';
+      } else {
+        valor = client[f.id] || '';
+      }
 
       formData.push({
         id: f.id,
@@ -143,6 +163,7 @@ export default function useClientViewEdit({ clientId, client, fetchClientData })
         nombre_campo: f.nombre_campo,
         valor: valor,
         es_fijo: true,
+        is_custom_json: f.is_custom_json,
         ...extraArgs
       });
     });
@@ -160,7 +181,15 @@ export default function useClientViewEdit({ clientId, client, fetchClientData })
     if (!window.confirm('¿Borrar este dato del cliente?')) return;
     try {
       if (es_fijo) {
-        await supabase.from('clientes').update({ [dataId]: null }).eq('id', clientId);
+        // Acá dataId puede ser una columna fija normal o un campo JSON dinámico
+        const isCustomJson = fixedFields.find(f => f.id === dataId)?.is_custom_json;
+        if (isCustomJson) {
+           const customJsonUpdates = { ...(client.campos_personalizados || {}) };
+           delete customJsonUpdates[dataId];
+           await supabase.from('clientes').update({ campos_personalizados: customJsonUpdates }).eq('id', clientId);
+        } else {
+           await supabase.from('clientes').update({ [dataId]: null }).eq('id', clientId);
+        }
       }
       setEditFormData(editFormData.map(f => f.id === dataId ? { ...f, valor: '' } : f));
       await fetchClientData();
@@ -177,6 +206,8 @@ export default function useClientViewEdit({ clientId, client, fetchClientData })
     setIsSaving(true);
     try {
       const fixedUpdates = {};
+      let customJsonUpdates = { ...(client.campos_personalizados || {}) };
+      let hasCustomJsonUpdates = false;
 
       for (const field of editFormData) {
         if (field.es_fijo) {
@@ -199,8 +230,16 @@ export default function useClientViewEdit({ clientId, client, fetchClientData })
             upperValue = JSON.stringify(dirObj);
           }
 
-          if (client[field.id] !== upperValue && (client[field.id] || upperValue)) {
-            fixedUpdates[field.id] = upperValue;
+          if (field.is_custom_json) {
+             const prevVal = client.campos_personalizados?.[field.id] || null;
+             if (prevVal !== upperValue && (prevVal || upperValue)) {
+                customJsonUpdates[field.id] = upperValue;
+                hasCustomJsonUpdates = true;
+             }
+          } else {
+             if (client[field.id] !== upperValue && (client[field.id] || upperValue)) {
+               fixedUpdates[field.id] = upperValue;
+             }
           }
         }
       }
@@ -216,10 +255,15 @@ export default function useClientViewEdit({ clientId, client, fetchClientData })
           continue;
         }
 
-        // Con la nueva arquitectura standalone no existen campos dinámicos: todo
-        // campo de cliente es una columna fija de `clientes`, así que ignoramos
-        // cualquier campo nuevo que no esté en el catálogo fijo.
+        // Los campos nuevos que no están en el catálogo (fijo ni dinámico) no
+        // se pueden crear libremente desde acá: hay que darlos de alta primero
+        // en Configuración > Campos Base para que generen una entrada en
+        // config_campos_clientes.
         console.warn('Ignoring new field not mapped in fixed config:', nf.campo_id);
+      }
+
+      if (hasCustomJsonUpdates) {
+         fixedUpdates.campos_personalizados = customJsonUpdates;
       }
 
       if (Object.keys(fixedUpdates).length > 0) {

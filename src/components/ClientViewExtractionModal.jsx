@@ -4,7 +4,10 @@ import { supabase } from '../supabaseClient';
 import { reassignDocument } from '../services/storageService';
 import { createCliente } from '../services/clientesService';
 import { normalizeDateToDDMMYYYY } from '../utils/dateFormatter';
-import { toIsoDate } from './clientView.constants';
+import { toIsoDate, FIXED_FIELDS_CATALOG } from './clientView.constants';
+
+/** Columnas reales de `clientes` (los 13 campos migratorios + el resto de campos fijos) */
+const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
 
 const fieldMap = {
   'NOMBRE_COMPLETO': 'nombre',
@@ -287,7 +290,9 @@ export default function ClientViewExtractionModal({
           {Object.entries(extractedData).map(([k, v]) => {
             if (!v || k === 'ILEGIBLE') return null;
             const clientField = fieldMap[k];
-            const existingValue = clientField && cliente ? cliente[clientField] : '';
+            const existingValue = clientField && cliente
+              ? (FIXED_COLUMN_IDS.has(clientField) ? cliente[clientField] : cliente.campos_personalizados?.[clientField])
+              : '';
             
             return (
               <div key={k} style={{ display: 'flex', gap: '1rem', alignItems: 'stretch' }}>

@@ -134,18 +134,25 @@ serve(async (req) => {
 
     // Crea o actualiza el cliente correspondiente a un contacto de Kommo (aplica mapeos de
     // campos ya configurados). Devuelve el id del cliente en nuestra base, o null.
-    // NOTA: `local_field_type === 'json'` es un mapeo heredado de cuando los
-    // campos personales del cliente (rnm, pasaporte, etc.) vivían en
-    // `clientes.campos_personalizados` JSONB. Esa columna ya no existe — esos
-    // campos ahora son columnas fijas, así que 'json' se trata igual que
-    // 'fixed' (escribe directo a la columna con ese nombre).
+    // NOTA: `local_field_type === 'fixed'` es una columna real de `clientes`
+    // (incluye los 13 campos migratorios: rnm, pasaporte, etc.) y se escribe
+    // directo en fixedUpdates[mapping.local_field].
+    // `local_field_type === 'json'` es un campo dinámico creado desde
+    // Configuración > Campos Base (tabla config_campos_clientes) SIN columna
+    // propia — se acumula en jsonUpdates y al final se mergea dentro de
+    // clientes.campos_personalizados (junto con lo que ya hubiera guardado).
     const processContact = async (data: any): Promise<number | null> => {
         let fixedUpdates: any = { id_kommo: data.id.toString() };
+        let jsonUpdates: any = {};
         let identifierValue: string | null = null;
 
         const nameMapping = mappings.find(m => m.kommo_entity === 'contacts' && m.kommo_field_id === 'name');
         if (nameMapping) {
-            if (nameMapping.local_field_type === 'fixed' || nameMapping.local_field_type === 'json') fixedUpdates[nameMapping.local_field] = data.name?.toUpperCase();
+            if (nameMapping.local_field_type === 'json') {
+                jsonUpdates[nameMapping.local_field] = data.name?.toUpperCase();
+            } else if (nameMapping.local_field_type === 'fixed') {
+                fixedUpdates[nameMapping.local_field] = data.name?.toUpperCase();
+            }
         } else {
             fixedUpdates.nombre = data.name?.toUpperCase() || 'Sin Nombre';
         }
@@ -159,7 +166,9 @@ serve(async (req) => {
                     identifierValue = val;
                 }
 
-                if (mapping.local_field_type === 'fixed' || mapping.local_field_type === 'json') {
+                if (mapping.local_field_type === 'json') {
+                    jsonUpdates[mapping.local_field] = val;
+                } else if (mapping.local_field_type === 'fixed') {
                     fixedUpdates[mapping.local_field] = val;
                 }
             }
@@ -168,7 +177,7 @@ serve(async (req) => {
         let existingClient: any = null;
 
         const { data: byKommoId } = await supabaseClient.from('clientes')
-            .select('id')
+            .select('id, campos_personalizados')
             .eq('id_kommo', data.id.toString())
             .single();
 
@@ -178,11 +187,15 @@ serve(async (req) => {
             const idMapping = mappings.find(m => m.is_identifier && m.kommo_entity === 'contacts');
             if (idMapping) {
                 const { data: byFixed } = await supabaseClient.from('clientes')
-                    .select('id')
+                    .select('id, campos_personalizados')
                     .eq(idMapping.local_field, identifierValue)
                     .single();
                 if (byFixed) existingClient = byFixed;
             }
+        }
+
+        if (Object.keys(jsonUpdates).length > 0) {
+            fixedUpdates.campos_personalizados = { ...(existingClient?.campos_personalizados || {}), ...jsonUpdates };
         }
 
         if (existingClient) {
@@ -237,7 +250,6 @@ serve(async (req) => {
         const { data: existingTramite } = await supabaseClient.from('entradas')
             .select('id, datos_personalizados')
             .eq('id_lead', kommoLeadId)
-            .eq('organization_id', orgId)
             .single();
 
         let tramiteId = existingTramite?.id ?? null;
@@ -256,7 +268,6 @@ serve(async (req) => {
                 const { data: pipelines } = await supabaseClient
                     .from('pipelines')
                     .select('*')
-                    .eq('organization_id', orgId)
                     .eq('activo', true)
                     .order('orden', { ascending: true });
                     
@@ -282,7 +293,6 @@ serve(async (req) => {
 
             const { data: newTr } = await supabaseClient.from('entradas').insert({
                 id_cliente: dbClientId,
-                organization_id: orgId,
                 servicio: trServicio,
                 estado_tramite: 'pendiente',
                 pipeline_id: finalPipelineId,
@@ -365,7 +375,6 @@ serve(async (req) => {
         if (!dbClientId && leadContactId) {
              const { data: existC } = await supabaseClient.from('clientes')
                 .select('id')
-                .eq('organization_id', orgId)
                 .eq('id_kommo', leadContactId.toString())
                 .single();
              if (existC) dbClientId = existC.id;
@@ -382,7 +391,6 @@ serve(async (req) => {
         const { data: existingTramite } = await supabaseClient.from('entradas')
             .select('id')
             .eq('id_lead', kommoLeadId)
-            .eq('organization_id', orgId)
             .single();
 
         if (existingTramite) {
@@ -404,7 +412,6 @@ serve(async (req) => {
     if (statusChangeLeadId && statusChangeStatusId && statusChangePipelineId) {
         const { data: stageMapping } = await supabaseClient.from('kommo_stage_mappings')
             .select('tramite, activa_registro')
-            .eq('organization_id', orgId)
             .eq('kommo_pipeline_id', statusChangePipelineId.toString())
             .eq('kommo_stage_id', statusChangeStatusId.toString())
             .single();
@@ -415,7 +422,6 @@ serve(async (req) => {
             const { data: entrada } = await supabaseClient.from('entradas')
                 .select('id, id_cliente')
                 .eq('id_lead', kommoLeadId)
-                .eq('organization_id', orgId)
                 .single();
 
             // Si el trámite todavía no existe, solo lo creamos acá cuando el usuario marcó

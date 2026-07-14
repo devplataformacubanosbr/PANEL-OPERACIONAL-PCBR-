@@ -64,7 +64,10 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
         if (!data || data.length < FETCH_PAGE_SIZE) break;
         from += FETCH_PAGE_SIZE;
       }
-      return all;
+      // Los campos personalizados dinámicos (config_campos_clientes) viven en
+      // clientes.campos_personalizados — se aplanan acá para que búsqueda,
+      // filtros y ordenamiento los traten igual que cualquier otra columna.
+      return all.map(c => (c.campos_personalizados ? { ...c, ...c.campos_personalizados } : c));
     },
     enabled: !orgLoading,
   });

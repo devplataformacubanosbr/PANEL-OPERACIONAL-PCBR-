@@ -75,6 +75,14 @@ const useClientData = (clientId) => {
     gcTime: STALE_CLIENT * 2,
   });
 
+  // ── Catálogo de campos personalizados dinámicos (config_campos_clientes) ───
+  const customFieldsConfigQuery = useQuery({
+    queryKey: ['customFieldsConfig'],
+    queryFn: () => import('../services/clientesService').then(m => m.getConfigCamposClientes()),
+    staleTime: STALE_CLIENT,
+    gcTime: STALE_CLIENT * 2,
+  });
+
   // ── Mutation: actualizar cliente ───────────────────────────────────────────
   const updateClientMutation = useMutation({
     mutationFn: (updateData) => updateCliente(clientId, updateData),
@@ -114,6 +122,7 @@ const useClientData = (clientId) => {
     entradas: entradasQuery.data ?? [],
     formularios: formulariosQuery.data ?? [],
     duplicateContacts: duplicateContactsQuery.data ?? [],
+    customFieldsConfig: customFieldsConfigQuery.data ?? [],
 
     // Estado
     isLoading,
