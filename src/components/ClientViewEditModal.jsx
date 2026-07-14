@@ -226,24 +226,26 @@ export default function ClientViewEditModal({
               </select>
             )}
 
-            <div style={{ position: 'relative', marginLeft: 'auto', width: '250px' }}>
-              <Search size={16} color="var(--color-text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
-              <input
-                type="text"
-                placeholder="Filtrar campos..."
-                className="form-input"
-                value={searchQuery}
-                onChange={e => onSearchChange(e.target.value)}
-                style={{ paddingLeft: '2.2rem', width: '100%', fontSize: '0.875rem' }}
-              />
-            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              {/* Nuevo campo arriba (a la izquierda del buscador) */}
+              {onCreateField && (
+                <button className="btn btn-secondary btn-sm" onClick={() => setIsAddingField(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <Plus size={14} /> Añadir campo nuevo
+                </button>
+              )}
 
-            {/* Nuevo campo arriba */}
-            {onCreateField && (
-              <button className="btn btn-secondary btn-sm" onClick={() => setIsAddingField(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <Plus size={14} /> Añadir campo nuevo
-              </button>
-            )}
+              <div style={{ position: 'relative', width: '250px' }}>
+                <Search size={16} color="var(--color-text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  type="text"
+                  placeholder="Filtrar campos..."
+                  className="form-input"
+                  value={searchQuery}
+                  onChange={e => onSearchChange(e.target.value)}
+                  style={{ paddingLeft: '2.2rem', width: '100%', fontSize: '0.875rem' }}
+                />
+              </div>
+            </div>
           </div>
 
           {isAddingField && onCreateField && (
