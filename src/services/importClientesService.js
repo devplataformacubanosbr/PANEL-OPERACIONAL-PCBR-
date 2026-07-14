@@ -2,8 +2,9 @@
  * importClientesService.js
  * Import masivo de clientes desde CSV/Excel/Google Sheets.
  * Versión standalone (empresa única): no hay organization_id ni catálogo de
- * campos personalizados por organización — los campos migratorios (RNM,
- * pasaporte, refugio, etc.) son columnas fijas de `clientes`.
+ * campos personalizados por organización. Los campos migratorios (RNM,
+ * pasaporte, carnet, refugio, etc.) NO son columnas fijas de `clientes` —
+ * viven en `clientes.campos_personalizados` (JSONB), ver buildClientRow.
  */
 import { supabase } from '../supabaseClient';
 import { extractFunctionErrorMessage } from '../utils/errorHandler';
@@ -18,13 +19,13 @@ const FIXED_FIELDS = [
   { key: 'nombres', label: 'Nombres', group: 'fijo', required: false, aliases: ['nombres', 'primer nombre', 'first name'] },
   { key: 'apellidos', label: 'Apellidos', group: 'fijo', required: false, aliases: ['apellidos', 'apellido', 'last name', 'surname'] },
   { key: 'cpf', label: 'CPF', group: 'fijo', required: false, aliases: ['cpf', 'documento', 'numero documento'] },
-  { key: 'carnet_identidad', label: 'Carnet / Identidad', group: 'fijo', required: false, aliases: ['carnet_identidad', 'carnet', 'identidad', 'carnet de identidad', 'ci'] },
   { key: 'telefono', label: 'Teléfono', group: 'fijo', required: false, aliases: ['telefono', 'teléfono', 'phone', 'celular', 'whatsapp', 'numero'] },
   { key: 'email', label: 'Email', group: 'fijo', required: false, aliases: ['email', 'correo', 'e-mail', 'correo electronico'] },
   // Campos migratorios: viven en `clientes.campos_personalizados` (JSONB), igual
   // que cualquier campo dinámico creado desde "Campos Base" (config_campos_clientes).
   // group: 'personalizado' le indica a buildClientRow que los anide en ese JSON
   // en vez de escribirlos como columnas sueltas.
+  { key: 'carnet_identidad', label: 'Carnet / Identidad', group: 'personalizado', required: false, aliases: ['carnet_identidad', 'carnet', 'identidad', 'carnet de identidad', 'ci'] },
   { key: 'rnm', label: 'RNM', group: 'personalizado', required: false, aliases: ['rnm'] },
   { key: 'numero_refugio', label: 'Protocolo de Refugio', group: 'personalizado', required: false, aliases: ['numero_refugio', 'protocolo de refugio', 'protocolo refugio'] },
   { key: 'fecha_vencimiento_refugio', label: 'Fecha Vencimiento Refugio', group: 'personalizado', required: false, aliases: ['fecha_vencimiento_refugio', 'vencimiento refugio', 'validade refugio'] },
@@ -138,7 +139,6 @@ export const buildClientRow = (rawRow, headerToFieldMap, targetFields) => {
   const row = {
     nombre,
     cpf: values.cpf || null,
-    carnet_identidad: values.carnet_identidad || null,
     telefono: values.telefono || null,
     email: values.email ? values.email.toLowerCase() : null,
     estado_cliente: 'nuevo',
@@ -149,7 +149,7 @@ export const buildClientRow = (rawRow, headerToFieldMap, targetFields) => {
   // Resto de campos fijos mapeados que no sean nombre/cpf/direccion/personalizado
   // (ninguno hoy, pero se deja genérico por si se agrega alguna columna fija más).
   const alreadyHandled = new Set([
-    'nombre_completo', 'nombres', 'apellidos', 'cpf', 'carnet_identidad', 'telefono', 'email',
+    'nombre_completo', 'nombres', 'apellidos', 'cpf', 'telefono', 'email',
     ...direccionFields.map((f) => f.key),
   ]);
   targetFields.forEach((f) => {

@@ -146,14 +146,19 @@ export default function ClientViewExtractionModal({
     if (!uploadedDocRecord) return;
     setMismatchState(prev => ({ ...prev, isProcessing: true }));
     try {
+      // rnm y carnet_identidad ya no son columnas reales de `clientes` — viven
+      // en el JSONB campos_personalizados.
+      const camposPersonalizados = {};
+      if (extractedData.RNM) camposPersonalizados.rnm = extractedData.RNM;
+      if (extractedData.CARNET_IDENTIDAD) camposPersonalizados.carnet_identidad = extractedData.CARNET_IDENTIDAD;
+
       const newClientData = {
         nombre: extractedData.NOMBRE_COMPLETO?.toUpperCase() || 'NUEVO CLIENTE',
         cpf: extractedData.CPF || '',
-        rnm: extractedData.RNM || '',
-        carnet_identidad: extractedData.CARNET_IDENTIDAD || '',
         nacionalidad: extractedData.NACIONALIDAD?.toUpperCase() || '',
         fecha_nacimiento: extractedData.FECHA_NACIMIENTO ? toIsoDate(normalizeDateToDDMMYYYY(extractedData.FECHA_NACIMIENTO)) : null,
-        sexo: extractedData.SEXO?.toUpperCase() || ''
+        sexo: extractedData.SEXO?.toUpperCase() || '',
+        ...(Object.keys(camposPersonalizados).length > 0 ? { campos_personalizados: camposPersonalizados } : {}),
       };
 
       const newClient = await createCliente(newClientData);

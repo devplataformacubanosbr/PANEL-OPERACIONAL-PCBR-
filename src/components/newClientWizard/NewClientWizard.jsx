@@ -178,14 +178,18 @@ export default function NewClientWizard({ onClose, onClientCreated, mode = "full
     }
   };
 
+  // carnet_identidad ya no es una columna real de `clientes` — vive en el
+  // JSONB campos_personalizados (mismo esquema que el resto de los campos
+  // migratorios). Se manda solo si tiene valor para no pisar otros campos
+  // que ya pudiera tener guardados el cliente.
   const buildClientPayload = () => ({
     id_kommo: formData.id_kommo || null,
     nombre: fullName,
     cpf: formData.cpf,
-    carnet_identidad: formData.carnet_identidad,
     telefono: formData.telefono,
     email: formData.email.toLowerCase(),
     estado_cliente: "nuevo",
+    ...(formData.carnet_identidad ? { campos_personalizados: { carnet_identidad: formData.carnet_identidad } } : {}),
   });
 
   const handleCreateClient = async () => {
