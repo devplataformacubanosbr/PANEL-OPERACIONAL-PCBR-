@@ -3,6 +3,19 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 
+// Cada deploy reemplaza los archivos de dist/assets con hashes nuevos y borra
+// los viejos. Una pestaña que quedó abierta desde antes del deploy todavía
+// referencia esos hashes viejos, y al navegar a una vista que carga su chunk
+// recién en ese momento (lazy()), el import() falla con 404 — Vite emite
+// 'vite:preloadError' para este caso exacto. Recargamos una sola vez (el flag
+// en sessionStorage evita loop si el archivo realmente no existe más).
+window.addEventListener('vite:preloadError', () => {
+  if (!sessionStorage.getItem('reloaded-after-preload-error')) {
+    sessionStorage.setItem('reloaded-after-preload-error', '1');
+    window.location.reload();
+  }
+});
+
 // Parche global para evitar errores de React con Google Translate
 // Cuando Google Translate modifica el DOM (ej. con etiquetas <font>), React pierde la referencia
 // y lanza NotFoundError al intentar remover el nodo original.
@@ -35,3 +48,7 @@ createRoot(document.getElementById('root')).render(
     <App />
   </StrictMode>,
 )
+
+// Si llegamos hasta acá es que el bundle actual cargó bien — liberar el flag
+// para que un preloadError de un futuro deploy también dispare su propio reload.
+sessionStorage.removeItem('reloaded-after-preload-error');
