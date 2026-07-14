@@ -211,18 +211,6 @@ export default function ClientViewEditModal({
           </div>
 
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
-              <Search size={16} color="var(--color-text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
-              <input
-                type="text"
-                placeholder="Filtrar campos..."
-                className="form-input"
-                value={searchQuery}
-                onChange={e => onSearchChange(e.target.value)}
-                style={{ paddingLeft: '2.2rem', width: '100%', fontSize: '0.875rem' }}
-              />
-            </div>
-
             <select className="form-input" style={{ width: 'auto' }} value={activeSection} onChange={e => setActiveSection(e.target.value)}>
               <option value="Todas">Todas las secciones</option>
               {categoryOrderState.map(cat => <option key={cat} value={cat}>{cat}</option>)}
@@ -237,6 +225,18 @@ export default function ClientViewEditModal({
                 })}
               </select>
             )}
+
+            <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
+              <Search size={16} color="var(--color-text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                type="text"
+                placeholder="Filtrar campos..."
+                className="form-input"
+                value={searchQuery}
+                onChange={e => onSearchChange(e.target.value)}
+                style={{ paddingLeft: '2.2rem', width: '100%', fontSize: '0.875rem' }}
+              />
+            </div>
 
             {/* Nuevo campo arriba */}
             {onCreateField && (
