@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { formatDate } from '../utils/dateFormatter';
 import { useOrganization } from '../context/OrganizationContext';
 import { SkeletonCard } from './ui/SkeletonCard';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 
 export default function ClientListView({ onNavigateToClient, searchQuery }) {
   const { loading: orgLoading } = useOrganization();
@@ -25,55 +25,51 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
   const [filterEstadoCivil, setFilterEstadoCivil] = useState('all');
   const [filterSexo, setFilterSexo] = useState('all');
 
-  const PAGE_SIZE = 50;
+  // Supabase corta cada request en 1000 filas — para traer TODOS los
+  // clientes (no solo los primeros N) hay que paginar en loop internamente
+  // en vez de mostrar un botón "cargar más".
+  const FETCH_PAGE_SIZE = 1000;
 
   const {
-    data,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
+    data: allFetchedClientes = [],
     isLoading: loading,
-    _isError
-  } = useInfiniteQuery({
+  } = useQuery({
     queryKey: ['clientesList', sortField, sortOrder, activeTab, filterNacionalidad, filterMissingDoc, filterEstadoCivil, filterSexo],
-    queryFn: async ({ pageParam = 0 }) => {
-      let query = supabase
-        .from('clientes')
-        .select('*', { count: 'exact' })
-        .order(sortField, { ascending: sortOrder === 'asc' })
-        .range(pageParam * PAGE_SIZE, (pageParam + 1) * PAGE_SIZE - 1);
+    queryFn: async () => {
+      let all = [];
+      let from = 0;
+      for (;;) {
+        let query = supabase
+          .from('clientes')
+          .select('*')
+          .order(sortField, { ascending: sortOrder === 'asc' })
+          .range(from, from + FETCH_PAGE_SIZE - 1);
 
-      if (activeTab !== 'todos') {
-        query = query.eq('estado_cliente', activeTab);
-      }
-      if (filterNacionalidad !== 'all') {
-        query = query.ilike('nacionalidad', `%${filterNacionalidad}%`);
-      }
-      if (filterEstadoCivil !== 'all') {
-        query = query.ilike('estado_civil', `%${filterEstadoCivil}%`);
-      }
-      if (filterSexo !== 'all') {
-        query = query.ilike('sexo', `%${filterSexo}%`);
-      }
+        if (activeTab !== 'todos') {
+          query = query.eq('estado_cliente', activeTab);
+        }
+        if (filterNacionalidad !== 'all') {
+          query = query.ilike('nacionalidad', `%${filterNacionalidad}%`);
+        }
+        if (filterEstadoCivil !== 'all') {
+          query = query.ilike('estado_civil', `%${filterEstadoCivil}%`);
+        }
+        if (filterSexo !== 'all') {
+          query = query.ilike('sexo', `%${filterSexo}%`);
+        }
 
-      const { data, error, count } = await query;
-      if (error) throw error;
-      return {
-        data: data || [],
-        count: count || 0,
-        nextPage: (data && data.length === PAGE_SIZE) ? pageParam + 1 : undefined
-      };
+        const { data, error } = await query;
+        if (error) throw error;
+        all = all.concat(data || []);
+        if (!data || data.length < FETCH_PAGE_SIZE) break;
+        from += FETCH_PAGE_SIZE;
+      }
+      return all;
     },
-    getNextPageParam: (lastPage) => lastPage.nextPage,
     enabled: !orgLoading,
   });
 
-  const allFetchedClientes = useMemo(() => {
-    if (!data) return [];
-    return data.pages.flatMap(page => page.data);
-  }, [data]);
-
-  const totalCount = data?.pages[0]?.count || 0;
+  const totalCount = allFetchedClientes.length;
 
   // Obtenemos nacionalidades únicas (podría mejorarse con una query específica)
   const distinctNationalities = React.useMemo(() => {
@@ -480,19 +476,6 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
           </div>
         )}
       </div>
-      
-      {hasNextPage && (
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => fetchNextPage()}
-            disabled={isFetchingNextPage}
-            style={{ padding: '0.75rem 2rem' }}
-          >
-            {isFetchingNextPage ? 'Cargando más...' : 'Cargar más clientes'}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

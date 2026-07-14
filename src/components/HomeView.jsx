@@ -17,6 +17,28 @@ import {
 
 const MISSING_TABLE_CODE = '42P01';
 
+// Supabase corta cada request en 1000 filas — para mostrar TODOS los
+// trámites de un pipeline (no solo los primeros) hay que paginar en loop
+// en vez de un solo .limit(N) fijo.
+async function fetchAllEntradas(pipelineId) {
+  const PAGE_SIZE = 1000;
+  let all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('entradas')
+      .select('*, clientes(*)')
+      .eq('pipeline_id', pipelineId)
+      .order('creado_en', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
 export default function HomeView({ onNavigateToClient, onNavigateToClientsList, searchQuery = '', onClearSearch }) {
   const { loading: orgLoading } = useOrganization();
   const [entradas, setEntradas] = useState([]);
@@ -56,14 +78,13 @@ export default function HomeView({ onNavigateToClient, onNavigateToClientsList, 
         const active = pipelineList.find(p => p.id === selectedPipelineId) || pipelineList.find(p => p.es_predeterminado) || pipelineList[0];
         setSelectedPipelineId(active.id);
 
-        const [stageList, entradasRes] = await Promise.all([
+        const [stageList, entradasList] = await Promise.all([
           getPipelineStages(active.id),
-          supabase.from('entradas').select('*, clientes(*)').eq('pipeline_id', active.id).order('creado_en', { ascending: false }).limit(300),
+          fetchAllEntradas(active.id),
         ]);
-        if (entradasRes.error) throw entradasRes.error;
 
         setStages(stageList);
-        setEntradas(entradasRes.data || []);
+        setEntradas(entradasList);
       } catch (err) {
         console.error('Error loading pipeline:', err);
         if (err?.code === MISSING_TABLE_CODE) {
@@ -82,13 +103,12 @@ export default function HomeView({ onNavigateToClient, onNavigateToClientsList, 
 
   const reloadStagesAndEntradas = useCallback(async (pipelineId) => {
     try {
-      const [stageList, entradasRes] = await Promise.all([
+      const [stageList, entradasList] = await Promise.all([
         getPipelineStages(pipelineId),
-        supabase.from('entradas').select('*, clientes(*)').eq('pipeline_id', pipelineId).order('creado_en', { ascending: false }).limit(300),
+        fetchAllEntradas(pipelineId),
       ]);
-      if (entradasRes.error) throw entradasRes.error;
       setStages(stageList);
-      setEntradas(entradasRes.data || []);
+      setEntradas(entradasList);
     } catch (err) {
       console.error('Error reloading pipeline:', err);
     }
