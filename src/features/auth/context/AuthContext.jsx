@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../../../shared/config/supabaseClient';
 
 const AuthContext = createContext(null);
@@ -56,10 +56,22 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  // Fetch user profile when session is available
+  // Fetch user profile when session is available. Supabase emite un `session`
+  // (objeto nuevo, misma sesión) en más casos de los que parece: INITIAL_SESSION
+  // al montar (además de getSession()), y TOKEN_REFRESHED cada vez que renueva
+  // el JWT en segundo plano (~cada hora mientras la pestaña sigue abierta). Sin
+  // este guard, cada uno de esos eventos volvía a pedir el perfil y ponía
+  // `loading` en true de nuevo, mostrando el spinner de pantalla completa como
+  // si la app se hubiera recargado sola.
+  const lastProfileFetchUserIdRef = useRef(null);
   useEffect(() => {
     if (session) {
-      fetchProfile(session.user.id);
+      if (lastProfileFetchUserIdRef.current !== session.user.id) {
+        lastProfileFetchUserIdRef.current = session.user.id;
+        fetchProfile(session.user.id);
+      }
+    } else {
+      lastProfileFetchUserIdRef.current = null;
     }
   }, [session, fetchProfile]);
 
