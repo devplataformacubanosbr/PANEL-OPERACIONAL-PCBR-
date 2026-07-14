@@ -10,6 +10,8 @@ import Sidebar from '../navigation/components/Sidebar';
 import Header from '../navigation/components/Header';
 import { useNavigation } from '../hooks/useNavigation';
 import { useSearch } from '../hooks/useSearch';
+import useRecentClients from '../hooks/useRecentClients';
+import { supabase } from '../supabaseClient';
 
 // Auth
 import { useAuth } from '../features/auth/context/AuthContext';
@@ -54,6 +56,18 @@ export default function AppLayout() {
     navigateToSettings,
     navigateToAutomations,
   } = useNavigation(isAuthenticated);
+
+  // --- Recent clients (accesos rápidos al enfocar la búsqueda vacía) ---
+  const { recentClients, addRecentClient } = useRecentClients();
+  const navigateToClientTracked = useCallback((clientId, clientName) => {
+    navigateToClient(clientId);
+    if (clientName) {
+      addRecentClient({ id: clientId, nombre: clientName });
+    } else {
+      supabase.from('clientes').select('id, nombre').eq('id', clientId).maybeSingle()
+        .then(({ data }) => { if (data?.nombre) addRecentClient(data); });
+    }
+  }, [navigateToClient, addRecentClient]);
 
   // --- Sidebar ---
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -143,16 +157,17 @@ export default function AppLayout() {
             globalSearch={globalSearch}
             handleSearchChange={handleSearchChange}
             onClearSearch={() => setGlobalSearch('')}
-            onNavigateToClient={navigateToClient}
+            onNavigateToClient={navigateToClientTracked}
+            recentClients={recentClients}
             onNewClient={() => setIsNewClientModalOpen(true)}
           />
 
           {/* Main Content */}
           <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: currentView === 'client' ? 'hidden' : 'auto' }}>
             <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><LoadingSpinner size="lg" /></div>}>
-              {currentView === 'dashboard' && <HomeView onNavigateToClient={navigateToClient} onNavigateToClientsList={navigateToClientsList} searchQuery={globalSearch} onClearSearch={() => setGlobalSearch('')} />}
-              {currentView === 'client' && <ClientView clientId={selectedClientId} onBack={navigateToHome} onNavigateToClient={navigateToClient} />}
-              {currentView === 'clients' && <ClientListView onNavigateToClient={navigateToClient} searchQuery={globalSearch} />}
+              {currentView === 'dashboard' && <HomeView onNavigateToClient={navigateToClientTracked} onNavigateToClientsList={navigateToClientsList} searchQuery={globalSearch} onClearSearch={() => setGlobalSearch('')} />}
+              {currentView === 'client' && <ClientView clientId={selectedClientId} onBack={navigateToHome} onNavigateToClient={navigateToClientTracked} />}
+              {currentView === 'clients' && <ClientListView onNavigateToClient={navigateToClientTracked} searchQuery={globalSearch} />}
               {currentView === 'team-chat' && <TeamChat isFullView={true} />}
               {currentView === 'team-management' && <TeamManagement userProfile={userProfile} />}
               {currentView === 'settings' && <SettingsView userProfile={userProfile} />}
@@ -224,14 +239,14 @@ export default function AppLayout() {
               onClose={() => setIsNewClientModalOpen(false)}
               onClientCreated={(client) => {
                 setIsNewClientModalOpen(false);
-                navigateToClient(client.id);
+                navigateToClientTracked(client.id, client.nombre);
               }}
             />
           )}
         </Suspense>
 
         <GlobalBotListener />
-        <GlobalAiChat isVisible={currentView !== 'client'} currentView={currentView} onNavigateToClient={navigateToClient} />
+        <GlobalAiChat isVisible={currentView !== 'client'} currentView={currentView} onNavigateToClient={navigateToClientTracked} />
       </div>
     </GlobalAiChatProvider>
   );

@@ -42,7 +42,7 @@ export default function KanbanCard({ entrada, onOpenDetail, onNavigateToClient, 
     const clientName = entrada.clientes?.nombre || entrada.cliente || entrada.nombre_pix;
 
     if (clientId && onNavigateToClient) {
-      onNavigateToClient(clientId);
+      onNavigateToClient(clientId, clientName);
     } else if (clientName && onNavigateToClientsList) {
       onNavigateToClientsList(clientName);
     }

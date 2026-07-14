@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Search,
   Bell,
@@ -9,14 +9,17 @@ import {
   Menu,
   Plus,
   X,
+  Clock,
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useNotifications } from '../../features/notifications/context/NotificationContext';
 import Button from '../../components/ui/Button';
 
-export default function Header({ currentView, isSidebarOpen, setIsSidebarOpen, navigateToHome, navigateToSettings, globalSearch, handleSearchChange, onClearSearch, onNavigateToClient, onNewClient }) {
+export default function Header({ currentView, isSidebarOpen, setIsSidebarOpen, navigateToHome, navigateToSettings, globalSearch, handleSearchChange, onClearSearch, onNavigateToClient, recentClients = [], onNewClient }) {
   const { theme, toggleTheme } = useTheme();
   const { notificaciones, showNotifMenu, toggleNotifMenu, markNotifAsRead } = useNotifications();
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const showRecents = isSearchFocused && !globalSearch && recentClients.length > 0;
 
   return (
     <header className="flex h-[70px] shrink-0 items-center justify-between gap-4 bg-chrome-bg px-6" style={{ zIndex: 10 }}>
@@ -35,7 +38,7 @@ export default function Header({ currentView, isSidebarOpen, setIsSidebarOpen, n
       </div>
 
       {/* Center: Search */}
-      <div className="flex flex-1 justify-center">
+      <div className="relative flex flex-1 justify-center">
         <div className="flex w-full max-w-[400px] items-center gap-2 rounded-full border border-chrome-border bg-chrome-bg-raised px-4 py-2">
           <Search size={18} className="shrink-0 text-chrome-text" />
           <input
@@ -43,6 +46,8 @@ export default function Header({ currentView, isSidebarOpen, setIsSidebarOpen, n
             placeholder="Buscar por cliente, CPF, email..."
             value={globalSearch}
             onChange={handleSearchChange}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setIsSearchFocused(false)}
             className="w-full bg-transparent text-sm text-chrome-text-active outline-none placeholder:text-chrome-text"
           />
           {globalSearch && (
@@ -51,6 +56,31 @@ export default function Header({ currentView, isSidebarOpen, setIsSidebarOpen, n
             </button>
           )}
         </div>
+
+        {showRecents && (
+          <div className="absolute top-full z-[100] mt-1 w-full max-w-[400px] overflow-hidden rounded-md border border-border bg-bg-surface shadow-lg">
+            <div className="border-b border-border px-3 py-2 text-xs font-semibold uppercase tracking-wide text-text-muted">
+              Últimos clientes buscados
+            </div>
+            {recentClients.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                // onMouseDown (no onClick) para que el handler corra antes de que
+                // el blur del input cierre el dropdown y se pierda el click.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onNavigateToClient(c.id, c.nombre);
+                  setIsSearchFocused(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-elevated"
+              >
+                <Clock size={14} className="shrink-0 text-text-muted" />
+                <span className="truncate">{c.nombre}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Right: Actions */}

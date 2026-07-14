@@ -432,7 +432,7 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
             {filteredClientes.map(cliente => (
               <tr 
                 key={cliente.id} 
-                onClick={() => onNavigateToClient(cliente.id)}
+                onClick={() => onNavigateToClient(cliente.id, cliente.nombre)}
                 style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer', transition: 'background 0.15s', background: 'var(--color-bg-base)' }}
                 onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-bg-elevated)'}
                 onMouseLeave={(e) => e.currentTarget.style.background = 'var(--color-bg-base)'}

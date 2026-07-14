@@ -236,15 +236,28 @@ export default function HomeView({ onNavigateToClient, onNavigateToClientsList, 
     }
   };
 
+  // Igual que en ClientListView: cada palabra buscada debe aparecer en algún
+  // lugar del texto (AND por término, no un único substring literal) y sin
+  // tildes, para no depender de que el usuario escriba el nombre exactamente
+  // como está guardado. Antes bastaba con que el substring completo apareciera
+  // en nombre, cpf O servicio — eso hacía que una palabra suelta del servicio
+  // (trámite) de OTRO cliente calzara con la búsqueda y lo mostrara sin tener
+  // nada que ver con la persona buscada.
+  const normalize = (s) => Array.from(String(s || '').toLowerCase().normalize('NFD'))
+    .filter((ch) => { const code = ch.codePointAt(0); return code < 0x0300 || code > 0x036f; })
+    .join('');
+
   const filteredEntradas = useMemo(() => entradas.filter(entrada => {
     if (searchQuery) {
-      const searchLower = searchQuery.toLowerCase();
-      const clienteNombre = (entrada.clientes?.nombre || entrada.cliente || '').toLowerCase();
-      const clienteCpf = (entrada.clientes?.cpf || '').toLowerCase();
-      const servicio = (entrada.servicio || '').toLowerCase();
-      if (!clienteNombre.includes(searchLower) && !clienteCpf.includes(searchLower) && !servicio.includes(searchLower)) {
-        return false;
-      }
+      const haystack = normalize([
+        entrada.clientes?.nombre || entrada.cliente,
+        entrada.clientes?.cpf,
+        entrada.servicio,
+      ].filter(Boolean).join(' '));
+
+      const terms = normalize(searchQuery).trim().split(/\s+/).filter(Boolean);
+      const matchesAll = terms.every(term => haystack.includes(term));
+      if (!matchesAll) return false;
     }
 
     if (tramiteFilter && entrada.servicio !== tramiteFilter) {
