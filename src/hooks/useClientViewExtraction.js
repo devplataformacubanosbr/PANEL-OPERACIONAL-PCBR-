@@ -13,7 +13,11 @@ import { analyzeDocumentImage } from '../services/aiService';
 import { normalizeDateToDDMMYYYY } from '../utils/dateFormatter';
 import { toIsoDate, FIXED_FIELDS_CATALOG } from '../components/clientView.constants';
 
-/** Columnas reales de `clientes` (los 13 campos migratorios + el resto de campos fijos) */
+/**
+ * Columnas reales de `clientes`. Los 13 campos migratorios (rnm, numero_pasaporte,
+ * nombre_madre, etc.) ya NO están en FIXED_FIELDS_CATALOG — este Set los excluye
+ * automáticamente, así que el mapeo de abajo los enruta solo a campos_personalizados.
+ */
 const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
 
 /** Mapeo de claves IA → columnas de la tabla `clientes` */

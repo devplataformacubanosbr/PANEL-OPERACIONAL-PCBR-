@@ -7,7 +7,7 @@ const commonFields = [
     { id: 'telefono', label: 'Teléfono', icon: Phone },
     { id: 'email', label: 'Email', icon: Mail },
     { id: 'cpf', label: 'CPF' },
-    { id: 'carnet_identidad', label: 'Carnet de Identidad' },
+    { id: 'carnet_identidad', label: 'Carnet de Identidad', dynamic: true },
     { id: 'fecha_nacimiento', label: 'Fecha de Nacimiento' },
     { id: 'estado_civil', label: 'Estado Civil' },
     { id: 'sexo', label: 'Sexo' },
@@ -17,15 +17,22 @@ const commonFields = [
     { id: 'estado_federal', label: 'Estado Federal' },
     { id: 'ciudad', label: 'Ciudad' },
     { id: 'direccion', label: 'Dirección' },
-    { id: 'rnm', label: 'RNM' },
-    { id: 'numero_pasaporte', label: 'Número Pasaporte' },
-    { id: 'fecha_emision_pasaporte', label: 'Fecha Emisión Pasaporte' },
-    { id: 'fecha_vencimiento_pasaporte', label: 'Fecha Vencimiento Pasaporte' },
-    { id: 'numero_refugio', label: 'Número Refugio' },
-    { id: 'fecha_vencimiento_refugio', label: 'Fecha Vencimiento Refugio' },
-    { id: 'nombre_madre', label: 'Nombre Madre' },
-    { id: 'nombre_padre', label: 'Nombre Padre' },
+    { id: 'rnm', label: 'RNM', dynamic: true },
+    { id: 'numero_pasaporte', label: 'Número Pasaporte', dynamic: true },
+    { id: 'fecha_emision_pasaporte', label: 'Fecha Emisión Pasaporte', dynamic: true },
+    { id: 'fecha_vencimiento_pasaporte', label: 'Fecha Vencimiento Pasaporte', dynamic: true },
+    { id: 'numero_refugio', label: 'Número Refugio', dynamic: true },
+    { id: 'fecha_vencimiento_refugio', label: 'Fecha Vencimiento Refugio', dynamic: true },
+    { id: 'nombre_madre', label: 'Nombre Madre', dynamic: true },
+    { id: 'nombre_padre', label: 'Nombre Padre', dynamic: true },
 ];
+
+// Los campos marcados `dynamic: true` viven en clientes.campos_personalizados
+// (JSONB) en vez de una columna real — ver clientView.constants.js.
+const fieldValue = (contact, fieldId) => {
+    const field = commonFields.find(f => f.id === fieldId);
+    return field?.dynamic ? contact?.campos_personalizados?.[fieldId] : contact?.[fieldId];
+};
 
 const MergeContactsModal = ({ isOpen, onClose, contact1, contact2, onMergeComplete }) => {
     const [copiedId, setCopiedId] = useState(null);
@@ -40,12 +47,12 @@ const MergeContactsModal = ({ isOpen, onClose, contact1, contact2, onMergeComple
             
             commonFields.forEach(field => {
                 const id = field.id;
-                if (contact1[id]) {
+                if (fieldValue(contact1, id)) {
                     initialSources[id] = 'contact1';
-                    initialMergeData[id] = contact1[id];
-                } else if (contact2[id]) {
+                    initialMergeData[id] = fieldValue(contact1, id);
+                } else if (fieldValue(contact2, id)) {
                     initialSources[id] = 'contact2';
-                    initialMergeData[id] = contact2[id];
+                    initialMergeData[id] = fieldValue(contact2, id);
                 } else {
                     initialSources[id] = null;
                     initialMergeData[id] = '';
@@ -71,7 +78,7 @@ const MergeContactsModal = ({ isOpen, onClose, contact1, contact2, onMergeComple
         }));
         setMergeData(prev => ({
             ...prev,
-            [field]: sourceContact[field] || ''
+            [field]: fieldValue(sourceContact, field) || ''
         }));
     };
 
@@ -99,7 +106,7 @@ const MergeContactsModal = ({ isOpen, onClose, contact1, contact2, onMergeComple
 
     const getBtnStyle = (contactSource, fieldId) => {
         const sourceContact = contactSource === 'contact1' ? contact1 : contact2;
-        const contactValue = sourceContact[fieldId];
+        const contactValue = fieldValue(sourceContact, fieldId);
         const isSelected = selectedSources[fieldId] === contactSource;
         
         return {
@@ -151,7 +158,7 @@ const MergeContactsModal = ({ isOpen, onClose, contact1, contact2, onMergeComple
                             </h3>
                             {commonFields.map(field => {
                                 const IconComponent = field.icon || User;
-                                const value = contact1[field.id];
+                                const value = fieldValue(contact1, field.id);
                                 if (!value && !mergeData[field.id]) return null;
 
                                 return (
@@ -179,8 +186,8 @@ const MergeContactsModal = ({ isOpen, onClose, contact1, contact2, onMergeComple
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                             <div style={{ textAlign: 'center', fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '16px' }}>Seleccionar datos</div>
                             {commonFields.map(field => {
-                                const contact1Value = contact1[field.id];
-                                const contact2Value = contact2[field.id];
+                                const contact1Value = fieldValue(contact1, field.id);
+                                const contact2Value = fieldValue(contact2, field.id);
                                 if (!contact1Value && !contact2Value) return null;
 
                                 return (
@@ -210,7 +217,7 @@ const MergeContactsModal = ({ isOpen, onClose, contact1, contact2, onMergeComple
                             </h3>
                             {commonFields.map(field => {
                                 const IconComponent = field.icon || User;
-                                const value = contact2[field.id];
+                                const value = fieldValue(contact2, field.id);
                                 if (!value && !mergeData[field.id]) return null;
 
                                 return (

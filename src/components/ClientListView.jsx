@@ -30,6 +30,16 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
   // en vez de mostrar un botón "cargar más".
   const FETCH_PAGE_SIZE = 1000;
 
+  // Identificadores que SIGUEN siendo columnas reales de `clientes` — se pueden
+  // ordenar directo con `.order(sortField, ...)`. Cualquier otro sortField se
+  // asume que vive en `clientes.campos_personalizados` (JSONB, incluye los 13
+  // campos migratorios) y se ordena con el operador `->>` de Postgres.
+  const FIXED_SORT_COLUMNS = new Set([
+    'nombre', 'cpf', 'telefono', 'email', 'estado_civil', 'sexo', 'nacionalidad',
+    'pais', 'lugar_nacimiento', 'estado_federal', 'ciudad', 'direccion',
+    'id_kommo', 'fecha_nacimiento', 'estado_cliente', 'creado_en', 'modificado_en',
+  ]);
+
   const {
     data: allFetchedClientes = [],
     isLoading: loading,
@@ -39,10 +49,15 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
       let all = [];
       let from = 0;
       for (;;) {
+        // Los campos JSONB guardan fechas como texto ISO 'YYYY-MM-DD', así que el
+        // orden alfabético de texto coincide con el orden cronológico real — no
+        // hace falta castear a ::date. nullsFirst: false siempre, para que los
+        // clientes sin ese campo cargado queden al final (asc y desc por igual).
+        const orderExpr = FIXED_SORT_COLUMNS.has(sortField) ? sortField : `campos_personalizados->>${sortField}`;
         let query = supabase
           .from('clientes')
           .select('*')
-          .order(sortField, { ascending: sortOrder === 'asc' })
+          .order(orderExpr, { ascending: sortOrder === 'asc', nullsFirst: false })
           .range(from, from + FETCH_PAGE_SIZE - 1);
 
         if (activeTab !== 'todos') {
@@ -155,29 +170,10 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
     return res;
   }, [allFetchedClientes, searchQuery, dateFrom, dateTo, dateFilterType, filterMissingDoc, filterDireccion, filterCiudadOrigen]);
 
-  const sortedClientes = useMemo(() => [...filteredClientes].sort((a, b) => {
-    let valA = a[sortField];
-    let valB = b[sortField];
-
-    if (sortField.includes('fecha_vencimiento')) {
-      if (!valA && !valB) return 0;
-      if (!valA) return 1; // Sin fecha al final
-      if (!valB) return -1;
-
-      const dateA = new Date(valA);
-      const dateB = new Date(valB);
-      return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
-    }
-
-    if (typeof valA === 'string') valA = valA.toLowerCase();
-    if (typeof valB === 'string') valB = valB.toLowerCase();
-    if (!valA && valB) return 1;
-    if (valA && !valB) return -1;
-
-    if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-    if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-    return 0;
-  }), [filteredClientes, sortField, sortOrder]);
+  // El ordenamiento ya se hace en la consulta SQL (.order() arriba, tanto para
+  // columnas reales como para campos_personalizados->>campo), así que un
+  // re-sort en JS acá sería trabajo redundante: los datos ya llegan ordenados
+  // y el .filter() de filteredClientes no altera el orden relativo.
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -433,7 +429,7 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
             </tr>
           </thead>
           <tbody>
-            {sortedClientes.map(cliente => (
+            {filteredClientes.map(cliente => (
               <tr 
                 key={cliente.id} 
                 onClick={() => onNavigateToClient(cliente.id)}
@@ -473,7 +469,7 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
           </tbody>
         </table>
         
-        {sortedClientes.length === 0 && (
+        {filteredClientes.length === 0 && (
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
             No se encontraron clientes.
           </div>

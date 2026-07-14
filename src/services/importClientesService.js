@@ -21,19 +21,22 @@ const FIXED_FIELDS = [
   { key: 'carnet_identidad', label: 'Carnet / Identidad', group: 'fijo', required: false, aliases: ['carnet_identidad', 'carnet', 'identidad', 'carnet de identidad', 'ci'] },
   { key: 'telefono', label: 'Teléfono', group: 'fijo', required: false, aliases: ['telefono', 'teléfono', 'phone', 'celular', 'whatsapp', 'numero'] },
   { key: 'email', label: 'Email', group: 'fijo', required: false, aliases: ['email', 'correo', 'e-mail', 'correo electronico'] },
-  // Campos migratorios (antes en `campos_personalizados` JSON, ahora columnas fijas)
-  { key: 'rnm', label: 'RNM', group: 'fijo', required: false, aliases: ['rnm'] },
-  { key: 'numero_refugio', label: 'Protocolo de Refugio', group: 'fijo', required: false, aliases: ['numero_refugio', 'protocolo de refugio', 'protocolo refugio'] },
-  { key: 'fecha_vencimiento_refugio', label: 'Fecha Vencimiento Refugio', group: 'fijo', required: false, aliases: ['fecha_vencimiento_refugio', 'vencimiento refugio', 'validade refugio'] },
-  { key: 'numero_pasaporte', label: 'Pasaporte', group: 'fijo', required: false, aliases: ['numero_pasaporte', 'pasaporte', 'passport'] },
-  { key: 'fecha_emision_pasaporte', label: 'Fecha Emisión Pasaporte', group: 'fijo', required: false, aliases: ['fecha_emision_pasaporte', 'emision pasaporte', 'fecha emision pasaporte'] },
-  { key: 'fecha_vencimiento_pasaporte', label: 'Fecha Vencimiento Pasaporte', group: 'fijo', required: false, aliases: ['fecha_vencimiento_pasaporte', 'vencimiento pasaporte'] },
-  { key: 'policia_federal', label: 'Policía Federal', group: 'fijo', required: false, aliases: ['policia_federal', 'policia federal'] },
-  { key: 'fecha_entrada_brasil', label: 'Entrada a Brasil', group: 'fijo', required: false, aliases: ['fecha_entrada_brasil', 'entrada a brasil', 'entrada brasil'] },
-  { key: 'lugar_entrada_brasil', label: 'Lugar Entrada', group: 'fijo', required: false, aliases: ['lugar_entrada_brasil', 'lugar entrada', 'lugar de entrada'] },
-  { key: 'nombre_madre', label: 'Nombre Madre', group: 'fijo', required: false, aliases: ['nombre_madre', 'nombre madre', 'madre'] },
-  { key: 'nombre_padre', label: 'Nombre Padre', group: 'fijo', required: false, aliases: ['nombre_padre', 'nombre padre', 'padre'] },
-  { key: 'tramite', label: 'Trámite Solicitado', group: 'fijo', required: false, aliases: ['tramite', 'trámite', 'tramite solicitado'] },
+  // Campos migratorios: viven en `clientes.campos_personalizados` (JSONB), igual
+  // que cualquier campo dinámico creado desde "Campos Base" (config_campos_clientes).
+  // group: 'personalizado' le indica a buildClientRow que los anide en ese JSON
+  // en vez de escribirlos como columnas sueltas.
+  { key: 'rnm', label: 'RNM', group: 'personalizado', required: false, aliases: ['rnm'] },
+  { key: 'numero_refugio', label: 'Protocolo de Refugio', group: 'personalizado', required: false, aliases: ['numero_refugio', 'protocolo de refugio', 'protocolo refugio'] },
+  { key: 'fecha_vencimiento_refugio', label: 'Fecha Vencimiento Refugio', group: 'personalizado', required: false, aliases: ['fecha_vencimiento_refugio', 'vencimiento refugio', 'validade refugio'] },
+  { key: 'numero_pasaporte', label: 'Pasaporte', group: 'personalizado', required: false, aliases: ['numero_pasaporte', 'pasaporte', 'passport'] },
+  { key: 'fecha_emision_pasaporte', label: 'Fecha Emisión Pasaporte', group: 'personalizado', required: false, aliases: ['fecha_emision_pasaporte', 'emision pasaporte', 'fecha emision pasaporte'] },
+  { key: 'fecha_vencimiento_pasaporte', label: 'Fecha Vencimiento Pasaporte', group: 'personalizado', required: false, aliases: ['fecha_vencimiento_pasaporte', 'vencimiento pasaporte'] },
+  { key: 'policia_federal', label: 'Policía Federal', group: 'personalizado', required: false, aliases: ['policia_federal', 'policia federal'] },
+  { key: 'fecha_entrada_brasil', label: 'Entrada a Brasil', group: 'personalizado', required: false, aliases: ['fecha_entrada_brasil', 'entrada a brasil', 'entrada brasil'] },
+  { key: 'lugar_entrada_brasil', label: 'Lugar Entrada', group: 'personalizado', required: false, aliases: ['lugar_entrada_brasil', 'lugar entrada', 'lugar de entrada'] },
+  { key: 'nombre_madre', label: 'Nombre Madre', group: 'personalizado', required: false, aliases: ['nombre_madre', 'nombre madre', 'madre'] },
+  { key: 'nombre_padre', label: 'Nombre Padre', group: 'personalizado', required: false, aliases: ['nombre_padre', 'nombre padre', 'padre'] },
+  { key: 'tramite', label: 'Trámite Solicitado', group: 'personalizado', required: false, aliases: ['tramite', 'trámite', 'tramite solicitado'] },
   { key: 'cep', label: 'CEP', group: 'direccion', required: false, aliases: ['cep', 'codigo postal', 'zip'] },
   { key: 'estado', label: 'Estado', group: 'direccion', required: false, aliases: ['estado', 'state', 'provincia'] },
   { key: 'cidade', label: 'Ciudad', group: 'direccion', required: false, aliases: ['cidade', 'ciudad', 'city'] },
@@ -122,6 +125,16 @@ export const buildClientRow = (rawRow, headerToFieldMap, targetFields) => {
   };
   const hasDireccion = direccionFields.some((f) => values[f.key]);
 
+  // Campos migratorios (rnm, numero_pasaporte, nombre_madre, etc.) se anidan en
+  // `campos_personalizados` (JSONB), igual que cualquier campo dinámico creado
+  // desde "Campos Base" — ya no son columnas sueltas de `clientes`.
+  const camposPersonalizados = {};
+  targetFields
+    .filter((f) => f.group === 'personalizado')
+    .forEach((f) => {
+      if (values[f.key]) camposPersonalizados[f.key] = values[f.key];
+    });
+
   const row = {
     nombre,
     cpf: values.cpf || null,
@@ -130,16 +143,17 @@ export const buildClientRow = (rawRow, headerToFieldMap, targetFields) => {
     email: values.email ? values.email.toLowerCase() : null,
     estado_cliente: 'nuevo',
     ...(hasDireccion ? { direccion: JSON.stringify(direccion) } : {}),
+    ...(Object.keys(camposPersonalizados).length ? { campos_personalizados: camposPersonalizados } : {}),
   };
 
-  // Resto de campos fijos mapeados (rnm, numero_pasaporte, nombre_madre, etc.)
-  // se agregan directo como columnas sueltas del cliente — ya no se anidan en
-  // un JSON de campos personalizados, porque esas columnas existen de verdad.
+  // Resto de campos fijos mapeados que no sean nombre/cpf/direccion/personalizado
+  // (ninguno hoy, pero se deja genérico por si se agrega alguna columna fija más).
   const alreadyHandled = new Set([
     'nombre_completo', 'nombres', 'apellidos', 'cpf', 'carnet_identidad', 'telefono', 'email',
     ...direccionFields.map((f) => f.key),
   ]);
   targetFields.forEach((f) => {
+    if (f.group === 'personalizado') return;
     if (alreadyHandled.has(f.key)) return;
     if (values[f.key]) row[f.key] = values[f.key];
   });

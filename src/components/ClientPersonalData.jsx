@@ -181,6 +181,11 @@ const ClientPersonalData = ({
 
         {/* Documentos Asociados (Datos) */}
         {(() => {
+          // Los 13 campos migratorios viven en `campos_personalizados` (JSONB), no
+          // como columnas fijas. `custom: true` en cada field le indica a
+          // `fieldValue` que lea de ahí en vez de `client[fieldId]` directo.
+          const fieldValue = (fieldId, custom) => custom ? client?.campos_personalizados?.[fieldId] : client?.[fieldId];
+
           const docGroups = [
             {
               id: 'cpf',
@@ -189,7 +194,7 @@ const ClientPersonalData = ({
               fields: [
                 { id: 'cpf', label: 'Nº CPF' }
               ],
-              fieldValue: (fieldId) => client?.[fieldId],
+              fieldValue,
               color: '#378ADD'
             },
             {
@@ -197,11 +202,11 @@ const ClientPersonalData = ({
               label: 'Pasaporte',
               icon: '🛂',
               fields: [
-                { id: 'numero_pasaporte', label: 'Nº Pasaporte' },
-                { id: 'fecha_emision_pasaporte', label: 'Emisión' },
-                { id: 'fecha_vencimiento_pasaporte', label: 'Vencimiento' }
+                { id: 'numero_pasaporte', label: 'Nº Pasaporte', custom: true },
+                { id: 'fecha_emision_pasaporte', label: 'Emisión', custom: true },
+                { id: 'fecha_vencimiento_pasaporte', label: 'Vencimiento', custom: true }
               ],
-              fieldValue: (fieldId) => client?.[fieldId],
+              fieldValue,
               color: '#1D9E75'
             },
             {
@@ -209,10 +214,10 @@ const ClientPersonalData = ({
               label: 'RNM / Identidad',
               icon: '🪪',
               fields: [
-                { id: 'rnm', label: 'Nº RNM' },
-                { id: 'carnet_identidad', label: 'Carnet Identidad' }
+                { id: 'rnm', label: 'Nº RNM', custom: true },
+                { id: 'carnet_identidad', label: 'Carnet Identidad', custom: true }
               ],
-              fieldValue: (fieldId) => client?.[fieldId],
+              fieldValue,
               color: '#BA7517'
             },
             {
@@ -220,10 +225,10 @@ const ClientPersonalData = ({
               label: 'Refugio',
               icon: '🛡️',
               fields: [
-                { id: 'numero_refugio', label: 'Protocolo Refugio' },
-                { id: 'fecha_vencimiento_refugio', label: 'Vencimiento' }
+                { id: 'numero_refugio', label: 'Protocolo Refugio', custom: true },
+                { id: 'fecha_vencimiento_refugio', label: 'Vencimiento', custom: true }
               ],
-              fieldValue: (fieldId) => client?.[fieldId],
+              fieldValue,
               color: '#D85A30'
             }
           ];

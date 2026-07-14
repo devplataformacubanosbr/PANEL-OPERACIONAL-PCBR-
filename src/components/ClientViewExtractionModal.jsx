@@ -6,7 +6,11 @@ import { createCliente } from '../services/clientesService';
 import { normalizeDateToDDMMYYYY } from '../utils/dateFormatter';
 import { toIsoDate, FIXED_FIELDS_CATALOG } from './clientView.constants';
 
-/** Columnas reales de `clientes` (los 13 campos migratorios + el resto de campos fijos) */
+/**
+ * Columnas reales de `clientes`. Los 13 campos migratorios (rnm, numero_pasaporte,
+ * nombre_madre, etc.) ya NO están en FIXED_FIELDS_CATALOG — este Set los excluye
+ * automáticamente, así que se leen/escriben desde campos_personalizados.
+ */
 const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
 
 const fieldMap = {

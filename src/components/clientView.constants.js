@@ -61,20 +61,13 @@ export const FIXED_FIELDS_CATALOG = [
   { id: 'ciudad', nombre_campo: 'Ciudad de Origen', requerido: false, es_fijo: true, category_name: 'Informaciones Personales' },
   { id: 'direccion', nombre_campo: 'Dirección Completa', requerido: false, es_fijo: true, category_name: 'Informaciones Personales' },
 
-  // ── Campos migratorios (antes en `campos_personalizados` JSONB, ahora columnas fijas) ──
-  { id: 'rnm', nombre_campo: 'RNM', requerido: false, es_fijo: true, category_name: 'Documentos de Identidad' },
-  { id: 'numero_refugio', nombre_campo: 'Protocolo de Refugio', requerido: false, es_fijo: true, category_name: 'Documentos de Identidad' },
-  { id: 'fecha_vencimiento_refugio', nombre_campo: 'Fecha Vencimiento Refugio', requerido: false, es_fijo: true, category_name: 'Documentos de Identidad' },
-  { id: 'numero_pasaporte', nombre_campo: 'Pasaporte', requerido: false, es_fijo: true, category_name: 'Documentos de Identidad' },
-  { id: 'fecha_emision_pasaporte', nombre_campo: 'Fecha Emisión Pasaporte', requerido: false, es_fijo: true, category_name: 'Documentos de Identidad' },
-  { id: 'fecha_vencimiento_pasaporte', nombre_campo: 'Fecha Vencimiento Pasaporte', requerido: false, es_fijo: true, category_name: 'Documentos de Identidad' },
-  { id: 'carnet_identidad', nombre_campo: 'Carnet de Identidad', requerido: false, es_fijo: true, category_name: 'Documentos de Identidad' },
-  { id: 'policia_federal', nombre_campo: 'Policía Federal', requerido: false, es_fijo: true, category_name: 'Informaciones Personales' },
-  { id: 'fecha_entrada_brasil', nombre_campo: 'Entrada a Brasil', requerido: false, es_fijo: true, category_name: 'Informaciones Personales' },
-  { id: 'lugar_entrada_brasil', nombre_campo: 'Lugar Entrada', requerido: false, es_fijo: true, category_name: 'Informaciones Personales' },
-  { id: 'nombre_madre', nombre_campo: 'Nombre Madre', requerido: false, es_fijo: true, category_name: 'Datos Familiares' },
-  { id: 'nombre_padre', nombre_campo: 'Nombre Padre', requerido: false, es_fijo: true, category_name: 'Datos Familiares' },
-  { id: 'tramite', nombre_campo: 'Trámite Solicitado', requerido: false, es_fijo: true, category_name: 'Informaciones Personales' },
+  // ── Los 13 campos migratorios (rnm, numero_refugio, fecha_vencimiento_refugio,
+  // numero_pasaporte, fecha_emision_pasaporte, fecha_vencimiento_pasaporte,
+  // carnet_identidad, policia_federal, fecha_entrada_brasil, lugar_entrada_brasil,
+  // nombre_madre, nombre_padre, tramite) ya NO están hardcodeados acá: viven como
+  // filas dinámicas en `config_campos_clientes` y se guardan en
+  // `clientes.campos_personalizados` (JSONB). Se mergean automáticamente en
+  // ClientView.jsx vía `customFieldsConfig` con `is_custom_json: true`.
 ];
 
 // ── Colores por estado de trámite ────────────────────────────────────────────

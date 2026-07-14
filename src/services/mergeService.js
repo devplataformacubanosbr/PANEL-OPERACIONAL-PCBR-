@@ -1,5 +1,16 @@
 import { supabase } from '../supabaseClient';
 
+// Campos que ya no son columnas reales de `clientes` (se movieron a
+// campos_personalizados JSONB, ver clientView.constants.js FIXED_FIELDS_CATALOG
+// vs. config_campos_clientes) — si vinieran en `mergedData` como columnas
+// sueltas, un .update() plano los escribiría en columnas que ya nadie lee.
+const DYNAMIC_MERGE_FIELDS = new Set([
+    'rnm', 'numero_refugio', 'fecha_vencimiento_refugio', 'numero_pasaporte',
+    'fecha_emision_pasaporte', 'fecha_vencimiento_pasaporte', 'carnet_identidad',
+    'policia_federal', 'fecha_entrada_brasil', 'lugar_entrada_brasil',
+    'nombre_madre', 'nombre_padre', 'tramite',
+]);
+
 // Función para fusionar múltiples contactos (2 o más)
 export const mergeContacts = async (keepContactId, contactIdsToDelete, mergedData) => {
     try {
@@ -53,10 +64,32 @@ export const mergeContacts = async (keepContactId, contactIdsToDelete, mergedDat
             }
         }
 
+        // Separar los campos que viven en campos_personalizados (JSONB) de las
+        // columnas reales — mergeados aparte para no pisar otras claves que ya
+        // tuviera guardadas el contacto que se mantiene.
+        const flatData = {};
+        const dynamicData = {};
+        for (const [key, value] of Object.entries(mergedData)) {
+            if (DYNAMIC_MERGE_FIELDS.has(key)) {
+                dynamicData[key] = value;
+            } else {
+                flatData[key] = value;
+            }
+        }
+
+        if (Object.keys(dynamicData).length > 0) {
+            const { data: currentClient } = await supabase
+                .from('clientes')
+                .select('campos_personalizados')
+                .eq('id', keepContactId)
+                .single();
+            flatData.campos_personalizados = { ...(currentClient?.campos_personalizados || {}), ...dynamicData };
+        }
+
         // Actualizar el contacto que se va a mantener con los datos fusionados (se hace al final para evitar conflictos de campos únicos)
         const { error: updateError } = await supabase
             .from('clientes')
-            .update(mergedData)
+            .update(flatData)
             .eq('id', keepContactId);
 
         if (updateError) {
