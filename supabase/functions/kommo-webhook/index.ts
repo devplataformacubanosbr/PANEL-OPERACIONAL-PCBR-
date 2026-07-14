@@ -356,42 +356,22 @@ serve(async (req) => {
     // ==========================================
     // 1. PROCESAR CONTACTO -> CLIENTE
     // ==========================================
+    // Solo corre si Kommo mandó contacts[add]/contacts[update] embebido en ESTE
+    // request — muchas veces un lead nuevo llega en un webhook aparte sin esto,
+    // por eso el bloque 2 de abajo NO depende de que esto haya corrido.
     if (contactData) {
         dbClientId = await processContact(contactData);
     }
 
     // ==========================================
-    // 2. PROCESAR LEAD -> TRAMITE Y NOTAS
+    // 2. NOTA AGREGADA A UN LEAD (sin cambiar otro campo)
     // ==========================================
-    if (leadData && leadData.id) {
-
-        // Si no vino contactData en este webhook (ej. actualizan el lead pero no el contacto),
-        // necesitamos encontrar el cliente en nuestra DB que tenga asociado ese lead.
-        // Como kommo no manda el id del contacto en el payload de update lead plano a veces,
-        // podríamos tener que hacer fetch a kommo. Pero si lo manda (a veces en leads[add][0][contacts][0][id]), lo usamos.
-
-        let leadContactId = contactData?.id || payload['leads[add][0][contacts][0][id]'] || payload['leads[update][0][contacts][0][id]'];
-
-        if (!dbClientId && leadContactId) {
-             const { data: existC } = await supabaseClient.from('clientes')
-                .select('id')
-                .eq('id_kommo', leadContactId.toString())
-                .single();
-             if (existC) dbClientId = existC.id;
-        }
-
-        if (dbClientId) {
-            await processLead(leadData, dbClientId, leadData.name?.toUpperCase() || 'TRÁMITE DESDE KOMMO');
-        }
-    } else if (noteAddLeadId) {
-        // Nota agregada a un lead sin que cambiara ningún otro campo del lead: el payload
-        // no trae nombre ni custom_fields, así que no podemos crear un trámite nuevo acá —
-        // solo sincronizamos notas contra un trámite que ya exista para ese id_lead.
+    if (!leadData?.id && !statusChangeLeadId && noteAddLeadId) {
         const kommoLeadId = parseInt(noteAddLeadId, 10);
         const { data: existingTramite } = await supabaseClient.from('entradas')
             .select('id')
             .eq('id_lead', kommoLeadId)
-            .single();
+            .maybeSingle();
 
         if (existingTramite) {
             await syncKommoNotes(existingTramite.id, kommoLeadId);
@@ -399,51 +379,71 @@ serve(async (req) => {
     }
 
     // ==========================================
-    // 3. PROCESAR CAMBIO DE ETAPA -> REGISTRAR CLIENTE Y TRAMITE
+    // 3. LEAD (creación, actualización o cambio de etapa) -> CLIENTE + TRAMITE
     // ==========================================
-    // Independiente del bloque de leads[add]/leads[update]: Kommo puede mandar un cambio
-    // de etapa junto con otros eventos en el mismo request, así que no es un "else if".
-    //
-    // kommo_stage_mappings NO define el nombre del trámite — solo dice "esta etapa es el
-    // punto en el que hay que registrar al cliente y su trámite si todavía no existen".
-    // El nombre real del trámite sale del campo de Kommo que el usuario haya mapeado a
-    // "Trámite / Servicio" en la pestaña 3 (Mapear Leads); kommo_stage_mappings.tramite
-    // solo se usa como valor por defecto si no hay ningún campo mapeado.
-    if (statusChangeLeadId && statusChangeStatusId && statusChangePipelineId) {
-        const { data: stageMapping } = await supabaseClient.from('kommo_stage_mappings')
-            .select('tramite, activa_registro')
-            .eq('kommo_pipeline_id', statusChangePipelineId.toString())
-            .eq('kommo_stage_id', statusChangeStatusId.toString())
-            .single();
+    // Un lead nuevo que NACE directo en la etapa de entrada de un pipeline llega
+    // como leads[add], NO como leads[status] (leads[status] es solo para cambios
+    // de etapa posteriores) — por eso "Activa registro" tiene que revisarse acá
+    // también, no solo en el caso de cambio de etapa. Unificamos ambos casos:
+    // resolvemos qué lead/pipeline/etapa vino en el payload sea cual sea la forma
+    // del evento, y de ahí en más el flujo es el mismo.
+    let eventKommoLeadId: number | null = null;
+    let eventPipelineId: string | null = null;
+    let eventStatusId: string | null = null;
 
-        // Sin mapeo configurado para esa columna, no hay que hacer nada acá.
-        if (stageMapping) {
-            const kommoLeadId = parseInt(statusChangeLeadId, 10);
-            const { data: entrada } = await supabaseClient.from('entradas')
-                .select('id, id_cliente')
-                .eq('id_lead', kommoLeadId)
-                .single();
+    if (leadData?.id) {
+        eventKommoLeadId = parseInt(leadData.id, 10);
+        eventPipelineId = payload['leads[add][0][pipeline_id]'] || payload['leads[update][0][pipeline_id]'] || null;
+        eventStatusId = payload['leads[add][0][status_id]'] || payload['leads[update][0][status_id]'] || null;
+    } else if (statusChangeLeadId) {
+        eventKommoLeadId = parseInt(statusChangeLeadId, 10);
+        eventPipelineId = statusChangePipelineId;
+        eventStatusId = statusChangeStatusId;
+    }
 
-            // Si el trámite todavía no existe, solo lo creamos acá cuando el usuario marcó
-            // explícitamente esta etapa como punto de alta (activa_registro). Si no la marcó,
-            // esta etapa solo sirve para actualizar trámites que ya existan — no crea nada.
-            if (entrada || stageMapping.activa_registro) {
-                let clientIdForLead = entrada?.id_cliente ?? null;
+    if (eventKommoLeadId) {
+        const { data: entrada } = await supabaseClient.from('entradas')
+            .select('id, id_cliente')
+            .eq('id_lead', eventKommoLeadId)
+            .maybeSingle();
 
-                // leads[status] no trae custom_fields (para leer el campo "Trámite" mapeado) ni
-                // datos del contacto (si hay que registrar el cliente por primera vez): los
-                // pedimos a la API de Kommo.
-                const fetched = await fetchKommoLeadAndContact(kommoLeadId);
-                if (fetched?.leadData) {
-                    if (!clientIdForLead && fetched.contactData) {
-                        clientIdForLead = await processContact(fetched.contactData);
-                    }
+        let activaRegistro = false;
+        let stageTramiteDefault: string | null = null;
+        if (eventPipelineId && eventStatusId) {
+            const { data: stageMapping } = await supabaseClient.from('kommo_stage_mappings')
+                .select('tramite, activa_registro')
+                .eq('kommo_pipeline_id', eventPipelineId.toString())
+                .eq('kommo_stage_id', eventStatusId.toString())
+                .maybeSingle();
+            activaRegistro = stageMapping?.activa_registro || false;
+            stageTramiteDefault = stageMapping?.tramite || null;
+        }
 
-                    if (clientIdForLead) {
-                        const { servicio } = await processLead(fetched.leadData, clientIdForLead, stageMapping.tramite);
-                        await supabaseClient.from('clientes').update({ tramite: servicio }).eq('id', clientIdForLead);
-                    }
-                }
+        // Si el trámite ya existe, siempre lo actualizamos. Si no existe, solo lo
+        // creamos cuando la etapa actual está marcada como "Activa registro" — el
+        // resto de las etapas solo actualizan trámites que ya existan.
+        if (entrada || activaRegistro) {
+            let clientIdForLead = entrada?.id_cliente ?? dbClientId ?? null;
+            let leadForProcessing = leadData;
+            let contactForProcessing = contactData;
+
+            // Nos falta el cliente, o nos falta el detalle completo del lead
+            // (leads[status] no trae custom_fields) — pedimos todo a la API de
+            // Kommo en vez de depender de qué haya venido en el payload plano.
+            if ((!clientIdForLead && !contactForProcessing) || !leadForProcessing) {
+                const fetched = await fetchKommoLeadAndContact(eventKommoLeadId);
+                leadForProcessing = leadForProcessing || fetched?.leadData || null;
+                contactForProcessing = contactForProcessing || fetched?.contactData || null;
+            }
+
+            if (!clientIdForLead && contactForProcessing) {
+                clientIdForLead = await processContact(contactForProcessing);
+            }
+
+            if (clientIdForLead && leadForProcessing) {
+                const defaultServicio = stageTramiteDefault || leadForProcessing.name?.toUpperCase() || 'TRÁMITE DESDE KOMMO';
+                const { servicio } = await processLead(leadForProcessing, clientIdForLead, defaultServicio);
+                await supabaseClient.from('clientes').update({ tramite: servicio }).eq('id', clientIdForLead);
             }
         }
     }

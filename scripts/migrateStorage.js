@@ -29,16 +29,26 @@ async function migrateStorage() {
   const oldSupabase = createClient(OLD_SUPABASE_URL, OLD_SERVICE_ROLE_KEY);
   const newSupabase = createClient(NEW_SUPABASE_URL, NEW_SERVICE_ROLE_KEY);
 
-  // 1. Obtener lista de archivos necesarios desde la base de datos NUEVA
+  // 1. Obtener lista de archivos necesarios (con paginación para superar límite de 1000)
   console.log('Consultando base de datos nueva para encontrar archivos faltantes...');
-  const { data: docs, error: errDocs } = await newSupabase.from('documentos_operacionales').select('url_archivo');
-  const { data: templates, error: errTemplates } = await newSupabase.from('plantillas_documentos').select('url_archivo');
+  
+  let allDocs = [];
+  let from = 0;
+  let to = 999;
+  while (true) {
+    const { data, error } = await newSupabase.from('documentos_operacionales').select('url_archivo').range(from, to);
+    if (error) throw new Error('Error docs: ' + error.message);
+    if (!data || data.length === 0) break;
+    allDocs = allDocs.concat(data);
+    from += 1000;
+    to += 1000;
+  }
 
-  if (errDocs) throw new Error('Error obteniendo documentos: ' + errDocs.message);
-  if (errTemplates) throw new Error('Error obteniendo plantillas: ' + errTemplates.message);
+  const { data: templates, error: errTemplates } = await newSupabase.from('plantillas_documentos').select('url_archivo');
+  if (errTemplates) throw new Error('Error plantillas: ' + errTemplates.message);
 
   const allPaths = new Set([
-    ...(docs || []).map(d => d.url_archivo).filter(Boolean),
+    ...allDocs.map(d => d.url_archivo).filter(Boolean),
     ...(templates || []).map(t => t.url_archivo).filter(Boolean)
   ]);
 
