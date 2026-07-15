@@ -122,3 +122,29 @@ Update the React application (specifically `aiService.js` and any related Supaba
 - [ ] The `aiService.js` contains a Supabase insert call to the `ai_chats` table.
 - [ ] The application compiles and runs locally without breaking the existing chat functionality.
 - [ ] When the AI responds to a query, both the user's prompt and the assistant's response are logged in the database.
+
+## Follow-up — 2026-07-15T22:30:55Z
+
+Fix the Gmail integration in the React dashboard so that both sent and received emails (including historical ones) for a specific client are correctly fetched and displayed, and redesign the UI to closely resemble the actual Gmail interface.
+
+Working directory: c:\Users\Desktop\Documents\FLUJO-TRABAJO-LIMPIO\CUBANOS_BR_MARCOS\DASHBOARDOperacional-PCBR
+Integrity mode: development
+
+## Requirements
+
+### R1. Fix Gmail API Query (Historical & Current)
+Ensure `src/services/gmailService.js` correctly queries the Gmail API to retrieve all historical emails (sent and received, including those sent/received directly from gmail.com in the past) matching the client's email address, regardless of which folder they are in (Inbox, Sent, etc.).
+
+### R2. Redesign UI to Resemble Gmail
+Update `src/components/ClientEmail.jsx` to have a UI that closely resembles Gmail. This includes:
+- A layout with similar spacing, fonts, and colors as Gmail.
+- Proper separation of the "Todos", "Recibidos" (Inbox), and "Enviados" (Sent) tabs.
+- A reading pane or view that looks like a standard Gmail email thread.
+
+## Acceptance Criteria
+
+### Verification
+- [ ] A test script or manual verification demonstrates that `fetchClientEmails` returns emails from both the 'INBOX' and 'SENT' labels for a known client, including old historical emails.
+- [ ] The React UI renders these emails in the correct tabs.
+- [ ] The visual design feels highly similar to the standard Gmail web interface.
+

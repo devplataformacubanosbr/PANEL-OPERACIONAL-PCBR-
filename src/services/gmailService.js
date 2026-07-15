@@ -35,32 +35,50 @@ export async function fetchClientEmails(clientEmail) {
   // Gmail API query: buscar correos to o from del cliente en todas las carpetas
   // No usamos {} porque la sintaxis correcta de Gmail API es OR
   const q = `to:${clientEmail} OR from:${clientEmail}`;
-  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=50&includeSpamTrash=false`;
+  let allMessages = [];
+  let pageToken = '';
 
-  console.log('[Gmail] Buscando:', q);
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
-    console.error('[Gmail] Error en búsqueda:', response.status, errBody);
-    if (response.status === 401) {
-      clearProviderToken();
-      throw new Error('La sesión de Google expiró. Por favor vuelve a conectar tu cuenta de Google.');
+  do {
+    let url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=50&includeSpamTrash=false`;
+    if (pageToken) {
+      url += `&pageToken=${encodeURIComponent(pageToken)}`;
     }
-    throw new Error(`Error Gmail (${response.status}): ${errBody?.error?.message || 'Error desconocido'}`);
+
+    console.log('[Gmail] Buscando:', q, 'pageToken:', pageToken);
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      console.error('[Gmail] Error en búsqueda:', response.status, errBody);
+      if (response.status === 401) {
+        clearProviderToken();
+        throw new Error('La sesión de Google expiró. Por favor vuelve a conectar tu cuenta de Google.');
+      }
+      throw new Error(`Error Gmail (${response.status}): ${errBody?.error?.message || 'Error desconocido'}`);
+    }
+
+    const data = await response.json();
+    if (data.messages && data.messages.length > 0) {
+      allMessages = allMessages.concat(data.messages);
+    }
+    pageToken = data.nextPageToken || '';
+  } while (pageToken);
+
+  console.log('[Gmail] Mensajes encontrados:', allMessages.length);
+
+  if (allMessages.length === 0) return [];
+
+  if (allMessages.length > 100) {
+    console.log('[Gmail] Limiting detail fetch to latest 100 messages');
+    allMessages = allMessages.slice(0, 100);
   }
-
-  const data = await response.json();
-  console.log('[Gmail] Mensajes encontrados:', data.messages?.length ?? 0);
-
-  if (!data.messages || data.messages.length === 0) return [];
 
   // Obtener detalles de cada mensaje
   const fullMessages = await Promise.all(
-    data.messages.map(async (msgItem) => {
+    allMessages.map(async (msgItem) => {
       const msgRes = await fetch(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgItem.id}?format=full`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -73,6 +91,7 @@ export async function fetchClientEmails(clientEmail) {
   return fullMessages
     .filter(Boolean)
     .map(msg => formatGmailMessage(msg))
+    .filter(Boolean) // Filter out any null formatted messages!
     .sort((a, b) => b.creado_en.getTime() - a.creado_en.getTime());
 }
 
@@ -88,18 +107,53 @@ function formatGmailMessage(msg) {
   const body = extractBody(msg.payload);
   const isSent = Array.isArray(msg.labelIds) && msg.labelIds.includes('SENT');
 
+  const toHeader = get('to') || '';
+  const destinatarios = toHeader ? toHeader.split(',').map(s => s.trim()) : [];
+
+  const adjuntos = [];
+  function traversePartsForAttachments(parts, adjuntosList) {
+    if (!parts) return;
+    for (const part of parts) {
+      if (part.filename && part.body?.attachmentId) {
+        adjuntosList.push({
+          nombre: part.filename,
+          attachmentId: part.body.attachmentId,
+          mimeType: part.mimeType,
+          size: part.body.size || 0
+        });
+      }
+      if (part.parts) {
+        traversePartsForAttachments(part.parts, adjuntosList);
+      }
+    }
+  }
+
+  if (msg.payload.filename && msg.payload.body?.attachmentId) {
+    adjuntos.push({
+      nombre: msg.payload.filename,
+      attachmentId: msg.payload.body.attachmentId,
+      mimeType: msg.payload.mimeType,
+      size: msg.payload.body.size || 0
+    });
+  }
+  if (msg.payload.parts) {
+    traversePartsForAttachments(msg.payload.parts, adjuntos);
+  }
+
   return {
     id: msg.id,
     asunto: get('subject') || '(Sin asunto)',
     cuerpo: body,
     remitente: get('from'),
-    destinatario: get('to'),
+    destinatario: toHeader,
+    destinatarios: destinatarios,
     creado_en: new Date(Number(msg.internalDate)),
     leido: !msg.labelIds?.includes('UNREAD'),
     es_enviado: isSent,
     archivado: !msg.labelIds?.includes('INBOX') && !isSent,
     threadId: msg.threadId,
     labelIds: msg.labelIds || [],
+    adjuntos: adjuntos
   };
 }
 

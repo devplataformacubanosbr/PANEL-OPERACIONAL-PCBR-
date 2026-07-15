@@ -1,14 +1,14 @@
-# BRIEFING — 2026-06-25T14:58:49Z
+# BRIEFING — 2026-07-15T22:30:55Z
 
 ## Mission
-Enhance the existing n8n workflow to map Kommo data to Supabase, and update the React AI Assistant to persist conversation history to the database.
+Fix the Gmail integration in the React dashboard so that both sent and received emails (including historical ones) for a specific client are correctly fetched and displayed, and redesign the UI to closely resemble the actual Gmail interface.
 
 ## 🔒 My Identity
 - Archetype: sentinel
-- Working directory: c:\Users\Micro\Documents\FLUJO-CENTRO-DE-TRABAJO-main\CUBANOS_BR_MARCOS\DASHBOARDOperacional\.agents\sentinel
-- Orchestrator: eb1ed698-c66d-400c-a168-2ea75e95763c
+- Working directory: c:\Users\Desktop\Documents\FLUJO-TRABAJO-LIMPIO\CUBANOS_BR_MARCOS\DASHBOARDOperacional-PCBR\.agents\sentinel
+- Orchestrator: d0bbbbab-22d9-48bd-8aff-aa6bbec991a6
 - Victory Auditor: TBD
-- Active Orchestrator: eb1ed698-c66d-400c-a168-2ea75e95763c
+- Active Orchestrator: d0bbbbab-22d9-48bd-8aff-aa6bbec991a6
 - Active Victory Auditor: TBD
 
 ## 🔒 Key Constraints
@@ -16,7 +16,7 @@ Enhance the existing n8n workflow to map Kommo data to Supabase, and update the 
 - Victory Audit is MANDATORY before reporting completion
 
 ## User Context
-- **Last user request**: Refactor the n8n-kommo-workflow.json to map Kommo data to the Supabase database (clientes and entradas tables), and update the React application (aiService.js) to persist user and assistant messages to the ai_chats table.
+- **Last user request**: Fix Gmail query in `src/services/gmailService.js` and redesign `src/components/ClientEmail.jsx` to look like Gmail.
 - **Pending clarifications**: none
 - **Delivered results**: none
 
@@ -29,5 +29,4 @@ Enhance the existing n8n workflow to map Kommo data to Supabase, and update the 
 - **Retry count**: 0
 
 ## Artifact Index
-- c:\Users\Micro\Documents\FLUJO-CENTRO-DE-TRABAJO-main\CUBANOS_BR_MARCOS\DASHBOARDOperacional\ORIGINAL_REQUEST.md — Verbatim user request document
-
+- c:\Users\Desktop\Documents\FLUJO-TRABAJO-LIMPIO\CUBANOS_BR_MARCOS\DASHBOARDOperacional-PCBR\ORIGINAL_REQUEST.md — Verbatim user request document

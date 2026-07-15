@@ -1,4 +1,4 @@
-const { tests } = require('./e2e.test');
+import { tests } from './e2e.test.js';
 
 console.log('==================================================');
 console.log('      Running UI/UX Refactoring E2E Test Suite    ');
@@ -47,7 +47,7 @@ tiers.forEach(t => {
 });
 
 console.log('\nBreakdown by Feature:');
-const features = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const features = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 features.forEach(f => {
   const featTests = results.filter(r => r.feature === f);
   const featPassed = featTests.filter(r => r.pass).length;
@@ -59,7 +59,7 @@ console.log('==================================================\n');
 // we exit with 0 if we successfully executed the suite, or we exit with 1 if there are failures.
 // Let's print a message about the expected failures.
 if (failedCount > 0) {
-  console.log('Note: Some tests failed. This is EXPECTED because the codebase has not been refactored yet.');
+  console.log('Note: Some tests failed.');
   process.exit(1);
 } else {
   console.log('All tests passed successfully!');

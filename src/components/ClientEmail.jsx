@@ -12,6 +12,15 @@ import { useAuth } from '../features/auth/context/AuthContext';
 export default function ClientEmail({ clientId, clientName, clientEmail, tramitesContext }) {
   const { loginWithGoogle, session } = useAuth();
   const [messages, setMessages] = useState([]);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [googleAuthError, setGoogleAuthError] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(true);
   
@@ -21,6 +30,11 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   const [activeMessage, setActiveMessage] = useState(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
+  const [selectedThreadId, setSelectedThreadId] = useState(null);
+  const [expandedMessages, setExpandedMessages] = useState({});
+  const [quickReplyText, setQuickReplyText] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
+  const [client, setClient] = useState(null);
   
   // Compose State
   const [asunto, setAsunto] = useState('');
@@ -50,7 +64,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   const [searchQuery, setSearchQuery] = useState(clientEmail || '');
 
   useEffect(() => {
-    const checkAndLoad = () => {
+    const checkAndLoad = async () => {
       const token = localStorage.getItem('google_provider_token') || session?.provider_token;
       if (session && !token) {
         setGoogleAuthError(true);
@@ -62,6 +76,20 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
         fetchMessages(clientEmail);
         fetchPlantillas();
         setDestinatario(clientEmail || '');
+        
+        try {
+          const { data, error } = await supabase
+            .from('clientes')
+            .select('*')
+            .eq('id', clientId)
+            .single();
+          if (!error && data) {
+            setClient(data);
+          }
+        } catch (err) {
+          console.error('Error fetching client details:', err);
+        }
+        
         return true; // con token
       }
       return false;
@@ -295,6 +323,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
             nombre: data.nombre,
             tipo: data.tipo || 'application/pdf'
           }]);
+          toast.error('El envío de archivos adjuntos no está soportado en esta versión. Se enviará solo el texto del correo.');
         }
       }
     } catch (err) {
@@ -306,80 +335,179 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
     setAdjuntos(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Grouping and filtering logic
+  const filteredMessages = messages.filter(msg => {
+    // Search query filter
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch = 
+        (msg.asunto || '').toLowerCase().includes(q) ||
+        (msg.cuerpo || '').toLowerCase().includes(q) ||
+        (msg.remitente || '').toLowerCase().includes(q) ||
+        (msg.destinatario || '').toLowerCase().includes(q) ||
+        (msg.destinatarios || []).some(d => d.toLowerCase().includes(q));
+      if (!matchesSearch) return false;
+    }
+
+    if (currentTab === 'recibidos') {
+      return msg.labelIds?.includes('INBOX');
+    }
+    if (currentTab === 'enviados') {
+      return msg.labelIds?.includes('SENT');
+    }
+    if (currentTab === 'archivados') {
+      return msg.archivado;
+    }
+    // 'todos'
+    return true;
+  });
+
+  const threadsMap = {};
+  filteredMessages.forEach(msg => {
+    const tId = msg.threadId || msg.id;
+    if (!threadsMap[tId]) {
+      threadsMap[tId] = [];
+    }
+    threadsMap[tId].push(msg);
+  });
+
+  const sortedThreads = Object.keys(threadsMap).map(tId => {
+    const threadMsgs = threadsMap[tId].sort((a, b) => new Date(a.creado_en).getTime() - new Date(b.creado_en).getTime());
+    const latestMsg = threadMsgs[threadMsgs.length - 1];
+    return {
+      threadId: tId,
+      messages: threadMsgs,
+      latestMessage: latestMsg,
+      creado_en: new Date(latestMsg.creado_en)
+    };
+  }).sort((a, b) => b.creado_en.getTime() - a.creado_en.getTime());
+
+  const selectedThreadMessages = selectedThreadId ? (messages.filter(m => (m.threadId || m.id) === selectedThreadId).sort((a, b) => new Date(a.creado_en).getTime() - new Date(b.creado_en).getTime())) : [];
+
+  const isMessageExpanded = (msgId, index, total) => {
+    if (expandedMessages[msgId] !== undefined) {
+      return expandedMessages[msgId];
+    }
+    return index === total - 1; // latest message is expanded by default
+  };
+
+  const toggleMessage = (msgId) => {
+    setExpandedMessages(prev => ({ ...prev, [msgId]: !prev[msgId] }));
+  };
+
+  const getSidebarStyle = (tabName) => {
+    const isActive = currentTab === tabName;
+    return {
+      display: 'flex',
+      alignItems: 'center',
+      gap: isMobile ? '0.5rem' : '1rem',
+      padding: isMobile ? '0.4rem 0.8rem' : '0.6rem 1rem',
+      backgroundColor: isActive ? '#eaf1fb' : 'transparent', // #eaf1fb or #e8f0fe active background
+      borderRadius: isMobile ? '16px' : '0 16px 16px 0',
+      color: isActive ? '#0b57d0' : '#444746', // #0b57d0 active text color
+      fontWeight: isActive ? 700 : 400,
+      cursor: 'pointer',
+      border: 'none',
+      width: isMobile ? 'auto' : '95%',
+      textAlign: 'left',
+      fontSize: isMobile ? '0.8rem' : '0.875rem',
+      transition: 'background-color 0.2s',
+      whiteSpace: 'nowrap'
+    };
+  };
+
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%', flexShrink: 0, overflow: 'hidden', backgroundColor: '#FFFFFF', position: 'relative' }}>
       
       {/* Header tipo Gmail */}
-      <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 1rem', borderBottom: '1px solid #E5E7EB', backgroundColor: '#FFFFFF' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', width: '220px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 1rem', borderBottom: '1px solid #E5E7EB', backgroundColor: '#FFFFFF', gap: isMobile ? '0.5rem' : '0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '0.5rem' : '0.75rem', width: isMobile ? 'auto' : '220px' }}>
           <div style={{ color: '#D93025', display: 'flex', alignItems: 'center' }}>
             <Mail size={24} />
           </div>
-          <span style={{ fontSize: '1.25rem', color: '#5F6368', fontFamily: 'sans-serif' }}>Gmail</span>
+          {!isMobile && <span style={{ fontSize: '1.25rem', color: '#5F6368', fontFamily: 'sans-serif' }}>Gmail</span>}
         </div>
         
-        {/* Buscador funcional */}
-        <div style={{ flex: 1, maxWidth: '600px', marginLeft: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#F1F3F4', borderRadius: '8px', padding: '0.5rem 1rem' }}>
-            <Search size={18} color="#5F6368" />
+        {/* Buscador funcional - Centered styling */}
+        <div style={{ flex: 1, maxWidth: '720px', margin: '0 auto', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#f1f3f4', borderRadius: '24px', padding: '0.6rem 1.5rem', width: '100%' }}>
+            <Search size={18} color="#5F6368" style={{ marginRight: '0.75rem' }} />
             <input 
               type="text"
               placeholder="Buscar correos del cliente (presiona Enter)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && fetchMessages()}
-              style={{ marginLeft: '0.75rem', color: '#202124', fontSize: '0.9rem', backgroundColor: 'transparent', border: 'none', outline: 'none', width: '100%' }}
+              style={{ color: '#202124', fontSize: '0.9rem', backgroundColor: 'transparent', border: 'none', outline: 'none', width: '100%' }}
             />
           </div>
         </div>
+
+        <div style={{ width: '100px' }}></div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flex: 1, overflow: 'hidden' }}>
         {/* Barra Lateral Izquierda */}
-        <div style={{ width: '240px', padding: '1rem 0.5rem', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' }}>
-          <div style={{ padding: '0 0.5rem' }}>
+        <div style={{ 
+          width: isMobile ? '100%' : '240px', 
+          display: isMobile && selectedThreadId ? 'none' : 'flex',
+          padding: isMobile ? '0.5rem 1rem' : '1.5rem 0.5rem', 
+          borderRight: isMobile ? 'none' : '1px solid #E5E7EB',
+          borderBottom: isMobile ? '1px solid #E5E7EB' : 'none',
+          flexDirection: isMobile ? 'row' : 'column',
+          alignItems: isMobile ? 'center' : 'stretch',
+          gap: isMobile ? '0.5rem' : 'initial',
+          flexShrink: 0, 
+          overflowY: 'auto' 
+        }}>
+          {/* Redactar Button */}
+          <div style={{ padding: isMobile ? '0' : '0 0.5rem', flexShrink: 0 }}>
             <button 
               onClick={() => { setComposeOpen(true); setComposeMinimized(false); }}
               style={{ 
-                display: 'flex', alignItems: 'center', gap: '1rem', backgroundColor: '#C2E7FF', color: '#001D35', 
-                padding: '1rem', borderRadius: '16px', fontWeight: 500, fontSize: '0.9rem', border: 'none', cursor: 'pointer',
-                marginBottom: '1.5rem', transition: 'box-shadow 0.2s', boxShadow: '0 1px 2px 0 rgba(60,64,67,0.3)', width: '100%'
+                display: 'flex', alignItems: 'center', gap: isMobile ? '0.5rem' : '1rem', backgroundColor: '#c2e7ff', color: '#001d35', 
+                padding: isMobile ? '0.5rem 1rem' : '0.8rem 1.5rem', borderRadius: '24px', fontWeight: 500, fontSize: isMobile ? '0.85rem' : '0.9rem', border: 'none', cursor: 'pointer',
+                marginBottom: isMobile ? '0' : '1.5rem', transition: 'box-shadow 0.2s, background-color 0.2s', boxShadow: '0 1px 3px 0 rgba(60,64,67,0.3)', width: isMobile ? 'auto' : '100%',
+                justifyContent: 'center'
               }}
-              onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 1px 3px 1px rgba(60,64,67,0.15)'}
-              onMouseOut={(e) => e.currentTarget.style.boxShadow = '0 1px 2px 0 rgba(60,64,67,0.3)'}
+              className="hover:shadow-md hover:bg-opacity-90"
             >
-              <Pencil size={20} /> Redactar
+              <Pencil size={isMobile ? 18 : 20} /> Redactar
             </button>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <div style={{ display: 'flex', flexDirection: isMobile ? 'row' : 'column', gap: '0.25rem', overflowX: isMobile ? 'auto' : 'visible', flex: isMobile ? 1 : 'initial' }}>
             <button 
-              onClick={() => { setView('list'); setCurrentTab('todos'); setActiveMessage(null); }}
-              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', background: currentTab === 'todos' ? '#EAF1FB' : 'transparent', borderRadius: '0 16px 16px 0', color: currentTab === 'todos' ? '#1a73e8' : '#5F6368', fontWeight: currentTab === 'todos' ? 700 : 400, cursor: 'pointer', border: 'none', width: '100%', textAlign: 'left', fontSize: '0.875rem' }}
+              onClick={() => { setCurrentTab('todos'); setSelectedThreadId(null); }}
+              style={getSidebarStyle('todos')}
+              className="hover:bg-gray-100 transition-colors"
             >
               <Mail size={18} /> Todos
             </button>
             <button
-              onClick={() => { setView('list'); setCurrentTab('recibidos'); setActiveMessage(null); }}
-              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', background: currentTab === 'recibidos' ? '#EAF1FB' : 'transparent', borderRadius: '0 16px 16px 0', color: currentTab === 'recibidos' ? '#1a73e8' : '#5F6368', fontWeight: currentTab === 'recibidos' ? 700 : 400, cursor: 'pointer', border: 'none', width: '100%', textAlign: 'left', fontSize: '0.875rem' }}
+              onClick={() => { setCurrentTab('recibidos'); setSelectedThreadId(null); }}
+              style={getSidebarStyle('recibidos')}
+              className="hover:bg-gray-100 transition-colors"
             >
               <Mail size={18} /> Recibidos
             </button>
             <button
-              onClick={() => { setView('list'); setCurrentTab('enviados'); setActiveMessage(null); }}
-              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', background: currentTab === 'enviados' ? '#EAF1FB' : 'transparent', borderRadius: '0 16px 16px 0', color: currentTab === 'enviados' ? '#1a73e8' : '#5F6368', fontWeight: currentTab === 'enviados' ? 700 : 400, cursor: 'pointer', border: 'none', width: '100%', textAlign: 'left', fontSize: '0.875rem' }}
+              onClick={() => { setCurrentTab('enviados'); setSelectedThreadId(null); }}
+              style={getSidebarStyle('enviados')}
+              className="hover:bg-gray-100 transition-colors"
             >
               <Send size={18} /> Enviados
             </button>
-            <div 
-              onClick={() => { setView('list'); setCurrentTab('archivados'); setActiveMessage(null); }}
-              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', backgroundColor: currentTab === 'archivados' ? '#D3E3FD' : 'transparent', color: currentTab === 'archivados' ? '#0B57D0' : '#444746', borderRadius: '0 16px 16px 0', fontWeight: currentTab === 'archivados' ? 600 : 500, fontSize: '0.85rem', cursor: 'pointer', marginRight: '0.5rem' }}
+            <button 
+              onClick={() => { setCurrentTab('archivados'); setSelectedThreadId(null); }}
+              style={getSidebarStyle('archivados')}
+              className="hover:bg-gray-100 transition-colors"
             >
               <Archive size={18} /> Archivados
-            </div>
+            </button>
 
             {/* Sección de Automatizaciones (Plantillas) */}
-            <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{ marginTop: isMobile ? '0' : '2rem', display: isMobile ? 'none' : 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 1rem', paddingRight: '0.5rem' }}>
                 <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#5F6368', letterSpacing: '0.5px' }}>
                   AUTOMATIZACIONES
@@ -428,164 +556,427 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
           </div>
         </div>
 
-        {/* Contenido Central */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#FFFFFF' }}>
-          {/* Toolbar */}
-          <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', gap: '1rem', color: '#444746' }}>
-            {view === 'read' && (
-              <button onClick={() => { setView('list'); setActiveMessage(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#444746', padding: '0.25rem', borderRadius: '50%' }} className="hover:bg-gray-100">
-                <ArrowLeft size={18} />
+        {/* Split-pane layout */}
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flex: 1, overflow: 'hidden' }}>
+          {/* Left pane: Scrollable list of email threads (40% width) */}
+          <div style={{ 
+            width: isMobile ? '100%' : '40%', 
+            display: isMobile && selectedThreadId ? 'none' : 'flex',
+            borderRight: '1px solid #E5E7EB', 
+            flexDirection: 'column', 
+            overflowY: 'auto', 
+            backgroundColor: '#FFFFFF' 
+          }}>
+            
+            {/* Tabs directly above the list */}
+            <div style={{ display: 'flex', borderBottom: '1px solid #E5E7EB', backgroundColor: '#FFFFFF', position: 'sticky', top: 0, zIndex: 10 }}>
+              <button 
+                onClick={() => { setCurrentTab('todos'); setSelectedThreadId(null); }}
+                style={{ 
+                  flex: 1,
+                  padding: '1rem 0', 
+                  border: 'none', 
+                  background: 'none', 
+                  cursor: 'pointer', 
+                  fontWeight: currentTab === 'todos' ? 600 : 500,
+                  color: currentTab === 'todos' ? '#0b57d0' : '#5f6368',
+                  borderBottom: currentTab === 'todos' ? '3px solid #0b57d0' : '3px solid transparent',
+                  fontSize: '0.875rem',
+                  textAlign: 'center'
+                }}
+              >
+                Todos
               </button>
+              <button 
+                onClick={() => { setCurrentTab('recibidos'); setSelectedThreadId(null); }}
+                style={{ 
+                  flex: 1,
+                  padding: '1rem 0', 
+                  border: 'none', 
+                  background: 'none', 
+                  cursor: 'pointer', 
+                  fontWeight: currentTab === 'recibidos' ? 600 : 500,
+                  color: currentTab === 'recibidos' ? '#0b57d0' : '#5f6368',
+                  borderBottom: currentTab === 'recibidos' ? '3px solid #0b57d0' : '3px solid transparent',
+                  fontSize: '0.875rem',
+                  textAlign: 'center'
+                }}
+              >
+                Recibidos
+              </button>
+              <button 
+                onClick={() => { setCurrentTab('enviados'); setSelectedThreadId(null); }}
+                style={{ 
+                  flex: 1,
+                  padding: '1rem 0', 
+                  border: 'none', 
+                  background: 'none', 
+                  cursor: 'pointer', 
+                  fontWeight: currentTab === 'enviados' ? 600 : 500,
+                  color: currentTab === 'enviados' ? '#0b57d0' : '#5f6368',
+                  borderBottom: currentTab === 'enviados' ? '3px solid #0b57d0' : '3px solid transparent',
+                  fontSize: '0.875rem',
+                  textAlign: 'center'
+                }}
+              >
+                Enviados
+              </button>
+            </div>
+
+            {/* Threads List */}
+            {loadingMessages ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>
+                <Loader2 size={24} className="animate-spin inline mr-2"/> Cargando correos...
+              </div>
+            ) : googleAuthError ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', color: '#5F6368', gap: '1rem' }}>
+                <Mail size={48} color="#dadce0" />
+                <p style={{ textAlign: 'center', fontSize: '0.875rem' }}>Conecta tu cuenta de Google para ver los correos.</p>
+                <button 
+                  onClick={() => loginWithGoogle()}
+                  style={{ 
+                    display: 'flex', alignItems: 'center', gap: '0.5rem', 
+                    padding: '0.5rem 1rem', borderRadius: '4px', 
+                    border: '1px solid #dadce0', backgroundColor: '#fff', 
+                    color: '#3c4043', fontWeight: 500, fontSize: '0.875rem', cursor: 'pointer'
+                  }}
+                >
+                  Conectar con Google
+                </button>
+              </div>
+            ) : sortedThreads.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368', fontSize: '0.875rem', fontStyle: 'italic' }}>
+                No se encontraron conversaciones.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {sortedThreads.map(thread => {
+                  const isSelected = selectedThreadId === thread.threadId;
+                  const latestMsg = thread.latestMessage;
+                  const isUnread = thread.messages.some(m => !m.leido);
+                  const displaySender = latestMsg.remitente?.split('<')[0]?.trim() || latestMsg.remitente || 'Desconocido';
+                  
+                  return (
+                    <div 
+                      key={thread.threadId}
+                      onClick={() => { setSelectedThreadId(thread.threadId); }}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        padding: '0.75rem 1rem',
+                        borderBottom: '1px solid #F1F3F4',
+                        cursor: 'pointer',
+                        backgroundColor: isSelected ? '#e8f0fe' : '#FFFFFF', // Use E8F0FE or EAF1FB for highlights
+                        fontSize: '0.875rem',
+                        transition: 'background-color 0.2s',
+                        position: 'relative'
+                      }}
+                      className="hover:bg-gray-50"
+                    >
+                      {/* Sender & Date */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                        <span style={{ fontWeight: isUnread ? 700 : 500, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>
+                          {displaySender}
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: isUnread ? '#0b57d0' : '#5f6368', fontWeight: isUnread ? 600 : 400 }}>
+                          {new Date(thread.creado_en).toLocaleDateString([], { day: '2-digit', month: 'short' })}
+                        </span>
+                      </div>
+                      
+                      {/* Subject & snippet */}
+                      <div style={{ fontWeight: isUnread ? 600 : 400, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.15rem' }}>
+                        {latestMsg.asunto || '(Sin asunto)'}
+                      </div>
+                      <div style={{ color: '#5f6368', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {latestMsg.cuerpo || ''}
+                      </div>
+                      
+                      {/* Thread count badge if multiple messages */}
+                      {thread.messages.length > 1 && (
+                        <span style={{ position: 'absolute', right: '1rem', bottom: '0.5rem', backgroundColor: '#F1F3F4', color: '#5f6368', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px' }}>
+                          {thread.messages.length}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
-            {activeMessage && (
-              <>
-                <Archive 
-                  size={18} 
-                  className="cursor-pointer hover:text-gray-900" 
-                  onClick={() => handleArchiveMessage(activeMessage.id, !activeMessage.archivado)} 
-                  title={activeMessage.archivado ? "Desarchivar" : "Archivar"}
-                />
-                <Trash2 
-                  size={18} 
-                  className="cursor-pointer hover:text-gray-900" 
-                  onClick={() => {
-                    if (window.confirm("¿Estás seguro de eliminar este correo de forma permanente?")) {
-                      handleDeleteMessage(activeMessage.id);
-                    }
-                  }} 
-                  title="Eliminar"
-                />
-              </>
-            )}
-            <MoreVertical size={18} className="cursor-pointer hover:text-gray-900" onClick={() => toast('Más opciones próximamente')} />
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {view === 'list' ? (
-              // Vista de Cuadrícula/Lista Mejorada
-              loadingMessages ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}><Loader2 size={24} className="animate-spin inline mr-2"/> Cargando...</div>
-              ) : googleAuthError ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#5F6368', gap: '1rem' }}>
-                  <Mail size={48} color="#dadce0" />
-                  <p>Para ver y enviar correos, conecta tu cuenta de Google.</p>
-                  <button 
-                    onClick={() => loginWithGoogle()}
-                    style={{ 
-                      display: 'flex', alignItems: 'center', gap: '0.5rem', 
-                      padding: '0.5rem 1rem', borderRadius: '4px', 
-                      border: '1px solid #dadce0', backgroundColor: '#fff', 
-                      color: '#3c4043', fontWeight: 500, fontSize: '0.875rem', cursor: 'pointer'
-                    }}
-                  >
-                    <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ width: '18px', height: '18px' }}>
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                      <path fill="none" d="M0 0h48v48H0z"></path>
-                    </svg>
-                    Conectar con Google
-                  </button>
-                </div>
-              ) : !searchQuery && messages.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>Ingresa un correo o término en el buscador para ver los mensajes.</div>
-              ) : messages.filter(m => {
-                    if (currentTab === 'archivados') return m.archivado;
-                    if (currentTab === 'enviados') return m.es_enviado && !m.archivado;
-                    if (currentTab === 'recibidos') return !m.es_enviado && !m.archivado;
-                    return !m.archivado;
-                  }).length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>No hay correos {currentTab === 'archivados' ? 'archivados' : currentTab === 'enviados' ? 'enviados' : currentTab === 'recibidos' ? 'recibidos' : ''}.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {messages.filter(m => {
-                    if (currentTab === 'archivados') return m.archivado;
-                    if (currentTab === 'enviados') return m.es_enviado && !m.archivado;
-                    if (currentTab === 'recibidos') return !m.es_enviado && !m.archivado;
-                    return !m.archivado; // 'todos'
-                  }).map(msg => (
-                    <div 
-                      key={msg.id} 
-                      onClick={() => { setActiveMessage(msg); setView('read'); }}
-                      style={{ 
-                        display: 'grid', 
-                        gridTemplateColumns: '40px 180px 1fr 100px', 
-                        alignItems: 'center', 
-                        padding: '0.6rem 1rem', 
-                        borderBottom: '1px solid #E5E7EB',
-                        cursor: 'pointer', 
-                        backgroundColor: '#FFFFFF', 
-                        color: '#202124', 
-                        fontSize: '0.875rem',
-                        gap: '0.5rem'
-                      }}
-                      className="group hover:bg-gray-50 hover:shadow-[inset_1px_0_0_#dadce0,inset_-1px_0_0_#dadce0,0_1px_2px_0_rgba(60,64,67,.15),0_1px_3px_1px_rgba(60,64,67,.05)] transition-all"
-                    >
-                      <div style={{ color: '#D1D5DB' }}>
-                        <Star size={18} />
-                      </div>
-                      <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        Para: {msg.destinatarios?.join(', ') || 'Cliente'}
-                      </div>
-                      <div style={{ display: 'flex', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', gap: '0.5rem' }}>
-                        <span style={{ fontWeight: 600 }}>{msg.asunto || '(Sin asunto)'}</span>
-                        <span style={{ color: '#6B7280' }}>- {msg.cuerpo?.substring(0, 100).replace(/\n/g, ' ')}</span>
-                      </div>
-                      <div style={{ textAlign: 'right', fontWeight: 500, fontSize: '0.75rem', color: '#6B7280' }}>
-                        {new Date(msg.creado_en).toLocaleDateString([], { day: '2-digit', month: 'short' })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )
+          {/* Right pane: Reading pane / conversational thread view (60% width) */}
+          <div style={{ 
+            width: isMobile ? '100%' : '60%', 
+            display: isMobile && !selectedThreadId ? 'none' : 'flex',
+            flexDirection: 'column', 
+            overflowY: 'auto', 
+            backgroundColor: '#FFFFFF', 
+            borderLeft: '1px solid #E5E7EB' 
+          }}>
+            {!selectedThreadId ? (
+              /* Empty State */
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#5F6368', gap: '1rem', padding: '2rem' }}>
+                <Mail size={64} style={{ color: '#DADCE0' }} />
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 500, color: '#3C4043' }}>Selecciona una conversación para leerla</h3>
+                <p style={{ fontSize: '0.875rem', color: '#70757A', textAlign: 'center' }}>Haz clic en un correo de la lista de la izquierda para ver su historial de mensajes completo.</p>
+              </div>
             ) : (
-              // Vista de Lectura
-              activeMessage && (
-                <div style={{ padding: '2rem' }}>
-                  <h2 style={{ fontSize: '1.35rem', fontWeight: 400, color: '#202124', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    {activeMessage.asunto}
-                    <span style={{ fontSize: '0.7rem', padding: '2px 6px', backgroundColor: '#F1F3F4', borderRadius: '4px', color: '#5F6368' }}>Enviados</span>
-                  </h2>
-                  <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-                    <div style={{ width: '40px', height: '40px', backgroundColor: '#188038', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 }}>
-                      <UserCircle size={24} />
+              /* Reading Thread View */
+              (() => {
+                const threadMsgs = selectedThreadMessages;
+                if (threadMsgs.length === 0) return null;
+                const subject = threadMsgs[0].asunto || '(Sin asunto)';
+                
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%' }}>
+                    
+                    {/* Thread header */}
+                    <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF' }}>
+                      <h2 style={{ fontSize: '1.25rem', fontWeight: 400, color: '#202124', margin: 0 }}>
+                        {subject}
+                      </h2>
+                      <div style={{ display: 'flex', gap: '0.75rem', color: '#5F6368' }}>
+                        <button 
+                          onClick={() => { setSelectedThreadId(null); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}
+                          title="Cerrar vista"
+                        >
+                          <X size={18} />
+                        </button>
+                      </div>
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <span style={{ fontWeight: 600, color: '#202124', fontSize: '0.85rem' }}>{activeMessage.operario || 'Agencia'}</span>
-                          <span style={{ color: '#5F6368', fontSize: '0.75rem', marginLeft: '0.5rem' }}>&lt;{activeMessage.remitente || 'no-reply@agencia.com'}&gt;</span>
-                        </div>
-                        <div style={{ color: '#5F6368', fontSize: '0.75rem' }}>
-                          {new Date(activeMessage.creado_en).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                        </div>
-                      </div>
-                      <div style={{ color: '#5F6368', fontSize: '0.75rem', marginTop: '2px' }}>
-                        para {activeMessage.destinatarios?.join(', ')}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ color: '#202124', fontSize: '0.875rem', lineHeight: '1.5', whiteSpace: 'pre-wrap', paddingLeft: '56px' }}>
-                    {activeMessage.cuerpo}
-                  </div>
-                  {activeMessage.adjuntos && activeMessage.adjuntos.length > 0 && (
-                    <div style={{ marginTop: '2rem', paddingLeft: '56px' }}>
-                      <div style={{ fontSize: '0.85rem', color: '#5F6368', marginBottom: '0.5rem', borderBottom: '1px solid #E5E7EB', paddingBottom: '0.5rem' }}>
-                        {activeMessage.adjuntos.length} adjuntos
-                      </div>
-                      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                        {activeMessage.adjuntos.map((adj, i) => (
-                          <div key={i} style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: '#FFFFFF' }}>
-                            <div style={{ color: '#D93025' }}><Paperclip size={16} /></div>
-                            <span style={{ fontSize: '0.8rem', color: '#202124', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{adj.nombre}</span>
+                    
+                    {/* Messages Stack */}
+                    <div style={{ flex: 1, padding: '1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', backgroundColor: '#F8F9FA' }}>
+                      {threadMsgs.map((msg, index) => {
+                        const expanded = isMessageExpanded(msg.id, index, threadMsgs.length);
+                        const senderName = msg.remitente?.split('<')[0]?.replace(/"/g, '')?.trim() || msg.remitente || 'Desconocido';
+                        const dateStr = new Date(msg.creado_en).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+                        
+                        return (
+                          <div 
+                            key={msg.id}
+                            style={{ 
+                              border: '1px solid #E0E0E0', 
+                              borderRadius: '8px', 
+                              backgroundColor: '#FFFFFF',
+                              boxShadow: expanded ? '0 1px 3px rgba(0,0,0,0.05)' : 'none',
+                              overflow: 'hidden'
+                            }}
+                          >
+                            {/* Message Card Header */}
+                            <div 
+                              onClick={() => toggleMessage(msg.id)}
+                              style={{ 
+                                padding: '0.75rem 1rem', 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center', 
+                                cursor: 'pointer',
+                                backgroundColor: expanded ? '#FFFFFF' : '#F1F3F4',
+                                borderBottom: expanded ? '1px solid #F1F3F4' : 'none',
+                                transition: 'background-color 0.2s'
+                              }}
+                              className="hover:bg-gray-100"
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden', width: '75%' }}>
+                                <div style={{ 
+                                  width: '32px', 
+                                  height: '32px', 
+                                  borderRadius: '50%', 
+                                  backgroundColor: msg.es_enviado ? '#E8F0FE' : '#E6F4EA',
+                                  color: msg.es_enviado ? '#1A73E8' : '#137333',
+                                  display: 'flex', 
+                                  alignItems: 'center', 
+                                  justifyContent: 'center',
+                                  fontWeight: 600,
+                                  fontSize: '0.85rem',
+                                  flexShrink: 0
+                                }}>
+                                  {senderName.charAt(0).toUpperCase()}
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                                  <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#202124' }}>
+                                    {senderName}
+                                  </span>
+                                  {!expanded && (
+                                    <span style={{ fontSize: '0.8rem', color: '#5F6368', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                      {msg.cuerpo?.substring(0, 80)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#5F6368', fontSize: '0.75rem' }}>
+                                <span>{dateStr}</span>
+                              </div>
+                            </div>
+                            
+                            {/* Message Card Body */}
+                            {expanded && (
+                              <div style={{ padding: '1rem 1rem 1.5rem 1rem' }}>
+                                {/* Expanded headers */}
+                                <div style={{ fontSize: '0.8rem', color: '#5F6368', marginBottom: '1rem', borderBottom: '1px solid #F1F3F4', paddingBottom: '0.5rem' }}>
+                                  <div><strong>De:</strong> {msg.remitente}</div>
+                                  {msg.destinatario && <div><strong>Para:</strong> {msg.destinatarios?.join(', ') || msg.destinatario}</div>}
+                                </div>
+                                
+                                {/* Text Body */}
+                                <div style={{ 
+                                  fontSize: '0.875rem', 
+                                  color: '#202124', 
+                                  lineHeight: '1.6', 
+                                  whiteSpace: 'pre-wrap',
+                                  fontFamily: 'sans-serif' 
+                                }}>
+                                  {msg.cuerpo}
+                                </div>
+                                
+                                {/* Attachments */}
+                                {msg.adjuntos && msg.adjuntos.length > 0 && (
+                                  <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #F1F3F4' }}>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#5F6368', marginBottom: '0.5rem' }}>
+                                      {msg.adjuntos.length} {msg.adjuntos.length === 1 ? 'adjunto' : 'adjuntos'}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                      {msg.adjuntos.map((adj, i) => (
+                                        <div 
+                                          key={i} 
+                                          style={{ 
+                                            border: '1px solid #E0E0E0', 
+                                            borderRadius: '4px', 
+                                            padding: '0.4rem 0.75rem', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '0.5rem', 
+                                            backgroundColor: '#F8F9FA' 
+                                          }}
+                                        >
+                                          <Paperclip size={14} style={{ color: '#5F6368' }} />
+                                          <span style={{ fontSize: '0.75rem', color: '#3C4043', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {adj.nombre}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        ))}
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Embedded Quick-reply Box */}
+                    <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #E5E7EB', backgroundColor: '#FFFFFF' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', border: '1px solid #DADCE0', borderRadius: '12px', padding: '0.75rem 1rem' }}>
+                        <span style={{ fontSize: '0.8rem', color: '#5F6368' }}>
+                          Respuesta rápida para <strong>{clientEmail || threadMsgs[threadMsgs.length - 1].remitente}</strong>
+                        </span>
+                        <textarea
+                          rows={3}
+                          placeholder="Escribe una respuesta rápida..."
+                          value={quickReplyText}
+                          onChange={(e) => setQuickReplyText(e.target.value)}
+                          style={{
+                            border: 'none',
+                            outline: 'none',
+                            resize: 'none',
+                            width: '100%',
+                            fontSize: '0.875rem',
+                            color: '#202124',
+                            backgroundColor: 'transparent'
+                          }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #F1F3F4', paddingTop: '0.5rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <button
+                              onClick={async () => {
+                                if (!quickReplyText.trim() || sendingReply) return;
+                                setSendingReply(true);
+                                const toastId = toast.loading('Enviando respuesta...');
+                                try {
+                                  const latestMsg = threadMsgs[threadMsgs.length - 1];
+                                  const repSubject = latestMsg.asunto.toLowerCase().startsWith('re:') ? latestMsg.asunto : `Re: ${latestMsg.asunto}`;
+                                  
+                                  await sendGmailEmail({
+                                    to: clientEmail || latestMsg.remitente,
+                                    subject: repSubject,
+                                    bodyText: quickReplyText.trim()
+                                  });
+                                  
+                                  setQuickReplyText('');
+                                  toast.success('Respuesta enviada', { id: toastId });
+                                  setTimeout(() => fetchMessages(clientEmail), 1500);
+                                } catch (err) {
+                                  console.error('Error sending reply:', err);
+                                  toast.error(err.message || 'Error al enviar respuesta', { id: toastId });
+                                } finally {
+                                  setSendingReply(false);
+                                }
+                              }}
+                              disabled={!quickReplyText.trim() || sendingReply}
+                              style={{
+                                backgroundColor: '#0b57d0',
+                                color: '#FFFFFF',
+                                border: 'none',
+                                borderRadius: '18px',
+                                padding: '0.4rem 1.25rem',
+                                fontSize: '0.85rem',
+                                fontWeight: 500,
+                                cursor: (!quickReplyText.trim() || sendingReply) ? 'not-allowed' : 'pointer',
+                                opacity: (!quickReplyText.trim() || sendingReply) ? 0.7 : 1
+                              }}
+                            >
+                              {sendingReply ? 'Enviando...' : 'Enviar'}
+                            </button>
+                            
+                            <button
+                              onClick={async () => {
+                                setSendingReply(true);
+                                const toastId = toast.loading('Generando respuesta con IA...');
+                                try {
+                                  const latestMsg = threadMsgs[threadMsgs.length - 1];
+                                  const prompt = `
+                                    Eres un asistente formal de la empresa PLATAFORMA CUBANOS BR.
+                                    Escribe una respuesta corta, formal y profesional para el correo recibido de ${clientName}.
+                                    Asunto del correo recibido: ${latestMsg.asunto}
+                                    Cuerpo del correo recibido: ${latestMsg.cuerpo}
+                                    
+                                    Devuelve únicamente la respuesta formal en texto plano.
+                                  `;
+                                  const response = await chat([{ role: 'system', content: prompt }]);
+                                  setQuickReplyText(response.trim());
+                                  toast.success('Respuesta generada', { id: toastId });
+                                } catch (error) {
+                                  console.error('Error generating AI reply:', error);
+                                  toast.error('Error al generar respuesta', { id: toastId });
+                                } finally {
+                                  setSendingReply(false);
+                                }
+                              }}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: '#A142F4',
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: '0.25rem',
+                                borderRadius: '50%'
+                              }}
+                              className="hover:bg-purple-50"
+                              title="Generar respuesta con IA"
+                            >
+                              <Sparkles size={16} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              )
+                  </div>
+                );
+              })()
             )}
           </div>
         </div>
@@ -595,10 +986,10 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
       {composeOpen && (
         <div 
           style={{ 
-            position: 'absolute', bottom: 0, right: '24px', width: '480px', 
-            backgroundColor: '#FFFFFF', borderRadius: '8px 8px 0 0', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            position: 'absolute', bottom: 0, right: isMobile ? 0 : '24px', left: isMobile ? 0 : 'auto', width: isMobile ? '100%' : '480px', 
+            backgroundColor: '#FFFFFF', borderRadius: isMobile ? '12px 12px 0 0' : '8px 8px 0 0', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
             display: 'flex', flexDirection: 'column', zIndex: 100,
-            height: composeMinimized ? '40px' : '480px',
+            height: composeMinimized ? '40px' : (isMobile ? '90%' : '480px'),
             transition: 'height 0.2s ease-in-out'
           }}
           onDragOver={handleDragOver}
@@ -678,7 +1069,10 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                   >
                     <input type="file" multiple style={{ display: 'none' }} onChange={(e) => {
                       const files = Array.from(e.target.files);
-                      setAdjuntos([...adjuntos, ...files.map(f => ({ nombre: f.name, data: f }))]);
+                      if (files.length > 0) {
+                        setAdjuntos([...adjuntos, ...files.map(f => ({ nombre: f.name, data: f }))]);
+                        toast.error('El envío de archivos adjuntos no está soportado en esta versión. Se enviará solo el texto del correo.');
+                      }
                       e.target.value = null; // reset
                     }} />
                     <Paperclip size={18} />

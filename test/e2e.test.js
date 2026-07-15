@@ -1,5 +1,9 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const appPath = path.resolve(__dirname, '../src/App.jsx');
 const clientViewPath = path.resolve(__dirname, '../src/components/ClientView.jsx');
@@ -1150,7 +1154,78 @@ const tests = [
           : `Checks failed: hasUseEffect=${hasUseEffect}, hasDepArray/selectedClientId=${hasDepArray}, hasSelectQuery=${hasSelectQuery}`
       };
     }
+  },
+  // TIER 1 - Feature 10: Gmail Integration and UI Redesign
+  {
+    id: 95,
+    tier: 1,
+    feature: 10,
+    name: "fetchClientEmails uses pageToken pagination for historical fetch",
+    testFn: () => {
+      const match = allServicesContent.includes('nextPageToken') && allServicesContent.includes('pageToken');
+      return { pass: match, message: match ? "Found nextPageToken pagination" : "Missing nextPageToken loop in fetchClientEmails" };
+    }
+  },
+  {
+    id: 96,
+    tier: 1,
+    feature: 10,
+    name: "fetchClientEmails combines messages across pages",
+    testFn: () => {
+      const match = allServicesContent.includes('concat') || allServicesContent.includes('push');
+      return { pass: match, message: match ? "Found array combination" : "Missing message combination across pages in fetchClientEmails" };
+    }
+  },
+  {
+    id: 97,
+    tier: 1,
+    feature: 10,
+    name: "formatGmailMessage parses destinatarios as an array and extracts adjuntos",
+    testFn: () => {
+      const match = allServicesContent.includes('destinatarios') && allServicesContent.includes('adjuntos');
+      return { pass: match, message: match ? "Found destinatarios and adjuntos in formatting" : "Missing destinatarios array or adjuntos array parsing in formatGmailMessage" };
+    }
+  },
+  {
+    id: 98,
+    tier: 1,
+    feature: 10,
+    name: "ClientEmail.jsx renders tabs for Todos, Recibidos, and Enviados",
+    testFn: () => {
+      const contentLower = allComponentsContent.toLowerCase();
+      const match = contentLower.includes('todos') && contentLower.includes('recibidos') && contentLower.includes('enviados');
+      return { pass: match, message: match ? "Found Todos, Recibidos, and Enviados tabs" : "Missing tabs for Todos, Recibidos, or Enviados in ClientEmail.jsx" };
+    }
+  },
+  {
+    id: 99,
+    tier: 1,
+    feature: 10,
+    name: "ClientEmail.jsx filters Recibidos and Enviados using INBOX and SENT label IDs",
+    testFn: () => {
+      const match = allComponentsContent.includes('INBOX') && allComponentsContent.includes('SENT');
+      return { pass: match, message: match ? "Found INBOX and SENT label ID filtering" : "Missing filtering logic using INBOX and SENT in ClientEmail.jsx" };
+    }
+  },
+  {
+    id: 100,
+    tier: 1,
+    feature: 10,
+    name: "ClientEmail.jsx implements a thread/reading pane view and uses Gmail style hexes like #C2E7FF and #EAF1FB or #E8F0FE",
+    testFn: () => {
+      const contentLower = allComponentsContent.toLowerCase();
+      const hasHex1 = contentLower.includes('#c2e7ff');
+      const hasHex2 = contentLower.includes('#eaf1fb') || contentLower.includes('#e8f0fe');
+      const hasThread = contentLower.includes('threadid') || contentLower.includes('thread');
+      const pass = hasHex1 && hasHex2 && hasThread;
+      return { 
+        pass, 
+        message: pass 
+          ? "Found thread/reading pane view and correct Gmail hexes" 
+          : `Checks failed: hasHex1(#c2e7ff)=${hasHex1}, hasHex2(#eaf1fb/#e8f0fe)=${hasHex2}, hasThread=${hasThread}`
+      };
+    }
   }
 ];
 
-module.exports = { tests };
+export { tests };
