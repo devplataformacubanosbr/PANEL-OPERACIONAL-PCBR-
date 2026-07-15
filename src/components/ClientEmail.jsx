@@ -964,10 +964,17 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                                     try {
                                       const repSubject = latestMsg.asunto.toLowerCase().startsWith('re:') ? latestMsg.asunto : `Re: ${latestMsg.asunto}`;
                                       
+                                      const newReferences = latestMsg.references 
+                                        ? `${latestMsg.references} ${latestMsg.messageId}` 
+                                        : latestMsg.messageId;
+
                                       await sendGmailEmail({
                                         to: replyTo,
                                         subject: repSubject,
-                                        bodyText: quickReplyText.trim()
+                                        bodyText: quickReplyText.trim(),
+                                        threadId: latestMsg.threadId,
+                                        inReplyTo: latestMsg.messageId,
+                                        references: newReferences
                                       });
                                   
                                   setQuickReplyText('');

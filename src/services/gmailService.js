@@ -149,6 +149,9 @@ function formatGmailMessage(msg) {
 
   return {
     id: msg.id,
+    threadId: msg.threadId,
+    messageId: get('message-id'),
+    references: get('references'),
     asunto: get('subject') || '(Sin asunto)',
     cuerpo: body,
     remitente: get('from'),
@@ -158,7 +161,6 @@ function formatGmailMessage(msg) {
     leido: !msg.labelIds?.includes('UNREAD'),
     es_enviado: isSent,
     archivado: !msg.labelIds?.includes('INBOX') && !isSent,
-    threadId: msg.threadId,
     labelIds: msg.labelIds || [],
     adjuntos: adjuntos
   };
@@ -210,10 +212,14 @@ function decodeBase64(data) {
 /**
  * Envía un correo usando la Gmail API.
  */
-export async function sendGmailEmail({ to, subject, bodyText, adjuntos = [] }) {
+export async function sendGmailEmail({ to, subject, bodyText, adjuntos = [], threadId = null, inReplyTo = null, references = null }) {
   const token = await getProviderToken();
 
   let rawEmail = '';
+  
+  const threadHeaders = [];
+  if (inReplyTo) threadHeaders.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) threadHeaders.push(`References: ${references}`);
   
   if (adjuntos && adjuntos.length > 0) {
     const boundary = 'foo_bar_baz_' + Date.now();
@@ -222,6 +228,7 @@ export async function sendGmailEmail({ to, subject, bodyText, adjuntos = [] }) {
       `To: ${to}`,
       `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
       'MIME-Version: 1.0',
+      ...threadHeaders,
       `Content-Type: multipart/mixed; boundary="${boundary}"`,
       '',
       `--${boundary}`,
@@ -250,6 +257,7 @@ export async function sendGmailEmail({ to, subject, bodyText, adjuntos = [] }) {
       'MIME-Version: 1.0',
       `To: ${to}`,
       `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+      ...threadHeaders,
       '',
       bodyText,
     ].join('\r\n');
@@ -266,7 +274,10 @@ export async function sendGmailEmail({ to, subject, bodyText, adjuntos = [] }) {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ raw: encodedEmail }),
+    body: JSON.stringify({ 
+      raw: encodedEmail,
+      ...(threadId ? { threadId } : {})
+    }),
   });
 
   if (!response.ok) {
