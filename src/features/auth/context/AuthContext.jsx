@@ -100,8 +100,8 @@ export const AuthProvider = ({ children }) => {
   const loginWithGoogle = useCallback(async () => {
     setAuthError(null);
 
-    // La URL de callback: vuelve a la app con ?google_callback=true
-    // main.jsx detecta este param y renderiza GoogleAuthCallback (no la app completa)
+    // URL de callback: vuelve a la misma página con ?google_callback=true
+    // main.jsx detecta este param y renderiza solo GoogleAuthCallback
     const callbackUrl = `${window.location.origin}${window.location.pathname}?google_callback=true`;
 
     const options = {
@@ -115,45 +115,23 @@ export const AuthProvider = ({ children }) => {
     };
 
     try {
+      // Guardar sesión actual de email como backup para restaurarla en el popup
       const { data: { session: currentSession } } = await supabase.auth.getSession();
-      let authUrl = null;
-
-      if (currentSession) {
-        const hasGoogle = currentSession.user?.identities?.some(id => id.provider === 'google');
-
-        if (hasGoogle) {
-          // Ya está vinculado — renovamos el token
-          const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-          if (error) throw error;
-          authUrl = data?.url;
-        } else {
-          // Primera vez — intentamos vincular la identidad Google al usuario actual
-          const { data, error } = await supabase.auth.linkIdentity({ provider: 'google', options });
-          if (error) {
-            const msg = error.message.toLowerCase();
-            const alreadyLinked = msg.includes('already linked') || msg.includes('already registered') || msg.includes('manual linking is disabled');
-            if (alreadyLinked) {
-              // Fallback: signIn directo con Google
-              const { data: d2, error: e2 } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-              if (e2) throw e2;
-              authUrl = d2?.url;
-            } else {
-              throw error;
-            }
-          } else {
-            authUrl = data?.url;
-          }
-        }
-      } else {
-        // Sin sesión activa
-        const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-        if (error) throw error;
-        authUrl = data?.url;
+      if (currentSession?.access_token) {
+        localStorage.setItem('email_session_backup', JSON.stringify({
+          access_token: currentSession.access_token,
+          refresh_token: currentSession.refresh_token,
+        }));
       }
 
+      // Siempre usamos signInWithOAuth para asegurarnos de obtener el provider_token
+      // (linkIdentity no devuelve provider_token de forma confiable)
+      const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+      if (error) throw error;
+      const authUrl = data?.url;
       if (!authUrl) throw new Error('No se obtuvo URL de autenticación de Google.');
 
-      // Abrir popup SOLO cuando ya tenemos la URL real de Google
+      // Abrir popup solo cuando ya tenemos la URL real de Google
       const width = 520;
       const height = 660;
       const left = Math.round(window.screenX + (window.outerWidth - width) / 2);
@@ -162,6 +140,7 @@ export const AuthProvider = ({ children }) => {
 
     } catch (err) {
       console.error('[Auth] loginWithGoogle error:', err);
+      localStorage.removeItem('email_session_backup');
       setAuthError(err.message);
       throw err;
     }
