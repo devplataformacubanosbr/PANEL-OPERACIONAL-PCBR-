@@ -10,7 +10,7 @@ import AutocompleteTextarea from './ui/AutocompleteTextarea';
 import { useAuth } from '../features/auth/context/AuthContext';
 
 export default function ClientEmail({ clientId, clientName, clientEmail, tramitesContext }) {
-  const { loginWithGoogle } = useAuth();
+  const { loginWithGoogle, session } = useAuth();
   const [messages, setMessages] = useState([]);
   const [googleAuthError, setGoogleAuthError] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(true);
@@ -50,13 +50,17 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   const [searchQuery, setSearchQuery] = useState(clientEmail || '');
 
   useEffect(() => {
-    if (clientId) {
+    if (session && !session.provider_token) {
+      setGoogleAuthError(true);
+      setLoadingMessages(false);
+    } else if (clientId) {
+      setGoogleAuthError(false);
       setSearchQuery(clientEmail || '');
       fetchMessages(clientEmail);
       fetchPlantillas();
       setDestinatario(clientEmail || '');
     }
-  }, [clientId, clientEmail]);
+  }, [clientId, clientEmail, session]);
 
   const fetchMessages = async (queryParam) => {
     const emailToSearch = queryParam !== undefined ? queryParam : searchQuery;
