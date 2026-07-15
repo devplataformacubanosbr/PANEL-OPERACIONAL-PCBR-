@@ -5,119 +5,116 @@ import { supabase } from '../../../shared/config/supabaseClient';
  * GoogleAuthCallback — Se renderiza SOLO en el popup de autenticación de Google.
  * Detectado por el parámetro ?google_callback=true en la URL.
  *
- * Flujo:
- *  1. Supabase procesa automáticamente el hash de la URL (#access_token=...)
- *  2. Obtenemos la sesión con el provider_token (token de Gmail)
- *  3. Guardamos el token en localStorage para que lo use la ventana principal
- *  4. Cerramos esta ventana
+ * El provider_token viene en el hash de la URL (#access_token=...&provider_token=...)
+ * Supabase lo procesa automáticamente. Nosotros solo lo rescatamos y guardamos.
  */
 export default function GoogleAuthCallback() {
-  const [status, setStatus] = useState('Procesando autenticación...');
+  const [status, setStatus] = useState('Procesando autenticación con Google...');
   const [isError, setIsError] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
 
   useEffect(() => {
-    let closed = false;
+    let cancelled = false;
 
-    async function handleCallback() {
+    async function extractAndSaveToken() {
       try {
-        // Supabase procesa el hash automáticamente al inicializar.
-        // Esperamos hasta 5 segundos para que la sesión esté disponible.
-        let session = null;
-        let attempts = 0;
+        // 1) Intentar extraer provider_token directo del hash de la URL
+        //    (Supabase lo pone ahí: #access_token=X&provider_token=Y)
+        const hash = window.location.hash;
+        let providerToken = null;
 
-        while (!session && attempts < 10) {
-          await new Promise(r => setTimeout(r, 500));
-          const { data } = await supabase.auth.getSession();
-          session = data?.session;
-          attempts++;
+        if (hash) {
+          const params = new URLSearchParams(hash.replace('#', '?'));
+          providerToken = params.get('provider_token');
         }
 
-        if (session?.provider_token) {
-          localStorage.setItem('google_provider_token', session.provider_token);
-          setStatus('¡Conectado con Google! Cerrando ventana...');
-        } else if (session) {
-          // Tenemos sesión pero sin provider_token (caso linkIdentity).
-          // El token llegará en el siguiente signIn con OAuth.
-          setStatus('Cuenta vinculada. Cerrando ventana...');
+        // 2) Si no está en el hash, esperar a que Supabase procese la sesión
+        if (!providerToken) {
+          setStatus('Obteniendo sesión de Google...');
+          let attempts = 0;
+          while (!providerToken && attempts < 15) {
+            await new Promise(r => setTimeout(r, 500));
+            const { data } = await supabase.auth.getSession();
+            providerToken = data?.session?.provider_token || null;
+            attempts++;
+          }
+        }
+
+        if (cancelled) return;
+
+        if (providerToken) {
+          localStorage.setItem('google_provider_token', providerToken);
+          setIsSuccess(true);
+          setStatus('¡Conectado! Cerrando ventana...');
+
+          // Dar 1.5s para que el usuario vea el éxito, luego cerrar
+          await new Promise(r => setTimeout(r, 1500));
+          if (!cancelled) window.close();
         } else {
-          setStatus('Error: No se pudo obtener la sesión.');
+          setStatus('Error: No se recibió el token de Google.');
           setIsError(true);
-          return;
-        }
-
-        // Pequeña pausa para que el usuario vea el mensaje de éxito
-        await new Promise(r => setTimeout(r, 1200));
-
-        if (!closed) {
-          closed = true;
-          window.close();
         }
       } catch (err) {
-        console.error('[GoogleAuthCallback] Error:', err);
-        setStatus(`Error: ${err.message}`);
-        setIsError(true);
+        if (!cancelled) {
+          console.error('[GoogleAuthCallback]', err);
+          setStatus(`Error: ${err.message}`);
+          setIsError(true);
+        }
       }
     }
 
-    handleCallback();
+    extractAndSaveToken();
 
-    // Si window.close() no funciona (navegador lo bloquea), mostrar instrucción manual
-    const fallbackTimer = setTimeout(() => {
-      if (!closed) {
-        setStatus('✓ Autenticación exitosa. Puedes cerrar esta ventana.');
+    // Si window.close() fue bloqueado por el navegador
+    const fallback = setTimeout(() => {
+      if (!cancelled && !isError) {
+        setStatus('✓ Listo. Puedes cerrar esta ventana manualmente.');
       }
-    }, 4000);
+    }, 5000);
 
-    return () => clearTimeout(fallbackTimer);
+    return () => {
+      cancelled = true;
+      clearTimeout(fallback);
+    };
   }, []);
+
+  const bgColor = isError ? '#7f1d1d' : isSuccess ? '#064e3b' : '#1e293b';
+  const icon = isError ? '✗' : isSuccess ? '✓' : '⟳';
+  const iconBg = isError ? '#ef4444' : isSuccess ? '#10b981' : '#3b82f6';
 
   return (
     <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100vh',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', height: '100vh',
       fontFamily: "'Inter', 'Segoe UI', sans-serif",
-      background: '#0f172a',
-      color: '#fff',
-      gap: '16px',
-      padding: '24px',
-      textAlign: 'center',
+      background: bgColor, color: '#fff', gap: 16, padding: 24,
+      textAlign: 'center', transition: 'background 0.5s',
     }}>
-      {!isError ? (
-        <>
-          <div style={{
-            width: 64, height: 64, borderRadius: '50%',
-            background: 'linear-gradient(135deg, #10b981, #059669)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 32
-          }}>✓</div>
-          <h2 style={{ margin: 0, fontSize: 22 }}>¡Conectado con Google!</h2>
-          <p style={{ margin: 0, color: '#94a3b8', fontSize: 14 }}>{status}</p>
-        </>
-      ) : (
-        <>
-          <div style={{
-            width: 64, height: 64, borderRadius: '50%',
-            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 32
-          }}>✗</div>
-          <h2 style={{ margin: 0, fontSize: 22 }}>Error de conexión</h2>
-          <p style={{ margin: 0, color: '#94a3b8', fontSize: 14 }}>{status}</p>
-          <button
-            onClick={() => window.close()}
-            style={{
-              marginTop: 8, padding: '8px 20px', borderRadius: 8,
-              background: '#ef4444', color: '#fff', border: 'none',
-              cursor: 'pointer', fontSize: 14
-            }}
-          >
-            Cerrar ventana
-          </button>
-        </>
+      <div style={{
+        width: 72, height: 72, borderRadius: '50%',
+        background: iconBg, display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        fontSize: 36, transition: 'background 0.5s',
+        animation: !isSuccess && !isError ? 'spin 1.5s linear infinite' : 'none',
+      }}>
+        {icon}
+      </div>
+      <h2 style={{ margin: 0, fontSize: 22 }}>
+        {isError ? 'Error de conexión' : isSuccess ? '¡Conectado con Google!' : 'Conectando...'}
+      </h2>
+      <p style={{ margin: 0, color: '#cbd5e1', fontSize: 14 }}>{status}</p>
+      {isError && (
+        <button onClick={() => window.close()} style={{
+          marginTop: 8, padding: '8px 20px', borderRadius: 8,
+          background: '#ef4444', color: '#fff', border: 'none',
+          cursor: 'pointer', fontSize: 14,
+        }}>
+          Cerrar ventana
+        </button>
       )}
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }

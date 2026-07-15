@@ -55,29 +55,41 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
       if (session && !token) {
         setGoogleAuthError(true);
         setLoadingMessages(false);
+        return false; // sin token
       } else if (clientId) {
         setGoogleAuthError(false);
         setSearchQuery(clientEmail || '');
         fetchMessages(clientEmail);
         fetchPlantillas();
         setDestinatario(clientEmail || '');
+        return true; // con token
       }
+      return false;
     };
 
     checkAndLoad();
 
-    // Cuando el popup de Google cierra y guarda el token, reintentamos
-    const handleTokenReady = () => checkAndLoad();
-    window.addEventListener('google_token_ready', handleTokenReady);
-    // También escuchar storage para el caso cross-tab
+    // Cuando el popup guarda el token, el evento 'storage' llega a esta ventana
     const handleStorage = (e) => {
       if (e.key === 'google_provider_token' && e.newValue) checkAndLoad();
     };
     window.addEventListener('storage', handleStorage);
+    window.addEventListener('google_token_ready', checkAndLoad);
+
+    // Polling de respaldo: cada 1.5s revisamos si el token ya apareció
+    // Esto cubre el caso donde el evento storage no llega (mismo origen)
+    const poll = setInterval(() => {
+      const token = localStorage.getItem('google_provider_token');
+      if (token) {
+        clearInterval(poll);
+        checkAndLoad();
+      }
+    }, 1500);
 
     return () => {
-      window.removeEventListener('google_token_ready', handleTokenReady);
+      clearInterval(poll);
       window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('google_token_ready', checkAndLoad);
     };
   }, [clientId, clientEmail, session]);
 
