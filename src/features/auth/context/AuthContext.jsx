@@ -94,6 +94,9 @@ export const AuthProvider = ({ children }) => {
     
     // Abrir la pestaña inmediatamente (síncrono) para evitar bloqueo de popups
     const newTab = window.open('', '_blank');
+    if (newTab) {
+      newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;">Redirigiendo a Google...</body></html>');
+    }
 
     const options = {
       scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
@@ -108,45 +111,51 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
 
+      let authData = null;
+      let authError = null;
+
       if (session) {
         // Si el usuario ya está logueado, verificamos si ya tiene Google enlazado
         const hasGoogle = session?.user?.identities?.some(id => id.provider === 'google');
         if (hasGoogle) {
           // Ya está enlazado, solo iniciamos sesión de nuevo para obtener el provider_token
-          const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-          if (error) throw error;
-          if (data?.url) newTab.location.href = data.url;
-          else newTab.close();
-          return;
+          const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+          authData = res.data;
+          authError = res.error;
         } else {
           // Enlazamos la identidad de Google al usuario actual
-          const { data, error } = await supabase.auth.linkIdentity({ provider: 'google', options });
-          if (error) {
-            if (error.message.toLowerCase().includes('already linked') || error.message.toLowerCase().includes('already registered')) {
-              const { data: signData, error: signError } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-              if (signError) throw signError;
-              if (signData?.url) newTab.location.href = signData.url;
-              else newTab.close();
-              return;
+          const res = await supabase.auth.linkIdentity({ provider: 'google', options });
+          if (res.error) {
+            if (res.error.message.toLowerCase().includes('already linked') || res.error.message.toLowerCase().includes('already registered')) {
+              const signRes = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+              authData = signRes.data;
+              authError = signRes.error;
+            } else {
+              authError = res.error;
             }
-            throw error;
+          } else {
+            authData = res.data;
           }
-          if (data?.url) newTab.location.href = data.url;
-          else newTab.close();
-          return;
         }
+      } else {
+        // Si no hay sesión, login normal
+        const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+        authData = res.data;
+        authError = res.error;
       }
 
-      // Si no hay sesión, login normal
-      const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-      if (error) throw error;
-      if (data?.url) {
-        newTab.location.href = data.url;
-      } else {
-        newTab.close();
+      if (authError) throw authError;
+
+      if (authData?.url && newTab) {
+        newTab.location.href = authData.url;
+      } else if (newTab) {
+        newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error: No se obtuvo URL de autenticación. Por favor cierra esta pestaña.</body></html>');
       }
     } catch (err) {
-      newTab.close();
+      console.error("Error en loginWithGoogle:", err);
+      if (newTab) {
+        newTab.document.write(`<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error de conexión: ${err.message}. Por favor cierra esta pestaña e intenta nuevamente.</body></html>`);
+      }
       throw err;
     }
   }, []);
