@@ -1,125 +1,167 @@
 import { supabase } from '../supabaseClient';
 
 /**
- * Helper to get the Google Provider Token from the current Supabase session.
- * Throws an error if the user is not logged in via Google with the required token.
+ * Obtiene el Google provider_token guardado en localStorage o en la sesión.
+ * Si el token expiró (401), lo limpia para que el componente pida reconexión.
  */
 export async function getProviderToken() {
-  // First try local storage (more reliable across reloads)
   let token = localStorage.getItem('google_provider_token');
-  
+
   if (!token) {
-    // Fallback to session if not in local storage
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('No hay sesión activa.');
     token = session.provider_token;
   }
-  
-  if (!token) throw new Error('No se encontró el token de Google. Debes iniciar sesión con Google.');
+
+  if (!token) throw new Error('No se encontró el token de Google. Debes conectar tu cuenta de Google.');
   return token;
 }
 
 /**
- * Fetch email threads related to a specific client email address.
- * Uses Gmail API to search for messages sent to or from the client.
+ * Invalida el token guardado (se llama cuando Gmail devuelve 401).
+ */
+export function clearProviderToken() {
+  localStorage.removeItem('google_provider_token');
+}
+
+/**
+ * Busca correos relacionados con un cliente usando la Gmail API.
+ * Busca en TODAS las carpetas: Inbox, Enviados, etc.
  */
 export async function fetchClientEmails(clientEmail) {
   if (!clientEmail) return [];
   const token = await getProviderToken();
-  
-  // Build query to find emails to or from this client
-  const query = encodeURIComponent(`to:${clientEmail} OR from:${clientEmail}`);
-  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=20`;
+
+  // Gmail API query: buscar correos to o from del cliente en todas las carpetas
+  // No usamos {} porque la sintaxis correcta de Gmail API es OR
+  const q = `to:${clientEmail} OR from:${clientEmail}`;
+  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=50&includeSpamTrash=false`;
+
+  console.log('[Gmail] Buscando:', q);
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` }
   });
-  
+
   if (!response.ok) {
-    if (response.status === 401) throw new Error('La sesión de Google expiró. Inicia sesión de nuevo.');
-    throw new Error('Error al buscar correos en Gmail');
+    const errBody = await response.json().catch(() => ({}));
+    console.error('[Gmail] Error en búsqueda:', response.status, errBody);
+    if (response.status === 401) {
+      clearProviderToken();
+      throw new Error('La sesión de Google expiró. Por favor vuelve a conectar tu cuenta de Google.');
+    }
+    throw new Error(`Error Gmail (${response.status}): ${errBody?.error?.message || 'Error desconocido'}`);
   }
 
   const data = await response.json();
-  if (!data.messages) return [];
+  console.log('[Gmail] Mensajes encontrados:', data.messages?.length ?? 0);
 
-  // Fetch full message details for each ID
+  if (!data.messages || data.messages.length === 0) return [];
+
+  // Obtener detalles de cada mensaje
   const fullMessages = await Promise.all(
     data.messages.map(async (msgItem) => {
-      const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgItem.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const msgRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgItem.id}?format=full`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!msgRes.ok) return null;
       return msgRes.json();
     })
   );
 
-  // Format into our standard format
-  return fullMessages.map(msg => formatGmailMessage(msg)).sort((a, b) => b.creado_en.getTime() - a.creado_en.getTime());
+  return fullMessages
+    .filter(Boolean)
+    .map(msg => formatGmailMessage(msg))
+    .sort((a, b) => b.creado_en.getTime() - a.creado_en.getTime());
 }
 
 /**
- * Format a raw Gmail message into our ClientEmail component format.
+ * Formatea un mensaje raw de Gmail al formato interno.
  */
 function formatGmailMessage(msg) {
-  const headers = msg.payload.headers;
-  const subjectHeader = headers.find(h => h.name.toLowerCase() === 'subject');
-  const fromHeader = headers.find(h => h.name.toLowerCase() === 'from');
-  const toHeader = headers.find(h => h.name.toLowerCase() === 'to');
-  const dateHeader = headers.find(h => h.name.toLowerCase() === 'date');
+  if (!msg?.payload) return null;
 
-  let body = '';
-  if (msg.payload.parts) {
-    const textPart = msg.payload.parts.find(p => p.mimeType === 'text/plain');
-    if (textPart && textPart.body && textPart.body.data) {
-      // Decode base64url
-      let base64 = textPart.body.data.replace(/-/g, '+').replace(/_/g, '/');
-      body = decodeURIComponent(escape(atob(base64)));
-    } else if (msg.payload.parts[0].parts) {
-      // Sometimes it's nested
-      const nestedText = msg.payload.parts[0].parts.find(p => p.mimeType === 'text/plain');
-      if (nestedText && nestedText.body.data) {
-        let base64 = nestedText.body.data.replace(/-/g, '+').replace(/_/g, '/');
-        body = decodeURIComponent(escape(atob(base64)));
-      }
-    }
-  } else if (msg.payload.body && msg.payload.body.data) {
-    let base64 = msg.payload.body.data.replace(/-/g, '+').replace(/_/g, '/');
-    body = decodeURIComponent(escape(atob(base64)));
-  }
+  const headers = msg.payload.headers || [];
+  const get = (name) => headers.find(h => h.name.toLowerCase() === name)?.value || '';
 
-  // Check labels
-  const isSent = msg.labelIds && msg.labelIds.includes('SENT');
+  const body = extractBody(msg.payload);
+  const isSent = Array.isArray(msg.labelIds) && msg.labelIds.includes('SENT');
 
   return {
     id: msg.id,
-    asunto: subjectHeader ? subjectHeader.value : '(Sin asunto)',
+    asunto: get('subject') || '(Sin asunto)',
     cuerpo: body,
-    remitente: fromHeader ? fromHeader.value : '',
-    destinatario: toHeader ? toHeader.value : '',
+    remitente: get('from'),
+    destinatario: get('to'),
     creado_en: new Date(Number(msg.internalDate)),
-    leido: !(msg.labelIds && msg.labelIds.includes('UNREAD')),
+    leido: !msg.labelIds?.includes('UNREAD'),
     es_enviado: isSent,
-    archivado: false, // Gmail API has 'archive' differently (lack of INBOX label), but we map it loosely
+    archivado: !msg.labelIds?.includes('INBOX') && !isSent,
     threadId: msg.threadId,
+    labelIds: msg.labelIds || [],
   };
 }
 
 /**
- * Send an email via Gmail API
+ * Extrae el texto del body de un mensaje, manejando estructuras anidadas.
+ */
+function extractBody(payload) {
+  // Caso simple: body directo
+  if (payload.body?.data) {
+    return decodeBase64(payload.body.data);
+  }
+
+  // Buscar recursivamente en parts
+  if (payload.parts) {
+    // Primero buscar text/plain
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/plain' && part.body?.data) {
+        return decodeBase64(part.body.data);
+      }
+      // Recursivo para partes anidadas
+      if (part.parts) {
+        const nested = extractBody(part);
+        if (nested) return nested;
+      }
+    }
+    // Si no hay text/plain, intentar text/html y quitar tags
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/html' && part.body?.data) {
+        const html = decodeBase64(part.body.data);
+        return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
+    }
+  }
+
+  return '';
+}
+
+function decodeBase64(data) {
+  try {
+    const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
+    return decodeURIComponent(escape(atob(base64)));
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * Envía un correo usando la Gmail API.
  */
 export async function sendGmailEmail({ to, subject, bodyText }) {
   const token = await getProviderToken();
 
-  const str = [
-    'Content-Type: text/plain; charset="UTF-8"\n',
-    'MIME-Version: 1.0\n',
-    `To: ${to}\n`,
-    `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=\n\n`,
+  const rawEmail = [
+    'Content-Type: text/plain; charset="UTF-8"',
+    'MIME-Version: 1.0',
+    `To: ${to}`,
+    `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+    '',
     bodyText,
-  ].join('');
+  ].join('\r\n');
 
-  // Encode to base64url
-  const encodedEmail = btoa(unescape(encodeURIComponent(str)))
+  const encodedEmail = btoa(unescape(encodeURIComponent(rawEmail)))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
@@ -128,17 +170,19 @@ export async function sendGmailEmail({ to, subject, bodyText }) {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      raw: encodedEmail
-    })
+    body: JSON.stringify({ raw: encodedEmail }),
   });
 
   if (!response.ok) {
-    const errData = await response.json();
-    console.error('Error sending via Gmail API:', errData);
-    throw new Error('Error al enviar correo vía Gmail');
+    const errData = await response.json().catch(() => ({}));
+    console.error('[Gmail] Error enviando:', errData);
+    if (response.status === 401) {
+      clearProviderToken();
+      throw new Error('Sesión de Google expirada. Vuelve a conectar tu cuenta.');
+    }
+    throw new Error(errData?.error?.message || 'Error al enviar correo vía Gmail');
   }
 
   return response.json();

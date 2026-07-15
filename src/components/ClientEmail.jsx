@@ -3,7 +3,7 @@ import { Mail, Send, Trash2, Loader2, Sparkles, Paperclip, X, Pencil, Star, Arch
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { chat } from '../services/aiService';
-import { fetchClientEmails, sendGmailEmail } from '../services/gmailService';
+import { fetchClientEmails, sendGmailEmail, clearProviderToken } from '../services/gmailService';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import AutocompleteTextarea from './ui/AutocompleteTextarea';
@@ -103,14 +103,17 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
     setGoogleAuthError(false);
     try {
       const emails = await fetchClientEmails(emailToSearch);
+      console.log('[ClientEmail] Correos cargados:', emails.length);
       setMessages(emails);
     } catch (err) {
-      console.error('Error fetching emails:', err);
-      // If it's an auth error, we can catch it here
-      if (err.message.includes('token') || err.message.includes('sesión') || err.message.includes('Google')) {
+      console.error('[ClientEmail] Error cargando correos:', err.message);
+      const isAuthError = err.message.includes('token') || err.message.includes('sesión') || err.message.includes('Google') || err.message.includes('expiró') || err.message.includes('conectar');
+      if (isAuthError) {
+        clearProviderToken();
         setGoogleAuthError(true);
       } else {
-        toast.error('Error al cargar correos.');
+        toast.error(`Error Gmail: ${err.message}`);
+      }
       }
     } finally {
       setLoadingMessages(false);
@@ -259,7 +262,8 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
       setAdjuntos([]);
       setComposeOpen(false);
       toast.success('Correo enviado correctamente', { id: toastId });
-      fetchMessages();
+      // Pequeña espera para que Gmail indexe el correo enviado
+      setTimeout(() => fetchMessages(clientEmail), 1500);
     } catch (err) {
       console.error('Error sending email:', err);
       toast.error(err.message || 'Error al enviar correo', { id: toastId });
