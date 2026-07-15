@@ -260,7 +260,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
 
     const handleMouseMove = (moveEvent) => {
       const deltaX = startX - moveEvent.clientX;
-      const newWidth = Math.max(300, Math.min(startWidth + deltaX, 1200));
+      const newWidth = Math.max(300, Math.min(startWidth + deltaX, 2500));
       if (col3Ref.current) {
         col3Ref.current.style.width = `${newWidth}px`;
       }

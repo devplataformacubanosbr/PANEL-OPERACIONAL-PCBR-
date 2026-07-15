@@ -46,8 +46,20 @@ export const AuthProvider = ({ children }) => {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      
+      if (session?.provider_token) {
+        localStorage.setItem('google_provider_token', session.provider_token);
+        window.dispatchEvent(new Event('google_token_updated'));
+      }
+      
+      const searchParams = new URLSearchParams(window.location.search);
+      if (searchParams.get('google_auth') === 'true') {
+        window.close();
+      }
+
       if (!session) {
         setUserProfile(null);
+        localStorage.removeItem('google_provider_token');
       }
     });
 
@@ -98,9 +110,12 @@ export const AuthProvider = ({ children }) => {
       newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;">Redirigiendo a Google...</body></html>');
     }
 
+    const redirectUrl = new URL(window.location.href);
+    redirectUrl.searchParams.set('google_auth', 'true');
+
     const options = {
       scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
-      redirectTo: window.location.href, // Regresar exactamente a la URL actual
+      redirectTo: redirectUrl.toString(), // Regresar exactamente a la URL actual con flag
       skipBrowserRedirect: true,
       queryParams: {
         access_type: 'offline',

@@ -50,16 +50,35 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   const [searchQuery, setSearchQuery] = useState(clientEmail || '');
 
   useEffect(() => {
-    if (session && !session.provider_token) {
-      setGoogleAuthError(true);
-      setLoadingMessages(false);
-    } else if (clientId) {
-      setGoogleAuthError(false);
-      setSearchQuery(clientEmail || '');
-      fetchMessages(clientEmail);
-      fetchPlantillas();
-      setDestinatario(clientEmail || '');
-    }
+    const checkToken = () => {
+      const token = localStorage.getItem('google_provider_token') || session?.provider_token;
+      if (session && !token) {
+        setGoogleAuthError(true);
+        setLoadingMessages(false);
+      } else if (clientId) {
+        setGoogleAuthError(false);
+        setSearchQuery(clientEmail || '');
+        fetchMessages(clientEmail);
+        fetchPlantillas();
+        setDestinatario(clientEmail || '');
+      }
+    };
+    
+    checkToken();
+
+    // Listen for localStorage changes from the popup
+    const handleStorage = (e) => {
+      if (e.key === 'google_provider_token' || e.type === 'google_token_updated') {
+        checkToken();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('google_token_updated', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('google_token_updated', handleStorage);
+    };
   }, [clientId, clientEmail, session]);
 
   const fetchMessages = async (queryParam) => {

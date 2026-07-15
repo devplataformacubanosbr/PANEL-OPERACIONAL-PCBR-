@@ -5,11 +5,16 @@ import { supabase } from '../supabaseClient';
  * Throws an error if the user is not logged in via Google with the required token.
  */
 export async function getProviderToken() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('No hay sesión activa.');
+  // First try local storage (more reliable across reloads)
+  let token = localStorage.getItem('google_provider_token');
   
-  // Supabase returns the provider_token on OAuth login
-  const token = session.provider_token;
+  if (!token) {
+    // Fallback to session if not in local storage
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('No hay sesión activa.');
+    token = session.provider_token;
+  }
+  
   if (!token) throw new Error('No se encontró el token de Google. Debes iniciar sesión con Google.');
   return token;
 }
