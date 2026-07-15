@@ -3,7 +3,7 @@ import { Mail, Send, Trash2, Loader2, Sparkles, Paperclip, X, Pencil, Star, Arch
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { chat } from '../services/aiService';
-import { fetchClientEmails, sendGmailEmail, clearProviderToken } from '../services/gmailService';
+import { fetchClientEmails, sendGmailEmail, clearProviderToken, downloadAttachment } from '../services/gmailService';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import AutocompleteTextarea from './ui/AutocompleteTextarea';
@@ -267,17 +267,71 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
     }
   };
 
+  const handleDownloadAttachment = async (msgId, attachmentId, nombre, mimeType) => {
+    const toastId = toast.loading(`Descargando ${nombre}...`);
+    try {
+      const base64url = await downloadAttachment(msgId, attachmentId);
+      // Convert base64url to standard base64
+      const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+      const byteCharacters = atob(base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mimeType });
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nombre;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      toast.success('Descarga completada', { id: toastId });
+    } catch (err) {
+      console.error('Error al descargar adjunto:', err);
+      toast.error('Error al descargar el archivo', { id: toastId });
+    }
+  };
+
   const handleSendEmail = async (e) => {
     e.preventDefault();
     if (!asunto.trim() || !cuerpo.trim() || !destinatario.trim() || sending) return;
 
     setSending(true);
-    const toastId = toast.loading('Enviando correo vía Gmail...');
+    const toastId = toast.loading('Procesando archivos adjuntos...');
     try {
+      // Convertir archivos a base64
+      const processedAdjuntos = [];
+      for (const adj of adjuntos) {
+        if (adj.data instanceof File) {
+          const base64Data = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              // result es "data:image/png;base64,iVBORw0..."
+              const b64 = reader.result.split(',')[1];
+              resolve(b64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(adj.data);
+          });
+          processedAdjuntos.push({
+            nombre: adj.nombre,
+            mimeType: adj.data.type || 'application/octet-stream',
+            base64Data
+          });
+        }
+      }
+
+      toast.loading('Enviando correo vía Gmail...', { id: toastId });
       await sendGmailEmail({
         to: destinatario.trim(),
         subject: asunto.trim(),
-        bodyText: cuerpo.trim()
+        bodyText: cuerpo.trim(),
+        adjuntos: processedAdjuntos
       });
 
       setAsunto('');
@@ -286,7 +340,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
       setComposeOpen(false);
       toast.success('Correo enviado correctamente', { id: toastId });
       // Pequeña espera para que Gmail indexe el correo enviado
-      setTimeout(() => fetchMessages(clientEmail), 1500);
+      setTimeout(() => fetchMessages(''), 1500);
     } catch (err) {
       console.error('Error sending email:', err);
       toast.error(err.message || 'Error al enviar correo', { id: toastId });
@@ -317,9 +371,9 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
           setAdjuntos(prev => [...prev, {
             url: data.url,
             nombre: data.nombre,
-            tipo: data.tipo || 'application/pdf'
+            tipo: data.tipo || 'application/pdf',
+            data: data.file // Assuming a File object is passed or we'll fetch it if needed
           }]);
-          toast.error('El envío de archivos adjuntos no está soportado en esta versión. Se enviará solo el texto del correo.');
         }
       }
     } catch (err) {
@@ -837,6 +891,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                                       {msg.adjuntos.map((adj, i) => (
                                         <div 
                                           key={i} 
+                                          onClick={() => handleDownloadAttachment(msg.id, adj.attachmentId, adj.nombre, adj.mimeType)}
                                           style={{ 
                                             border: '1px solid #E0E0E0', 
                                             borderRadius: '4px', 
@@ -844,8 +899,11 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                                             display: 'flex', 
                                             alignItems: 'center', 
                                             gap: '0.5rem', 
-                                            backgroundColor: '#F8F9FA' 
+                                            backgroundColor: '#F8F9FA',
+                                            cursor: 'pointer'
                                           }}
+                                          className="hover:bg-gray-100 transition-colors"
+                                          title={`Descargar ${adj.nombre}`}
                                         >
                                           <Paperclip size={14} style={{ color: '#5F6368' }} />
                                           <span style={{ fontSize: '0.75rem', color: '#3C4043', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -864,42 +922,53 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                     </div>
                     
                     {/* Embedded Quick-reply Box */}
-                    <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #E5E7EB', backgroundColor: '#FFFFFF' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', border: '1px solid #DADCE0', borderRadius: '12px', padding: '0.75rem 1rem' }}>
-                        <span style={{ fontSize: '0.8rem', color: '#5F6368' }}>
-                          Respuesta rápida para <strong>{clientEmail || threadMsgs[threadMsgs.length - 1].remitente}</strong>
-                        </span>
-                        <textarea
-                          rows={3}
-                          placeholder="Escribe una respuesta rápida..."
-                          value={quickReplyText}
-                          onChange={(e) => setQuickReplyText(e.target.value)}
-                          style={{
-                            border: 'none',
-                            outline: 'none',
-                            resize: 'none',
-                            width: '100%',
-                            fontSize: '0.875rem',
-                            color: '#202124',
-                            backgroundColor: 'transparent'
-                          }}
-                        />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #F1F3F4', paddingTop: '0.5rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            <button
-                              onClick={async () => {
-                                if (!quickReplyText.trim() || sendingReply) return;
-                                setSendingReply(true);
-                                const toastId = toast.loading('Enviando respuesta...');
-                                try {
-                                  const latestMsg = threadMsgs[threadMsgs.length - 1];
-                                  const repSubject = latestMsg.asunto.toLowerCase().startsWith('re:') ? latestMsg.asunto : `Re: ${latestMsg.asunto}`;
-                                  
-                                  await sendGmailEmail({
-                                    to: clientEmail || latestMsg.remitente,
-                                    subject: repSubject,
-                                    bodyText: quickReplyText.trim()
-                                  });
+                    {(() => {
+                      const latestMsg = threadMsgs[threadMsgs.length - 1];
+                      let replyTo = '';
+                      if (latestMsg.es_enviado) {
+                        // Si el último correo lo enviamos nosotros, respondemos al destinatario de ese correo
+                        replyTo = latestMsg.destinatarios?.[0] || latestMsg.destinatario || clientEmail || '';
+                      } else {
+                        // Si el último correo lo recibimos, respondemos al remitente
+                        replyTo = latestMsg.remitente;
+                      }
+
+                      return (
+                        <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #E5E7EB', backgroundColor: '#FFFFFF' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', border: '1px solid #DADCE0', borderRadius: '12px', padding: '0.75rem 1rem' }}>
+                            <span style={{ fontSize: '0.8rem', color: '#5F6368' }}>
+                              Respuesta rápida para <strong>{replyTo}</strong>
+                            </span>
+                            <textarea
+                              rows={3}
+                              placeholder="Escribe una respuesta rápida..."
+                              value={quickReplyText}
+                              onChange={(e) => setQuickReplyText(e.target.value)}
+                              style={{
+                                border: 'none',
+                                outline: 'none',
+                                resize: 'none',
+                                width: '100%',
+                                fontSize: '0.875rem',
+                                color: '#202124',
+                                backgroundColor: 'transparent'
+                              }}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #F1F3F4', paddingTop: '0.5rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <button
+                                  onClick={async () => {
+                                    if (!quickReplyText.trim() || sendingReply) return;
+                                    setSendingReply(true);
+                                    const toastId = toast.loading('Enviando respuesta...');
+                                    try {
+                                      const repSubject = latestMsg.asunto.toLowerCase().startsWith('re:') ? latestMsg.asunto : `Re: ${latestMsg.asunto}`;
+                                      
+                                      await sendGmailEmail({
+                                        to: replyTo,
+                                        subject: repSubject,
+                                        bodyText: quickReplyText.trim()
+                                      });
                                   
                                   setQuickReplyText('');
                                   toast.success('Respuesta enviada', { id: toastId });
@@ -1066,8 +1135,13 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                     <input type="file" multiple style={{ display: 'none' }} onChange={(e) => {
                       const files = Array.from(e.target.files);
                       if (files.length > 0) {
-                        setAdjuntos([...adjuntos, ...files.map(f => ({ nombre: f.name, data: f }))]);
-                        toast.error('El envío de archivos adjuntos no está soportado en esta versión. Se enviará solo el texto del correo.');
+                        const validFiles = files.filter(f => f.size <= 20971520); // 20 MB
+                        if (validFiles.length < files.length) {
+                          toast.error('Algunos archivos superan el límite de 20MB y fueron omitidos.');
+                        }
+                        if (validFiles.length > 0) {
+                          setAdjuntos([...adjuntos, ...validFiles.map(f => ({ nombre: f.name, data: f }))]);
+                        }
                       }
                       e.target.value = null; // reset
                     }} />

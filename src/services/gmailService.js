@@ -75,17 +75,25 @@ export async function fetchClientEmails(searchQuery = '') {
     allMessages = allMessages.slice(0, 100);
   }
 
-  // Obtener detalles de cada mensaje
-  const fullMessages = await Promise.all(
-    allMessages.map(async (msgItem) => {
-      const msgRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgItem.id}?format=full`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!msgRes.ok) return null;
-      return msgRes.json();
-    })
-  );
+  // Obtener detalles de cada mensaje en lotes (chunks) de 20 para evitar 429 Too Many Requests
+  const fullMessages = [];
+  const chunkSize = 20;
+  for (let i = 0; i < allMessages.length; i += chunkSize) {
+    const chunk = allMessages.slice(i, i + chunkSize);
+    const chunkResults = await Promise.all(
+      chunk.map(async (msgItem) => {
+        const msgRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgItem.id}?format=full`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!msgRes.ok) return null;
+        return msgRes.json();
+      })
+    );
+    fullMessages.push(...chunkResults);
+    // Pequeña pausa opcional entre lotes para aliviar la API
+    await new Promise(r => setTimeout(r, 100));
+  }
 
   return fullMessages
     .filter(Boolean)
@@ -202,17 +210,50 @@ function decodeBase64(data) {
 /**
  * Envía un correo usando la Gmail API.
  */
-export async function sendGmailEmail({ to, subject, bodyText }) {
+export async function sendGmailEmail({ to, subject, bodyText, adjuntos = [] }) {
   const token = await getProviderToken();
 
-  const rawEmail = [
-    'Content-Type: text/plain; charset="UTF-8"',
-    'MIME-Version: 1.0',
-    `To: ${to}`,
-    `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
-    '',
-    bodyText,
-  ].join('\r\n');
+  let rawEmail = '';
+  
+  if (adjuntos && adjuntos.length > 0) {
+    const boundary = 'foo_bar_baz_' + Date.now();
+    
+    let parts = [
+      `To: ${to}`,
+      `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      '',
+      bodyText,
+      ''
+    ];
+    
+    for (const adjunto of adjuntos) {
+      parts.push(
+        `--${boundary}`,
+        `Content-Type: ${adjunto.mimeType}; name="${adjunto.nombre}"`,
+        `Content-Disposition: attachment; filename="${adjunto.nombre}"`,
+        'Content-Transfer-Encoding: base64',
+        '',
+        adjunto.base64Data,
+        ''
+      );
+    }
+    parts.push(`--${boundary}--`);
+    rawEmail = parts.join('\r\n');
+  } else {
+    rawEmail = [
+      'Content-Type: text/plain; charset="UTF-8"',
+      'MIME-Version: 1.0',
+      `To: ${to}`,
+      `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+      '',
+      bodyText,
+    ].join('\r\n');
+  }
 
   const encodedEmail = btoa(unescape(encodeURIComponent(rawEmail)))
     .replace(/\+/g, '-')
@@ -239,4 +280,21 @@ export async function sendGmailEmail({ to, subject, bodyText }) {
   }
 
   return response.json();
+}
+
+/**
+ * Descarga el contenido binario (base64url) de un archivo adjunto
+ */
+export async function downloadAttachment(messageId, attachmentId) {
+  const token = await getProviderToken();
+  const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  
+  if (!res.ok) {
+    throw new Error('Error downloading attachment');
+  }
+  
+  const data = await res.json();
+  return data.data; // data.data contains the base64url encoded attachment
 }
