@@ -55,7 +55,10 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   }, [clientId, clientEmail]);
 
   const fetchMessages = async () => {
-    if (!clientEmail) return;
+    if (!clientEmail) {
+      setLoadingMessages(false);
+      return;
+    }
     setLoadingMessages(true);
     setGoogleAuthError(false);
     try {
@@ -423,6 +426,8 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                     Conectar con Google
                   </button>
                 </div>
+              ) : !clientEmail ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>El cliente no tiene un correo electrónico registrado.</div>
               ) : messages.filter(m => currentTab === 'archivados' ? m.archivado : !m.archivado).length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>No hay correos {currentTab === 'archivados' ? 'archivados' : 'enviados'}.</div>
               ) : (
