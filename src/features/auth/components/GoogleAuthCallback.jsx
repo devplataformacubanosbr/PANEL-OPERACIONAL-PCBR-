@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../shared/config/supabaseClient';
+import { supabase } from '../../../shared/config/supabaseClient';
 
 /**
  * GoogleAuthCallback — Se renderiza SOLO en el popup de autenticación de Google.
