@@ -50,7 +50,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   const [searchQuery, setSearchQuery] = useState(clientEmail || '');
 
   useEffect(() => {
-    const checkToken = () => {
+    const checkAndLoad = () => {
       const token = localStorage.getItem('google_provider_token') || session?.provider_token;
       if (session && !token) {
         setGoogleAuthError(true);
@@ -63,21 +63,21 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
         setDestinatario(clientEmail || '');
       }
     };
-    
-    checkToken();
 
-    // Listen for localStorage changes from the popup
+    checkAndLoad();
+
+    // Cuando el popup de Google cierra y guarda el token, reintentamos
+    const handleTokenReady = () => checkAndLoad();
+    window.addEventListener('google_token_ready', handleTokenReady);
+    // También escuchar storage para el caso cross-tab
     const handleStorage = (e) => {
-      if (e.key === 'google_provider_token' || e.type === 'google_token_updated') {
-        checkToken();
-      }
+      if (e.key === 'google_provider_token' && e.newValue) checkAndLoad();
     };
-    
     window.addEventListener('storage', handleStorage);
-    window.addEventListener('google_token_updated', handleStorage);
+
     return () => {
+      window.removeEventListener('google_token_ready', handleTokenReady);
       window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('google_token_updated', handleStorage);
     };
   }, [clientId, clientEmail, session]);
 

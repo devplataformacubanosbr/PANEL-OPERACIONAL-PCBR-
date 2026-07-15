@@ -2,6 +2,11 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import GoogleAuthCallback from './features/auth/components/GoogleAuthCallback.jsx'
+
+// Si esta ventana es el popup de callback de Google auth, renderizamos
+// solo la página de callback (no la app completa) para evitar conflictos
+const IS_GOOGLE_CALLBACK = window.location.search.includes('google_callback=true');
 
 // Cada deploy reemplaza los archivos de dist/assets con hashes nuevos y borra
 // los viejos. Una pestaña que quedó abierta desde antes del deploy todavía
@@ -45,7 +50,7 @@ if (typeof Node === 'function' && Node.prototype) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    {IS_GOOGLE_CALLBACK ? <GoogleAuthCallback /> : <App />}
   </StrictMode>,
 )
 

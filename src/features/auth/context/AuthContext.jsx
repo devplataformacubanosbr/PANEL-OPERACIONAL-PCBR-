@@ -5,37 +5,12 @@ const AuthContext = createContext(null);
 
 const PROFILE_MISSING_MESSAGE = 'Tu perfil o tu organización ya no existen. Contacta a tu administrador.';
 
-// Detectar si esta ventana es el callback del popup de Google
-// Google nos redirige de vuelta con un hash (#access_token=...) o con
-// el query param que nosotros pusimos (?auth_popup=true)
-const IS_AUTH_POPUP_CALLBACK = window.location.search.includes('auth_popup=true');
-
 export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
-
-  // Si somos el popup de callback, guardamos el token y cerramos
-  useEffect(() => {
-    if (!IS_AUTH_POPUP_CALLBACK) return;
-
-    const handlePopupCallback = async () => {
-      // Esperamos a que Supabase procese el hash de la URL con el token
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (session?.provider_token) {
-        localStorage.setItem('google_provider_token', session.provider_token);
-      }
-
-      // Cerramos esta ventana hija
-      window.close();
-    };
-
-    // Pequeño delay para que Supabase tenga tiempo de procesar
-    setTimeout(handlePopupCallback, 1500);
-  }, []);
 
   // Busca el perfil del usuario. Si no existe (ej. su organización fue
   // eliminada — perfiles cae en cascada pero auth.users no se toca a
@@ -66,6 +41,7 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      // Guardar provider_token si existe desde el inicio
       if (session?.provider_token) {
         localStorage.setItem('google_provider_token', session.provider_token);
       }
@@ -77,11 +53,6 @@ export const AuthProvider = ({ children }) => {
 
       if (session?.provider_token) {
         localStorage.setItem('google_provider_token', session.provider_token);
-        // Notifica a otras ventanas/tabs abiertas del mismo origen
-        window.dispatchEvent(new StorageEvent('storage', {
-          key: 'google_provider_token',
-          newValue: session.provider_token,
-        }));
       }
 
       if (!session) {
@@ -90,8 +61,18 @@ export const AuthProvider = ({ children }) => {
       }
     });
 
+    // Escuchar cambios en localStorage de otras ventanas (el popup)
+    const handleStorage = (e) => {
+      if (e.key === 'google_provider_token' && e.newValue) {
+        // El popup guardó el token — notificar a los componentes que lo necesiten
+        window.dispatchEvent(new CustomEvent('google_token_ready'));
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
     return () => {
       subscription.unsubscribe();
+      window.removeEventListener('storage', handleStorage);
     };
   }, []);
 
@@ -119,13 +100,13 @@ export const AuthProvider = ({ children }) => {
   const loginWithGoogle = useCallback(async () => {
     setAuthError(null);
 
-    // La URL de retorno incluye ?auth_popup=true para que la ventana sepa
-    // que es un callback de auth y debe cerrarse automáticamente.
-    const redirectTo = `${window.location.origin}${window.location.pathname}?auth_popup=true`;
+    // La URL de callback: vuelve a la app con ?google_callback=true
+    // main.jsx detecta este param y renderiza GoogleAuthCallback (no la app completa)
+    const callbackUrl = `${window.location.origin}${window.location.pathname}?google_callback=true`;
 
     const options = {
       scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
-      redirectTo,
+      redirectTo: callbackUrl,
       skipBrowserRedirect: true,
       queryParams: {
         access_type: 'offline',
@@ -136,52 +117,51 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       let authUrl = null;
-      let authError = null;
 
       if (currentSession) {
         const hasGoogle = currentSession.user?.identities?.some(id => id.provider === 'google');
+
         if (hasGoogle) {
-          // Ya enlazado: renovamos token con signInWithOAuth
-          const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-          authUrl = res.data?.url;
-          authError = res.error;
+          // Ya está vinculado — renovamos el token
+          const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+          if (error) throw error;
+          authUrl = data?.url;
         } else {
-          // Primera vez: enlazamos la identidad
-          const res = await supabase.auth.linkIdentity({ provider: 'google', options });
-          if (res.error) {
-            // Si ya estaba enlazado por otro camino, hacemos signIn directo
-            const isAlreadyLinked = res.error.message.toLowerCase().includes('already linked')
-              || res.error.message.toLowerCase().includes('already registered');
-            if (isAlreadyLinked) {
-              const res2 = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-              authUrl = res2.data?.url;
-              authError = res2.error;
+          // Primera vez — intentamos vincular la identidad Google al usuario actual
+          const { data, error } = await supabase.auth.linkIdentity({ provider: 'google', options });
+          if (error) {
+            const msg = error.message.toLowerCase();
+            const alreadyLinked = msg.includes('already linked') || msg.includes('already registered') || msg.includes('manual linking is disabled');
+            if (alreadyLinked) {
+              // Fallback: signIn directo con Google
+              const { data: d2, error: e2 } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+              if (e2) throw e2;
+              authUrl = d2?.url;
             } else {
-              authError = res.error;
+              throw error;
             }
           } else {
-            authUrl = res.data?.url;
+            authUrl = data?.url;
           }
         }
       } else {
-        // Sin sesión activa: login normal con Google
-        const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-        authUrl = res.data?.url;
-        authError = res.error;
+        // Sin sesión activa
+        const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+        if (error) throw error;
+        authUrl = data?.url;
       }
 
-      if (authError) throw authError;
       if (!authUrl) throw new Error('No se obtuvo URL de autenticación de Google.');
 
-      // Abrimos el popup SOLO cuando ya tenemos la URL real de Google
-      const width = 500;
-      const height = 640;
+      // Abrir popup SOLO cuando ya tenemos la URL real de Google
+      const width = 520;
+      const height = 660;
       const left = Math.round(window.screenX + (window.outerWidth - width) / 2);
       const top = Math.round(window.screenY + (window.outerHeight - height) / 2);
-      window.open(authUrl, 'googleAuthPopup', `width=${width},height=${height},left=${left},top=${top}`);
+      window.open(authUrl, 'googleAuthPopup', `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no`);
 
     } catch (err) {
-      console.error('[Auth] Error en loginWithGoogle:', err);
+      console.error('[Auth] loginWithGoogle error:', err);
       setAuthError(err.message);
       throw err;
     }
@@ -202,18 +182,7 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={value}>
-      {/* Si somos el popup de callback, mostramos una pantalla de espera */}
-      {IS_AUTH_POPUP_CALLBACK ? (
-        <div style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif',
-          background: '#0f172a', color: '#fff'
-        }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>✓</div>
-          <h2 style={{ margin: 0 }}>¡Conectado con Google!</h2>
-          <p style={{ color: '#94a3b8' }}>Esta ventana se cerrará automáticamente...</p>
-        </div>
-      ) : children}
+      {children}
     </AuthContext.Provider>
   );
 };
