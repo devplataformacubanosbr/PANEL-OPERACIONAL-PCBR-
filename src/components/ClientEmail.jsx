@@ -122,27 +122,38 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
     };
   }, [clientId, clientEmail, session]);
 
-  const fetchMessages = async (queryParam) => {
+  const fetchMessages = async (queryParam, silent = false) => {
     const emailToSearch = queryParam !== undefined ? queryParam : searchQuery;
-    setLoadingMessages(true);
+    if (!silent) setLoadingMessages(true);
     setGoogleAuthError(false);
     try {
       const emails = await fetchClientEmails(emailToSearch);
-      console.log('[ClientEmail] Correos cargados:', emails.length);
+      if (!silent) console.log('[ClientEmail] Correos cargados:', emails.length);
       setMessages(emails);
     } catch (err) {
-      console.error('[ClientEmail] Error cargando correos:', err.message);
+      if (!silent) console.error('[ClientEmail] Error cargando correos:', err.message);
       const isAuthError = err.message.includes('token') || err.message.includes('sesión') || err.message.includes('Google') || err.message.includes('expiró') || err.message.includes('conectar');
       if (isAuthError) {
         clearProviderToken();
         setGoogleAuthError(true);
-      } else {
+      } else if (!silent) {
         toast.error(`Error Gmail: ${err.message}`);
       }
     } finally {
-      setLoadingMessages(false);
+      if (!silent) setLoadingMessages(false);
     }
   };
+
+  useEffect(() => {
+    // Polling en segundo plano para "tiempo real"
+    let pollInterval;
+    if (clientId && !googleAuthError) {
+      pollInterval = setInterval(() => {
+        fetchMessages(searchQuery, true); // silent reload
+      }, 30000); // 30 seconds
+    }
+    return () => clearInterval(pollInterval);
+  }, [clientId, googleAuthError, searchQuery]);
 
   const fetchPlantillas = async () => {
     try {
