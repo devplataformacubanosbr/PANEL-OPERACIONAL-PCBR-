@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../shared/config/supabaseClient';
 
 const AuthContext = createContext(null);
@@ -52,9 +52,26 @@ export const AuthProvider = ({ children }) => {
         window.dispatchEvent(new Event('google_token_updated'));
       }
       
-      const searchParams = new URLSearchParams(window.location.search);
-      if (searchParams.get('google_auth') === 'true') {
-        window.close();
+      if (window.opener) {
+        if (session?.provider_token) {
+          localStorage.removeItem('google_auth_pending');
+          window.close();
+        } else if (session) {
+          const hasGoogle = session?.user?.identities?.some(id => id.provider === 'google');
+          const isGoogleAuthPending = localStorage.getItem('google_auth_pending') === 'true';
+          
+          if (hasGoogle && isGoogleAuthPending) {
+            // Se enlazó pero necesitamos el token. Disparamos signInWithOAuth automáticamente
+            localStorage.removeItem('google_auth_pending'); // Para evitar bucles
+            supabase.auth.signInWithOAuth({
+              provider: 'google',
+              options: {
+                scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
+                redirectTo: window.location.origin
+              }
+            });
+          }
+        }
       }
 
       if (!session) {
@@ -68,22 +85,10 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  // Fetch user profile when session is available. Supabase emite un `session`
-  // (objeto nuevo, misma sesión) en más casos de los que parece: INITIAL_SESSION
-  // al montar (además de getSession()), y TOKEN_REFRESHED cada vez que renueva
-  // el JWT en segundo plano (~cada hora mientras la pestaña sigue abierta). Sin
-  // este guard, cada uno de esos eventos volvía a pedir el perfil y ponía
-  // `loading` en true de nuevo, mostrando el spinner de pantalla completa como
-  // si la app se hubiera recargado sola.
-  const lastProfileFetchUserIdRef = useRef(null);
+  // Fetch user profile when session is available
   useEffect(() => {
     if (session) {
-      if (lastProfileFetchUserIdRef.current !== session.user.id) {
-        lastProfileFetchUserIdRef.current = session.user.id;
-        fetchProfile(session.user.id);
-      }
-    } else {
-      lastProfileFetchUserIdRef.current = null;
+      fetchProfile(session.user.id);
     }
   }, [session, fetchProfile]);
 
@@ -103,19 +108,22 @@ export const AuthProvider = ({ children }) => {
 
   const loginWithGoogle = useCallback(async () => {
     setAuthError(null);
+    localStorage.setItem('google_auth_pending', 'true');
     
-    // Abrir la pestaña inmediatamente (síncrono) para evitar bloqueo de popups
-    const newTab = window.open('', '_blank');
+    // Abrir como un popup real, no un tab completo
+    const width = 500;
+    const height = 600;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+    const newTab = window.open('', 'googleAuthPopup', `width=${width},height=${height},left=${left},top=${top}`);
+    
     if (newTab) {
       newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;">Redirigiendo a Google...</body></html>');
     }
 
-    const redirectUrl = new URL(window.location.href);
-    redirectUrl.searchParams.set('google_auth', 'true');
-
     const options = {
       scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
-      redirectTo: redirectUrl.toString(), // Regresar exactamente a la URL actual con flag
+      redirectTo: window.location.origin, // Mejor ir al origin para evitar problemas de query strings que rompan el routeo
       skipBrowserRedirect: true,
       queryParams: {
         access_type: 'offline',
@@ -125,35 +133,27 @@ export const AuthProvider = ({ children }) => {
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-
       let authData = null;
       let authError = null;
 
       if (session) {
-        // Si el usuario ya está logueado, verificamos si ya tiene Google enlazado
         const hasGoogle = session?.user?.identities?.some(id => id.provider === 'google');
         if (hasGoogle) {
-          // Ya está enlazado, solo iniciamos sesión de nuevo para obtener el provider_token
           const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
           authData = res.data;
           authError = res.error;
         } else {
-          // Enlazamos la identidad de Google al usuario actual
           const res = await supabase.auth.linkIdentity({ provider: 'google', options });
-          if (res.error) {
-            if (res.error.message.toLowerCase().includes('already linked') || res.error.message.toLowerCase().includes('already registered')) {
-              const signRes = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-              authData = signRes.data;
-              authError = signRes.error;
-            } else {
-              authError = res.error;
-            }
+          if (res.error && (res.error.message.toLowerCase().includes('already linked') || res.error.message.toLowerCase().includes('already registered'))) {
+            const signRes = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+            authData = signRes.data;
+            authError = signRes.error;
           } else {
             authData = res.data;
+            authError = res.error;
           }
         }
       } else {
-        // Si no hay sesión, login normal
         const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
         authData = res.data;
         authError = res.error;
@@ -164,13 +164,14 @@ export const AuthProvider = ({ children }) => {
       if (authData?.url && newTab) {
         newTab.location.href = authData.url;
       } else if (newTab) {
-        newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error: No se obtuvo URL de autenticación. Por favor cierra esta pestaña.</body></html>');
+        newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error: No se obtuvo URL de autenticación. Por favor cierra esta ventana.</body></html>');
       }
     } catch (err) {
       console.error("Error en loginWithGoogle:", err);
       if (newTab) {
-        newTab.document.write(`<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error de conexión: ${err.message}. Por favor cierra esta pestaña e intenta nuevamente.</body></html>`);
+        newTab.document.write(`<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error de conexión: ${err.message}. Por favor cierra esta ventana e intenta nuevamente.</body></html>`);
       }
+      localStorage.removeItem('google_auth_pending');
       throw err;
     }
   }, []);
