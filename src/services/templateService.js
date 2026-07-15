@@ -238,7 +238,7 @@ export async function getTemplates() {
         try {
           const { data: signedData, error: signedError } = await supabase.storage
             .from(BUCKET)
-            .createSignedUrl(path, 60);
+            .createSignedUrl(path, 3600);
           if (!signedError && signedData?.signedUrl) {
             return { ...tmpl, url_archivo: signedData.signedUrl };
           }

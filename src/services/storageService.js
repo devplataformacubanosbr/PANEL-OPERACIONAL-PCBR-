@@ -22,18 +22,18 @@ export function validateFile(file) {
  * @param {number} [expiresSec=60] - Tiempo de expiración en segundos.
  * @returns {Promise<string>}
  */
-export async function getSignedUrl(storagePath, _expiresSec = 60) {
+export async function getSignedUrl(storagePath, _expiresSec = 3600) {
   try {
     if (!storagePath) return null;
     if (storagePath.startsWith('http')) return storagePath;
 
-    // Codificar caracteres especiales en la ruta para manejar caracteres especiales
+    // Codificar caracteres especiales en la ruta
     const encodedPath = storagePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
 
-    // Se usa 60 directamente para cumplir con las expresiones regulares de las pruebas
+    // URL válida por 1 hora
     const { data, error } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(encodedPath, 60);
+      .createSignedUrl(encodedPath, _expiresSec);
 
     if (error) throw error;
     return data.signedUrl;

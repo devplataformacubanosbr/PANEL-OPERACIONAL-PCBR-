@@ -141,7 +141,7 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
 
             const { data: signedData } = await supabase.storage
                 .from('documentos_operacionales')
-                .createSignedUrl(storagePath, 60);
+                .createSignedUrl(storagePath, 3600);
 
             setCurrentUrl(signedData?.signedUrl || storagePath);
             setCurrentName(nameToSave);
