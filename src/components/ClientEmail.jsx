@@ -114,7 +114,6 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
       } else {
         toast.error(`Error Gmail: ${err.message}`);
       }
-      }
     } finally {
       setLoadingMessages(false);
     }
