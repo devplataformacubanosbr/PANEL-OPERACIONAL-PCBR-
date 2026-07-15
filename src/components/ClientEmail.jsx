@@ -46,23 +46,28 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
     '{fecha_actual}', '{direccion}', '{pasaporte}', '{rnms}'
   ];
 
+  // Search State
+  const [searchQuery, setSearchQuery] = useState(clientEmail || '');
+
   useEffect(() => {
     if (clientId) {
-      fetchMessages();
+      setSearchQuery(clientEmail || '');
+      fetchMessages(clientEmail);
       fetchPlantillas();
       setDestinatario(clientEmail || '');
     }
   }, [clientId, clientEmail]);
 
-  const fetchMessages = async () => {
-    if (!clientEmail) {
+  const fetchMessages = async (queryParam) => {
+    const emailToSearch = queryParam !== undefined ? queryParam : searchQuery;
+    if (!emailToSearch) {
       setLoadingMessages(false);
       return;
     }
     setLoadingMessages(true);
     setGoogleAuthError(false);
     try {
-      const emails = await fetchClientEmails(clientEmail);
+      const emails = await fetchClientEmails(emailToSearch);
       setMessages(emails);
     } catch (err) {
       console.error('Error fetching emails:', err);
@@ -275,11 +280,18 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
           <span style={{ fontSize: '1.25rem', color: '#5F6368', fontFamily: 'sans-serif' }}>Gmail</span>
         </div>
         
-        {/* Falso buscador para estética */}
+        {/* Buscador funcional */}
         <div style={{ flex: 1, maxWidth: '600px', marginLeft: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#F1F3F4', borderRadius: '8px', padding: '0.5rem 1rem' }}>
             <Search size={18} color="#5F6368" />
-            <span style={{ marginLeft: '0.75rem', color: '#5F6368', fontSize: '0.9rem' }}>Buscar en correos</span>
+            <input 
+              type="text"
+              placeholder="Buscar correos del cliente (presiona Enter)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && fetchMessages()}
+              style={{ marginLeft: '0.75rem', color: '#202124', fontSize: '0.9rem', backgroundColor: 'transparent', border: 'none', outline: 'none', width: '100%' }}
+            />
           </div>
         </div>
       </div>
@@ -426,8 +438,8 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                     Conectar con Google
                   </button>
                 </div>
-              ) : !clientEmail ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>El cliente no tiene un correo electrónico registrado.</div>
+              ) : !searchQuery && messages.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>Ingresa un correo o término en el buscador para ver los mensajes.</div>
               ) : messages.filter(m => currentTab === 'archivados' ? m.archivado : !m.archivado).length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>No hay correos {currentTab === 'archivados' ? 'archivados' : 'enviados'}.</div>
               ) : (

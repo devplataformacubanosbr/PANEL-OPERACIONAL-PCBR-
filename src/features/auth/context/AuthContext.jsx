@@ -91,18 +91,46 @@ export const AuthProvider = ({ children }) => {
 
   const loginWithGoogle = useCallback(async () => {
     setAuthError(null);
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
-        redirectTo: window.location.href, // Regresar exactamente a la URL actual
-        skipBrowserRedirect: true,
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        }
+    const options = {
+      scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
+      redirectTo: window.location.href, // Regresar exactamente a la URL actual
+      skipBrowserRedirect: true,
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'consent',
       }
-    });
+    };
+
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (session) {
+      // Si el usuario ya está logueado, verificamos si ya tiene Google enlazado
+      const hasGoogle = session?.user?.identities?.some(id => id.provider === 'google');
+      if (hasGoogle) {
+        // Ya está enlazado, solo iniciamos sesión de nuevo para obtener el provider_token
+        const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+        if (error) throw error;
+        if (data?.url) window.location.href = data.url;
+        return;
+      } else {
+        // Enlazamos la identidad de Google al usuario actual
+        const { data, error } = await supabase.auth.linkIdentity({ provider: 'google', options });
+        if (error) {
+          if (error.message.toLowerCase().includes('already linked') || error.message.toLowerCase().includes('already registered')) {
+            const { data: signData, error: signError } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+            if (signError) throw signError;
+            if (signData?.url) window.location.href = signData.url;
+            return;
+          }
+          throw error;
+        }
+        if (data?.url) window.location.href = data.url;
+        return;
+      }
+    }
+
+    // Si no hay sesión, login normal
+    const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options });
     if (error) throw error;
     if (data?.url) {
       window.location.href = data.url;
