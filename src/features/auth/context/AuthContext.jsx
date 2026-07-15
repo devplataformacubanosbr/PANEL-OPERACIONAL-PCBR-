@@ -5,12 +5,37 @@ const AuthContext = createContext(null);
 
 const PROFILE_MISSING_MESSAGE = 'Tu perfil o tu organización ya no existen. Contacta a tu administrador.';
 
+// Detectar si esta ventana es el callback del popup de Google
+// Google nos redirige de vuelta con un hash (#access_token=...) o con
+// el query param que nosotros pusimos (?auth_popup=true)
+const IS_AUTH_POPUP_CALLBACK = window.location.search.includes('auth_popup=true');
+
 export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
+
+  // Si somos el popup de callback, guardamos el token y cerramos
+  useEffect(() => {
+    if (!IS_AUTH_POPUP_CALLBACK) return;
+
+    const handlePopupCallback = async () => {
+      // Esperamos a que Supabase procese el hash de la URL con el token
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session?.provider_token) {
+        localStorage.setItem('google_provider_token', session.provider_token);
+      }
+
+      // Cerramos esta ventana hija
+      window.close();
+    };
+
+    // Pequeño delay para que Supabase tenga tiempo de procesar
+    setTimeout(handlePopupCallback, 1500);
+  }, []);
 
   // Busca el perfil del usuario. Si no existe (ej. su organización fue
   // eliminada — perfiles cae en cascada pero auth.users no se toca a
@@ -41,39 +66,22 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      if (session?.provider_token) {
+        localStorage.setItem('google_provider_token', session.provider_token);
+      }
       setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      
+
       if (session?.provider_token) {
         localStorage.setItem('google_provider_token', session.provider_token);
-        window.dispatchEvent(new Event('google_token_updated'));
-      }
-      
-      const isPopup = sessionStorage.getItem('is_auth_popup') === 'true';
-      if (isPopup) {
-        if (session?.provider_token) {
-          localStorage.removeItem('google_auth_pending');
-          sessionStorage.removeItem('is_auth_popup');
-          window.close();
-        } else if (session) {
-          const hasGoogle = session?.user?.identities?.some(id => id.provider === 'google');
-          const isGoogleAuthPending = localStorage.getItem('google_auth_pending') === 'true';
-          
-          if (hasGoogle && isGoogleAuthPending) {
-            // Se enlazó pero necesitamos el token. Disparamos signInWithOAuth automáticamente
-            localStorage.removeItem('google_auth_pending'); // Para evitar bucles
-            supabase.auth.signInWithOAuth({
-              provider: 'google',
-              options: {
-                scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
-                redirectTo: window.location.origin
-              }
-            });
-          }
-        }
+        // Notifica a otras ventanas/tabs abiertas del mismo origen
+        window.dispatchEvent(new StorageEvent('storage', {
+          key: 'google_provider_token',
+          newValue: session.provider_token,
+        }));
       }
 
       if (!session) {
@@ -110,73 +118,71 @@ export const AuthProvider = ({ children }) => {
 
   const loginWithGoogle = useCallback(async () => {
     setAuthError(null);
-    localStorage.setItem('google_auth_pending', 'true');
-    
-    // Abrir como un popup real, no un tab completo
-    const width = 500;
-    const height = 600;
-    const left = window.screenX + (window.outerWidth - width) / 2;
-    const top = window.screenY + (window.outerHeight - height) / 2;
-    const newTab = window.open('', 'googleAuthPopup', `width=${width},height=${height},left=${left},top=${top}`);
-    
-    if (newTab) {
-      try {
-        newTab.sessionStorage.setItem('is_auth_popup', 'true');
-      } catch (e) {}
-      newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;">Redirigiendo a Google...</body></html>');
-    }
+
+    // La URL de retorno incluye ?auth_popup=true para que la ventana sepa
+    // que es un callback de auth y debe cerrarse automáticamente.
+    const redirectTo = `${window.location.origin}${window.location.pathname}?auth_popup=true`;
 
     const options = {
       scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
-      redirectTo: window.location.origin, // Mejor ir al origin para evitar problemas de query strings que rompan el routeo
+      redirectTo,
       skipBrowserRedirect: true,
       queryParams: {
         access_type: 'offline',
         prompt: 'consent',
-      }
+      },
     };
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      let authData = null;
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      let authUrl = null;
       let authError = null;
 
-      if (session) {
-        const hasGoogle = session?.user?.identities?.some(id => id.provider === 'google');
+      if (currentSession) {
+        const hasGoogle = currentSession.user?.identities?.some(id => id.provider === 'google');
         if (hasGoogle) {
+          // Ya enlazado: renovamos token con signInWithOAuth
           const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-          authData = res.data;
+          authUrl = res.data?.url;
           authError = res.error;
         } else {
+          // Primera vez: enlazamos la identidad
           const res = await supabase.auth.linkIdentity({ provider: 'google', options });
-          if (res.error && (res.error.message.toLowerCase().includes('already linked') || res.error.message.toLowerCase().includes('already registered'))) {
-            const signRes = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-            authData = signRes.data;
-            authError = signRes.error;
+          if (res.error) {
+            // Si ya estaba enlazado por otro camino, hacemos signIn directo
+            const isAlreadyLinked = res.error.message.toLowerCase().includes('already linked')
+              || res.error.message.toLowerCase().includes('already registered');
+            if (isAlreadyLinked) {
+              const res2 = await supabase.auth.signInWithOAuth({ provider: 'google', options });
+              authUrl = res2.data?.url;
+              authError = res2.error;
+            } else {
+              authError = res.error;
+            }
           } else {
-            authData = res.data;
-            authError = res.error;
+            authUrl = res.data?.url;
           }
         }
       } else {
+        // Sin sesión activa: login normal con Google
         const res = await supabase.auth.signInWithOAuth({ provider: 'google', options });
-        authData = res.data;
+        authUrl = res.data?.url;
         authError = res.error;
       }
 
       if (authError) throw authError;
+      if (!authUrl) throw new Error('No se obtuvo URL de autenticación de Google.');
 
-      if (authData?.url && newTab) {
-        newTab.location.href = authData.url;
-      } else if (newTab) {
-        newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error: No se obtuvo URL de autenticación. Por favor cierra esta ventana.</body></html>');
-      }
+      // Abrimos el popup SOLO cuando ya tenemos la URL real de Google
+      const width = 500;
+      const height = 640;
+      const left = Math.round(window.screenX + (window.outerWidth - width) / 2);
+      const top = Math.round(window.screenY + (window.outerHeight - height) / 2);
+      window.open(authUrl, 'googleAuthPopup', `width=${width},height=${height},left=${left},top=${top}`);
+
     } catch (err) {
-      console.error("Error en loginWithGoogle:", err);
-      if (newTab) {
-        newTab.document.write(`<html><body style="font-family:sans-serif;text-align:center;padding:50px;color:red;">Error de conexión: ${err.message}. Por favor cierra esta ventana e intenta nuevamente.</body></html>`);
-      }
-      localStorage.removeItem('google_auth_pending');
+      console.error('[Auth] Error en loginWithGoogle:', err);
+      setAuthError(err.message);
       throw err;
     }
   }, []);
@@ -196,7 +202,18 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      {/* Si somos el popup de callback, mostramos una pantalla de espera */}
+      {IS_AUTH_POPUP_CALLBACK ? (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif',
+          background: '#0f172a', color: '#fff'
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>✓</div>
+          <h2 style={{ margin: 0 }}>¡Conectado con Google!</h2>
+          <p style={{ color: '#94a3b8' }}>Esta ventana se cerrará automáticamente...</p>
+        </div>
+      ) : children}
     </AuthContext.Provider>
   );
 };
