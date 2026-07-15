@@ -17,7 +17,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   
   // Gmail UI State
   const [view, setView] = useState('list'); // 'list' | 'read'
-  const [currentTab, setCurrentTab] = useState('enviados'); // 'enviados' | 'archivados'
+  const [currentTab, setCurrentTab] = useState('todos'); // 'todos' | 'enviados' | 'recibidos' | 'archivados'
   const [activeMessage, setActiveMessage] = useState(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
@@ -350,12 +350,24 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <div 
+            <button 
+              onClick={() => { setView('list'); setCurrentTab('todos'); setActiveMessage(null); }}
+              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', background: currentTab === 'todos' ? '#EAF1FB' : 'transparent', borderRadius: '0 16px 16px 0', color: currentTab === 'todos' ? '#1a73e8' : '#5F6368', fontWeight: currentTab === 'todos' ? 700 : 400, cursor: 'pointer', border: 'none', width: '100%', textAlign: 'left', fontSize: '0.875rem' }}
+            >
+              <Mail size={18} /> Todos
+            </button>
+            <button
+              onClick={() => { setView('list'); setCurrentTab('recibidos'); setActiveMessage(null); }}
+              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', background: currentTab === 'recibidos' ? '#EAF1FB' : 'transparent', borderRadius: '0 16px 16px 0', color: currentTab === 'recibidos' ? '#1a73e8' : '#5F6368', fontWeight: currentTab === 'recibidos' ? 700 : 400, cursor: 'pointer', border: 'none', width: '100%', textAlign: 'left', fontSize: '0.875rem' }}
+            >
+              <Mail size={18} /> Recibidos
+            </button>
+            <button
               onClick={() => { setView('list'); setCurrentTab('enviados'); setActiveMessage(null); }}
-              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', backgroundColor: currentTab === 'enviados' ? '#D3E3FD' : 'transparent', color: currentTab === 'enviados' ? '#0B57D0' : '#444746', borderRadius: '0 16px 16px 0', fontWeight: currentTab === 'enviados' ? 600 : 500, fontSize: '0.85rem', cursor: 'pointer', marginRight: '0.5rem' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', background: currentTab === 'enviados' ? '#EAF1FB' : 'transparent', borderRadius: '0 16px 16px 0', color: currentTab === 'enviados' ? '#1a73e8' : '#5F6368', fontWeight: currentTab === 'enviados' ? 700 : 400, cursor: 'pointer', border: 'none', width: '100%', textAlign: 'left', fontSize: '0.875rem' }}
             >
               <Send size={18} /> Enviados
-            </div>
+            </button>
             <div 
               onClick={() => { setView('list'); setCurrentTab('archivados'); setActiveMessage(null); }}
               style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.5rem 1rem', backgroundColor: currentTab === 'archivados' ? '#D3E3FD' : 'transparent', color: currentTab === 'archivados' ? '#0B57D0' : '#444746', borderRadius: '0 16px 16px 0', fontWeight: currentTab === 'archivados' ? 600 : 500, fontSize: '0.85rem', cursor: 'pointer', marginRight: '0.5rem' }}
@@ -475,11 +487,21 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                 </div>
               ) : !searchQuery && messages.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>Ingresa un correo o término en el buscador para ver los mensajes.</div>
-              ) : messages.filter(m => currentTab === 'archivados' ? m.archivado : !m.archivado).length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>No hay correos {currentTab === 'archivados' ? 'archivados' : 'enviados'}.</div>
+              ) : messages.filter(m => {
+                    if (currentTab === 'archivados') return m.archivado;
+                    if (currentTab === 'enviados') return m.es_enviado && !m.archivado;
+                    if (currentTab === 'recibidos') return !m.es_enviado && !m.archivado;
+                    return !m.archivado;
+                  }).length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: '#5F6368' }}>No hay correos {currentTab === 'archivados' ? 'archivados' : currentTab === 'enviados' ? 'enviados' : currentTab === 'recibidos' ? 'recibidos' : ''}.</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {messages.filter(m => currentTab === 'archivados' ? m.archivado : !m.archivado).map(msg => (
+                  {messages.filter(m => {
+                    if (currentTab === 'archivados') return m.archivado;
+                    if (currentTab === 'enviados') return m.es_enviado && !m.archivado;
+                    if (currentTab === 'recibidos') return !m.es_enviado && !m.archivado;
+                    return !m.archivado; // 'todos'
+                  }).map(msg => (
                     <div 
                       key={msg.id} 
                       onClick={() => { setActiveMessage(msg); setView('read'); }}
