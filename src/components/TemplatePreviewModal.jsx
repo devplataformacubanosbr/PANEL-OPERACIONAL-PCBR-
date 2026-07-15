@@ -5,7 +5,7 @@ import { getDocuments } from '../services/storageService';
 import { convertPdfPageToImageBase64 } from '../services/pdfToImage';
 import toast from 'react-hot-toast';
 
-export default function TemplatePreviewModal({ template, client, onClose }) {
+export default function TemplatePreviewModal({ template, client, onClose, onGenerate }) {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
@@ -86,13 +86,21 @@ export default function TemplatePreviewModal({ template, client, onClose }) {
       const blob = await getFilledPdfBlob(template.url_archivo, localMappings, client, editableValues, placedSignatures);
       const url = URL.createObjectURL(blob);
 
+      const filename = `${template.nombre.replace(/\.[^/.]+$/, "")}_${client.nombre || 'documento'}.pdf`;
+
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${template.nombre.replace(/\.[^/.]+$/, "")}_${client.nombre || 'documento'}.pdf`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+
+      // Guardar también en documentos del cliente
+      const { uploadGeneratedDocumentToClient } = await import('../services/templateService');
+      await uploadGeneratedDocumentToClient(blob, filename, client);
+      
+      if (onGenerate) onGenerate();
     } catch (err) {
       console.error(err);
       toast.error('Error generando PDF: ' + err.message);

@@ -17,7 +17,7 @@
  *   - clientView.constants.js   → FIXED_FIELDS_CATALOG, TRAMITE_COLORS, etc.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import React, { useState, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useCallback, lazy, Suspense, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { analyzeDocumentImage } from '../services/aiService';
@@ -40,6 +40,7 @@ import NewClientWizard from './newClientWizard/NewClientWizard';
 import ClientPersonalData from './ClientPersonalData';
 import ClientDocuments from './ClientDocuments';
 import ClientWhatsApp from './ClientWhatsApp';
+import ClientEmail from './ClientEmail';
 import ClientRelations from './ClientRelations';
 import ClientViewHeader from './ClientViewHeader';
 import ClientViewTramites from './ClientViewTramites';
@@ -94,6 +95,9 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
+  const [activeCommTab, setActiveCommTab] = useState('whatsapp');
+  const [col3Width, setCol3Width] = useState(450); // Ancho inicial
+  const col3Ref = useRef(null);
 
   const fetchClientData = async (_fullReload = false) => {
     await queryClient.invalidateQueries();
@@ -244,6 +248,36 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
 
     window.postMessage({ type: 'DASHBOARD_SYNC', clientData: fullData, activeClientRelatives: relatives }, '*');
     toast.success(`Datos de ${client.nombre} enviados a la extensión.`);
+  };
+
+  const handleMouseDownResizer = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const startX = e.clientX;
+    const startWidth = col3Ref.current ? col3Ref.current.offsetWidth : col3Width;
+
+    const handleMouseMove = (moveEvent) => {
+      const deltaX = startX - moveEvent.clientX;
+      const newWidth = Math.max(300, Math.min(startWidth + deltaX, 1200));
+      if (col3Ref.current) {
+        col3Ref.current.style.width = `${newWidth}px`;
+      }
+    };
+
+    const handleMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      if (col3Ref.current) {
+        setCol3Width(col3Ref.current.offsetWidth);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   };
 
   // ── Loading / Error / Empty guards ─────────────────────────────────────────
@@ -419,6 +453,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             onDeleteTramite={tramites.handleDeleteTramite}
           />
           <ClientDocuments
+            client={client}
             defaultExpanded={false}
             documentos={documentos}
             uploading={docs.uploading}
@@ -435,6 +470,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             stagedFile={docs.stagedFile}
             setStagedFile={docs.setStagedFile}
             handleConfirmUpload={docs.handleConfirmUpload}
+            onRefresh={() => fetchClientData(true)}
           />
           <ClientRelations
             defaultExpanded={false}
@@ -464,8 +500,12 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             onSendToExtension={handleSendToExtension}
             customFieldsConfig={customFieldsConfig}
           />
-          
-          <TemplateManager defaultExpanded={false} client={client} entradas={entradas} />
+          <TemplateManager 
+            defaultExpanded={false} 
+            client={client} 
+            entradas={entradas} 
+            onGenerate={() => fetchClientData(true)} 
+          />
           <Suspense fallback={<div>Cargando biblioteca...</div>}>
             <ClientMediaLibrary
               clientId={clientId}
@@ -475,9 +515,47 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
           </Suspense>
         </div>
 
+        {/* Resizer Handle */}
+        <div 
+          onMouseDown={handleMouseDownResizer}
+          style={{ width: '12px', cursor: 'col-resize', backgroundColor: 'rgba(0,0,0,0.05)', borderRadius: '4px', margin: '0 -0.35rem', zIndex: 10, flexShrink: 0, position: 'relative' }}
+          className="hover:bg-brand-primary/30 transition-colors"
+          title="Arrastra para ajustar el tamaño de la columna"
+        >
+           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', display: 'flex', gap: '2px' }}>
+              <div style={{ width: '1px', height: '16px', backgroundColor: '#9CA3AF' }} />
+              <div style={{ width: '1px', height: '16px', backgroundColor: '#9CA3AF' }} />
+           </div>
+        </div>
+
         {/* Columna 3: Comunicaciones */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', overflowY: 'auto', paddingRight: '0.5rem', height: '100%', minWidth: '350px', flex: 1, flexShrink: 0 }}>
-          <ClientWhatsApp clientId={clientId} telefono={client?.telefono} idKommo={client?.id_kommo} />
+        <div ref={col3Ref} style={{ display: 'flex', flexDirection: 'column', gap: '0', overflowY: 'hidden', paddingRight: '0.5rem', height: '100%', width: `${col3Width}px`, flexShrink: 0 }}>
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', background: 'var(--surface-base)', borderRadius: '12px 12px 0 0', overflow: 'hidden' }}>
+            <button 
+              onClick={() => setActiveCommTab('whatsapp')}
+              style={{ flex: 1, padding: '0.75rem 1rem', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', background: 'transparent', border: 'none',
+                color: activeCommTab === 'whatsapp' ? 'var(--color-info)' : 'var(--color-text-secondary)', 
+                borderBottom: activeCommTab === 'whatsapp' ? '2px solid var(--color-info)' : '2px solid transparent' 
+              }}>
+              WhatsApp
+            </button>
+            <button 
+              onClick={() => setActiveCommTab('email')}
+              style={{ flex: 1, padding: '0.75rem 1rem', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', background: 'transparent', border: 'none',
+                color: activeCommTab === 'email' ? '#D93025' : 'var(--color-text-secondary)', 
+                borderBottom: activeCommTab === 'email' ? '2px solid #D93025' : '2px solid transparent' 
+              }}>
+              Email (Gmail)
+            </button>
+          </div>
+          
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--surface-base)', borderRadius: '0 0 12px 12px' }}>
+            {activeCommTab === 'whatsapp' ? (
+              <ClientWhatsApp clientId={clientId} telefono={client?.telefono} idKommo={client?.id_kommo} />
+            ) : (
+              <ClientEmail clientId={clientId} clientName={client?.nombre} clientEmail={client?.email} tramitesContext={entradas} />
+            )}
+          </div>
         </div>
       </div>
 

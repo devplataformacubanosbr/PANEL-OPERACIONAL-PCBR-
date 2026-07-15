@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { ChevronLeft, FileSpreadsheet, MessageCircle, Share2 } from 'lucide-react';
+import { ChevronLeft, FileSpreadsheet, MessageCircle, Share2, Mail } from 'lucide-react';
 import IntegracionesSettings from './IntegracionesSettings';
 import WhatsAppSettings from './WhatsAppSettings';
 import KommoSettings from './KommoSettings';
+import EmailSettings from './EmailSettings';
 
 const INTEGRATIONS = [
   {
@@ -31,6 +32,15 @@ const INTEGRATIONS = [
     blurb: 'Sincronizá contactos y leads con tu cuenta de Kommo.',
     description: 'Sincroniza contactos y leads de tu cuenta de Kommo con los clientes y trámites del Panel: mapeá qué campo de Kommo corresponde a cuál campo local, y recibí las actualizaciones en tiempo real vía webhook.',
     Component: KommoSettings,
+  },
+  {
+    id: 'email',
+    name: 'Email (Gmail)',
+    icon: Mail,
+    color: '#D93025',
+    blurb: 'Enviá correos y adjuntos desde tu cuenta de Google Workspace.',
+    description: 'Conecta una cuenta de Gmail o Google Workspace para enviar correos transaccionales a tus clientes y a entidades de forma automatizada, pudiendo adjuntar documentos de la ficha del cliente.',
+    Component: EmailSettings,
   },
 ];
 

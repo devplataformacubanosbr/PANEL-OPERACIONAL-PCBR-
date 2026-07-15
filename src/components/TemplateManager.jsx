@@ -12,7 +12,7 @@ import { formatDate } from '../utils/dateFormatter';
  * Reemplaza la sección "Generador de Trámites y Declaraciones".
  * Permite subir plantillas, gestionar mapeos y generar copias para un cliente.
  */
-export default function TemplateManager({ client, clienteDatos, entradas, defaultExpanded = false }) {
+export default function TemplateManager({ client, clienteDatos, entradas, defaultExpanded = false, onGenerate }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -198,9 +198,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
 
         {isTemplateExpanded && (
           <>
-
-        {/* Upload Form */}
-        {showUploadForm && (
+            {showUploadForm && (
           <div style={{
             margin: '1.5rem', padding: '1.5rem',
             background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-lg)',
@@ -281,7 +279,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
           </div>
         )}
 
-        {/* Template List */}
+
         {loading ? (
           <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--color-text-muted)' }}>
             <Loader2 size={32} className="animate-spin" color="var(--color-primary)" style={{ margin: '0 auto 1rem' }} />
@@ -414,6 +412,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
                         onClick={async () => {
                           const { generateFilledHtmlPdf } = await import('../services/templateService');
                           await generateFilledHtmlPdf(template.url_archivo, client, template.nombre);
+                          if (onGenerate) onGenerate();
                         }}
                         style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '6px' }}
                       >
@@ -430,6 +429,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
                               if (isWord) {
                                 const { generateFilledDocx } = await import('../services/templateService');
                                 await generateFilledDocx(template.url_archivo, client, template.nombre, template.field_mappings || []);
+                                if (onGenerate) onGenerate();
                               } else {
                                 setPreviewTemplate(template);
                               }
@@ -490,6 +490,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
           template={previewTemplate}
           client={fullClientData}
           onClose={() => setPreviewTemplate(null)}
+          onGenerate={onGenerate}
         />
       )}
 

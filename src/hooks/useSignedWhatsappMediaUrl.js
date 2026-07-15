@@ -25,6 +25,11 @@ export function useSignedWhatsappMediaUrl(mediaUrl) {
     }
 
     const objectPath = decodeURIComponent(mediaUrl.slice(markerIndex + PUBLIC_PATH_MARKER.length));
+    if (!objectPath || objectPath.trim() === '' || objectPath === '/') {
+      setResolvedUrl(null);
+      return;
+    }
+    
     let cancelled = false;
     setResolvedUrl(null);
 

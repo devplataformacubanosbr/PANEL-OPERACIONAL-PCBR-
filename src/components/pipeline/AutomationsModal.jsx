@@ -4,6 +4,7 @@ import { MessageCircle, ArrowRightCircle, Trash2, Plus, Loader2 } from 'lucide-r
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import Select from '../ui/Select';
+import AutocompleteTextarea from '../ui/AutocompleteTextarea';
 import { cn } from '@/lib/utils';
 import {
   getStageAutomations, createAutomation, updateAutomation, deleteAutomation,
@@ -170,11 +171,10 @@ export default function AutomationsModal({ isOpen, onClose, stage, pipelineId })
               />
               {tipoAccion === 'mensaje' ? (
                 <div>
-                  <textarea
+                  <AutocompleteTextarea
                     value={mensajeTexto}
                     onChange={(e) => setMensajeTexto(e.target.value)}
                     placeholder="Ej. Hola {nombre}, tu solicitud avanzó de etapa. Te contactaremos pronto."
-                    rows={3}
                     className="w-full resize-none rounded-sm border border-border bg-bg-surface px-2.5 py-2 text-sm text-text-primary outline-none focus:border-brand-primary"
                   />
                   <p className="mt-1 text-xs text-text-muted">Usá {'{nombre}'} para insertar el nombre del cliente.</p>

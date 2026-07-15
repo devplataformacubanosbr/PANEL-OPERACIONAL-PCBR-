@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../shared/config/supabaseClient';
 import { MessageCircle, Save, Loader2, Bot, Clock, AlertTriangle, Link2, Key, HelpCircle } from 'lucide-react';
 import useEvolutionConnection from '../../hooks/useEvolutionConnection';
+import QRCode from 'react-qr-code';
+import Modal from '../ui/Modal';
+import Button from '../ui/Button';
+import AutocompleteTextarea from '../ui/AutocompleteTextarea';
+
+const API_BASE_URL = 'https://evolution.marcostest.com';
 
 export default function WhatsAppSettings() {
   const [loading, setLoading] = useState(true);
@@ -440,13 +446,13 @@ export default function WhatsAppSettings() {
               </h4>
               <div style={{ marginBottom: '1.5rem' }}>
                 <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: '0.25rem' }}>Respuesta Estándar (En Horario)</label>
-                <textarea className="form-input" value={templateRespuesta} onChange={(e) => setTemplateRespuesta(e.target.value)} style={{ width: '100%', height: '80px', resize: 'vertical' }} />
+                <AutocompleteTextarea className="form-input" value={templateRespuesta} onChange={(e) => setTemplateRespuesta(e.target.value)} style={{ width: '100%', height: '80px', resize: 'vertical' }} />
                 <div style={{ fontSize: '0.7rem', color: 'var(--color-primary)', marginTop: '0.25rem' }}>Variables: {"{nombre}"}, {"{org}"}</div>
               </div>
               
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: '0.25rem' }}>Respuesta Fuera de Horario</label>
-                <textarea className="form-input" value={templateFueraHorario} onChange={(e) => setTemplateFueraHorario(e.target.value)} style={{ width: '100%', height: '80px', resize: 'vertical' }} />
+                <AutocompleteTextarea className="form-input" value={templateFueraHorario} onChange={(e) => setTemplateFueraHorario(e.target.value)} style={{ width: '100%', height: '80px', resize: 'vertical' }} />
                 <div style={{ fontSize: '0.7rem', color: 'var(--color-primary)', marginTop: '0.25rem' }}>Variables: {"{nombre}"}, {"{org}"}, {"{inicio}"}, {"{fin}"}</div>
               </div>
             </div>

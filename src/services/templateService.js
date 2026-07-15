@@ -556,19 +556,55 @@ export async function getFilledPdfBlob(templateUrl, mappings, clientData, overri
   }
 }
 
-export async function generateFilledPDF(templateUrl, mappings, clientData) {
+export async function uploadGeneratedDocumentToClient(blob, filename, clientData) {
+  if (!clientData || !clientData.id) return;
+  try {
+    const ext = filename.split('.').pop().toLowerCase();
+    const uniqueName = `${clientData.id}/${Date.now()}_${filename.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('documentos_operacionales')
+      .upload(uniqueName, blob, { upsert: false });
+
+    if (uploadError) throw uploadError;
+
+    const { error: dbError } = await supabase
+      .from('documentos_operacionales')
+      .insert({
+        id_cliente: clientData.id,
+        nombre_archivo: filename,
+        url_archivo: uniqueName,
+        tipo_contenido: blob.type || (ext === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+        tipo_documento: 'GENERADO',
+        tamaño_bytes: blob.size || 0,
+        subido_por: 'Admin',
+        estado: 'verificado',
+      });
+
+    if (dbError) throw dbError;
+  } catch (err) {
+    console.error('[templateService] Error uploading generated doc:', err);
+    alert('Error al guardar documento generado: ' + (err.message || JSON.stringify(err)));
+  }
+}
+
+export async function generateFilledPDF(templateUrl, mappings, clientData, templateName) {
   try {
     const blob = await getFilledPdfBlob(templateUrl, mappings, clientData);
+    const filename = `${templateName ? templateName.replace(/\.[^/.]+$/, "") : 'documento'}_${clientData.nombre || 'cliente'}.pdf`;
     const url = URL.createObjectURL(blob);
 
     // Descargar automáticamente
     const a = document.createElement('a');
     a.href = url;
-    a.download = `documento_generado_${Date.now()}.pdf`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    // Guardar también en los documentos del cliente
+    await uploadGeneratedDocumentToClient(blob, filename, clientData);
 
     return { error: null, url };
   } catch (err) {
@@ -915,7 +951,12 @@ export async function generateFilledDocx(templateUrl, clientData, templateName, 
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     });
 
-    saveAs(out, `${templateName.replace(/\.[^/.]+$/, "")}_${clientData.nombre || 'documento'}.docx`);
+    const filename = `${templateName.replace(/\.[^/.]+$/, "")}_${clientData.nombre || 'documento'}.docx`;
+    saveAs(out, filename);
+
+    // Guardar en documentos del cliente
+    await uploadGeneratedDocumentToClient(out, filename, clientData);
+
     return { error: null };
   } catch (err) {
     console.error('[templateService] generateFilledDocx error:', err);
@@ -964,7 +1005,17 @@ export async function generateFilledHtmlPdf(templateUrl, clientData, templateNam
       jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
 
-    await html2pdf().from(tempDiv).set(opt).save();
+    const worker = html2pdf().from(tempDiv).set(opt);
+    await worker.save();
+    
+    // Obtener el blob para guardarlo en la cuenta del cliente
+    try {
+      const pdfBlob = await worker.output('blob');
+      await uploadGeneratedDocumentToClient(pdfBlob, opt.filename, clientData);
+    } catch (e) {
+      console.warn('Could not extract blob from html2pdf for uploading', e);
+    }
+
     return { error: null };
   } catch (err) {
     console.error('[templateService] generateFilledHtmlPdf error:', err);

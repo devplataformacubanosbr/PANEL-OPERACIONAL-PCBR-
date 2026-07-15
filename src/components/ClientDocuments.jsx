@@ -1,10 +1,12 @@
 import React, { useRef, useState } from 'react';
-import {  FileText, Loader2, UploadCloud, X , ChevronDown, ChevronUp } from 'lucide-react';
+import { FileText, Loader2, UploadCloud, X, ChevronDown, ChevronUp, Layers, CheckSquare, Square } from 'lucide-react';
 import { SignedImage } from './SignedImage';
 import EmptyState from './ui/EmptyState';
 import PreUploadDocumentModal from './PreUploadDocumentModal';
+import DocumentMergerModal from './DocumentMergerModal';
 
 const ClientDocuments = ({
+  client,
   documentos = [],
   defaultExpanded = false,
   uploading,
@@ -20,12 +22,39 @@ const ClientDocuments = ({
   handleDeleteDocument,
   stagedFile,
   setStagedFile,
-  handleConfirmUpload
+  handleConfirmUpload,
+  onRefresh // We'll assume the parent might pass this, or we can use window.location.reload as fallback or just nothing since ClientView doesn't pass it yet. We'll add it.
 }) => {
   const [isSectionExpanded, setIsSectionExpanded] = useState(defaultExpanded);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedDocs, setSelectedDocs] = useState([]);
+  const [showMergerModal, setShowMergerModal] = useState(false);
   const inputRef = useRef(null);
 
   const openFilePicker = () => inputRef.current?.click();
+
+  const validTypesForMerge = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  const isValidForMerge = (doc) => {
+    if (doc.tipo_contenido && validTypesForMerge.includes(doc.tipo_contenido)) return true;
+    const name = (doc.nombre_archivo || '').toLowerCase();
+    return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
+  };
+
+  const toggleSelection = (doc) => {
+    setSelectedDocs(prev => {
+      const exists = prev.find(d => d.id === doc.id);
+      if (exists) return prev.filter(d => d.id !== doc.id);
+      return [...prev, doc];
+    });
+  };
+
+  const openMerger = () => {
+    if (selectedDocs.length < 2) {
+      alert('Selecciona al menos 2 documentos para juntar.');
+      return;
+    }
+    setShowMergerModal(true);
+  };
 
   return (
     <section id="documentos-subidos" className="glass-panel" style={{ overflow: 'hidden', flexShrink: 0 }}>
@@ -35,9 +64,40 @@ const ClientDocuments = ({
           <h3 style={{ font: 'var(--font-section-title)', margin: 0, fontSize: '1rem' }}>Documentos ({documentos.length})</h3>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <button onClick={(e) => { e.stopPropagation(); openFilePicker(); }} disabled={uploading} className="btn btn-ghost" style={{ padding: '0.4rem', color: 'var(--color-text-muted)' }} title="Subir documento">
-            {uploading ? <Loader2 size={18} className="animate-spin" /> : <UploadCloud size={18} />}
-          </button>
+          {selectionMode ? (
+            <>
+              <button 
+                onClick={(e) => { e.stopPropagation(); openMerger(); }} 
+                className="btn btn-primary" 
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', display: 'flex', gap: '4px', alignItems: 'center' }}
+              >
+                <Layers size={14} /> Juntar ({selectedDocs.length})
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setSelectionMode(false); setSelectedDocs([]); }} 
+                className="btn btn-ghost" 
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
+              >
+                Cancelar
+              </button>
+            </>
+          ) : (
+            <>
+              {documentos.length > 1 && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setSelectionMode(true); setIsSectionExpanded(true); }} 
+                  className="btn btn-secondary" 
+                  style={{ padding: '0.4rem', color: 'var(--color-primary)' }} 
+                  title="Juntar documentos"
+                >
+                  <Layers size={18} />
+                </button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); openFilePicker(); }} disabled={uploading} className="btn btn-ghost" style={{ padding: '0.4rem', color: 'var(--color-text-muted)' }} title="Subir documento">
+                {uploading ? <Loader2 size={18} className="animate-spin" /> : <UploadCloud size={18} />}
+              </button>
+            </>
+          )}
           {isSectionExpanded ? <ChevronUp size={18} color="var(--color-text-muted)" /> : <ChevronDown size={18} color="var(--color-text-muted)" />}
         </div>
       </div>
@@ -122,11 +182,29 @@ const ClientDocuments = ({
                   background: selected ? 'var(--brand-primary-light)' : 'var(--surface-elevated)',
                   border: `1px solid ${verified ? 'var(--color-success)' : 'var(--border-default)'}`,
                   borderRadius: 'var(--radius-md)',
-                  cursor: 'grab',
-                  opacity: selected ? 0.6 : 1,
+                  cursor: selectionMode && isValidForMerge(doc) ? 'pointer' : 'grab',
+                  opacity: selected || (selectionMode && !isValidForMerge(doc)) ? 0.6 : 1,
                   position: 'relative'
                 }}
+                onClick={() => {
+                  if (selectionMode && isValidForMerge(doc)) {
+                    toggleSelection(doc);
+                  }
+                }}
               >
+                {/* Selection Checkbox */}
+                {selectionMode && (
+                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                    {isValidForMerge(doc) ? (
+                      selectedDocs.find(d => d.id === doc.id) ? 
+                        <CheckSquare size={20} color="var(--color-primary)" /> : 
+                        <Square size={20} color="var(--color-text-muted)" />
+                    ) : (
+                      <div style={{ width: 20, height: 20 }} title="Formato no soportado para juntar" />
+                    )}
+                  </div>
+                )}
+                
                 {/* Image Thumbnail or File Icon */}
                 <div style={{ width: 36, height: 36, flexShrink: 0, borderRadius: '4px', overflow: 'hidden', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                     {doc.url_archivo && doc.tipo_contenido?.startsWith('image/') ? (
@@ -194,6 +272,20 @@ const ClientDocuments = ({
           file={stagedFile}
           onClose={() => setStagedFile(null)}
           onConfirm={handleConfirmUpload}
+        />
+      )}
+
+      {showMergerModal && (
+        <DocumentMergerModal
+          client={client}
+          documents={selectedDocs}
+          onClose={() => setShowMergerModal(false)}
+          onSuccess={() => {
+            setShowMergerModal(false);
+            setSelectionMode(false);
+            setSelectedDocs([]);
+            if (onRefresh) onRefresh();
+          }}
         />
       )}
     </section>

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import EmojiPicker from 'emoji-picker-react';
 import { extractFunctionErrorMessage } from '../utils/errorHandler';
 import WhatsAppMediaContent from './WhatsAppMediaContent';
+import AutocompleteTextarea from './ui/AutocompleteTextarea';
 
 export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
   const [view, setView] = useState('chat'); // 'chat' | 'list'
@@ -633,16 +634,6 @@ export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
   return (
     <div className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%', flexShrink: 0, overflow: 'hidden', position: 'relative' }}>
       
-      {/* TABS HEADER */}
-      {/* "Enviar Email" y "Formularios" se sacaron: no tenían ningún onClick/
-          lógica detrás (UI muerta) — ver auditoría 2026-07-11. Reintroducir
-          solo cuando exista una funcionalidad real detrás. */}
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', background: 'var(--surface-base)' }}>
-        <div style={{ padding: '0.75rem 1rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-info)', borderBottom: '2px solid var(--color-info)', cursor: 'pointer' }}>
-          WhatsApp
-        </div>
-      </div>
-
       {/* -------------------- VIEW: CHAT LIST -------------------- */}
       {view === 'list' && (
         <>
@@ -847,7 +838,7 @@ export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
                   multiple
                 />
 
-                <textarea 
+                <AutocompleteTextarea 
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   placeholder={cleanPhone ? "Escribe un mensaje..." : "Añade un teléfono para chatear"} 

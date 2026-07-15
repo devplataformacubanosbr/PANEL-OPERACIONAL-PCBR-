@@ -89,11 +89,32 @@ export const AuthProvider = ({ children }) => {
     await supabase.auth.signOut();
   }, []);
 
+  const loginWithGoogle = useCallback(async () => {
+    setAuthError(null);
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        scopes: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send',
+        redirectTo: window.location.href, // Regresar exactamente a la URL actual
+        skipBrowserRedirect: true,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        }
+      }
+    });
+    if (error) throw error;
+    if (data?.url) {
+      window.location.href = data.url;
+    }
+  }, []);
+
   const value = {
     session,
     loading: loading || (!!session && profileLoading),
     userProfile,
     login,
+    loginWithGoogle,
     logout,
     authError,
     isAuthenticated: !!session && !!userProfile,
