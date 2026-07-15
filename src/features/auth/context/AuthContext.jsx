@@ -52,9 +52,11 @@ export const AuthProvider = ({ children }) => {
         window.dispatchEvent(new Event('google_token_updated'));
       }
       
-      if (window.opener) {
+      const isPopup = sessionStorage.getItem('is_auth_popup') === 'true';
+      if (isPopup) {
         if (session?.provider_token) {
           localStorage.removeItem('google_auth_pending');
+          sessionStorage.removeItem('is_auth_popup');
           window.close();
         } else if (session) {
           const hasGoogle = session?.user?.identities?.some(id => id.provider === 'google');
@@ -118,6 +120,9 @@ export const AuthProvider = ({ children }) => {
     const newTab = window.open('', 'googleAuthPopup', `width=${width},height=${height},left=${left},top=${top}`);
     
     if (newTab) {
+      try {
+        newTab.sessionStorage.setItem('is_auth_popup', 'true');
+      } catch (e) {}
       newTab.document.write('<html><body style="font-family:sans-serif;text-align:center;padding:50px;">Redirigiendo a Google...</body></html>');
     }
 
