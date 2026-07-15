@@ -297,12 +297,18 @@ export default function ClientViewExtractionModal({
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem', overflowY: 'auto', flex: 1, paddingRight: '0.5rem' }}>
           {Object.entries(extractedData).map(([k, v]) => {
-            if (!v || k === 'ILEGIBLE') return null;
+            if (!v || k === 'ILEGIBLE' || k === 'TIPO_DOCUMENTO') return null;
             const clientField = fieldMap[k];
+            // Si la IA encontró un dato que no está en el mapeo fijo, se va a
+            // guardar como campo dinámico nuevo (ver useClientViewExtraction) —
+            // el identificador es el mismo que va a usar el guardado.
+            const dynamicIdentificador = !clientField
+              ? k.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+              : null;
             const existingValue = clientField && cliente
               ? (FIXED_COLUMN_IDS.has(clientField) ? cliente[clientField] : cliente.campos_personalizados?.[clientField])
-              : '';
-            
+              : (dynamicIdentificador ? cliente?.campos_personalizados?.[dynamicIdentificador] : '');
+
             return (
               <div key={k} style={{ display: 'flex', gap: '1rem', alignItems: 'stretch' }}>
                 {/* AI Extracted Data */}
@@ -332,7 +338,9 @@ export default function ClientViewExtractionModal({
 
                 {/* Existing Data */}
                 <div style={{ flex: 1, background: 'rgba(0,0,0,0.1)', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', opacity: 0.7 }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: '4px', fontWeight: 500 }}>Dato Actual ({clientField || 'Desconocido'})</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: '4px', fontWeight: 500 }}>
+                    {clientField ? `Dato Actual (${clientField})` : (existingValue ? 'Dato Actual (campo personalizado)' : '✨ Se creará como campo nuevo')}
+                  </div>
                   <input
                     className="form-input"
                     type="text"

@@ -47,6 +47,30 @@ const AI_DATE_KEYS = new Set([
   'FECHA_VENCIMIENTO_REFUGIO',
 ]);
 
+/** Claves que son metadata de control, no datos del cliente — nunca se guardan. */
+const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO']);
+
+/** "NUMERO_LICENCIA" → "Numero Licencia" (label legible para el campo nuevo) */
+const humanizeAiKey = (key) => key.toLowerCase().split('_').filter(Boolean)
+  .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+/**
+ * Da de alta un campo dinámico nuevo en config_campos_clientes la primera vez
+ * que la IA lo extrae. Si ya existe (mismo identificador, de una extracción
+ * anterior o creado a mano en Configuración > Campos Base), el insert choca
+ * con la unique constraint (23505) y simplemente se ignora — no es un error.
+ */
+const ensureCustomFieldDefinition = async (identificador, nombreCampo) => {
+  const { error } = await supabase.from('config_campos_clientes').insert([{
+    nombre_campo: nombreCampo,
+    identificador,
+    categoria: 'Documentos de Identidad',
+    tipo: 'text',
+    requerido: false,
+  }]);
+  if (error && error.code !== '23505') throw error;
+};
+
 export default function useClientViewExtraction({ clientId, fetchClientData, client }) {
   // Extraction modal state
   const [extractedData, setExtractedData] = useState(null);
@@ -66,6 +90,9 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
       const targetClientData = extractionTargetClientData || client;
       const customJsonUpdates = { ...(targetClientData?.campos_personalizados || {}) };
       let hasCustomJsonUpdates = false;
+      // Campos que la IA encontró pero no estaban en el mapeo fijo — se dan de
+      // alta como campos dinámicos nuevos (una vez guardados los datos abajo).
+      const newCustomFieldDefs = [];
 
       for (const [key, value] of Object.entries(extractedData)) {
         if (!value) continue;
@@ -91,7 +118,20 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
             customJsonUpdates[mappedCol] = finalValue;
             hasCustomJsonUpdates = true;
           }
+        } else if (!AI_IGNORED_KEYS.has(upperKey)) {
+          // La IA extrajo un dato que no encaja en ningún campo conocido
+          // (CAMPOS_ADICIONALES) — se guarda como campo dinámico nuevo,
+          // igual que si un admin lo hubiera creado a mano.
+          const identificador = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+          if (!identificador) continue;
+          customJsonUpdates[identificador] = String(value).toUpperCase();
+          hasCustomJsonUpdates = true;
+          newCustomFieldDefs.push({ identificador, nombreCampo: humanizeAiKey(key) });
         }
+      }
+
+      for (const { identificador, nombreCampo } of newCustomFieldDefs) {
+        await ensureCustomFieldDefinition(identificador, nombreCampo);
       }
 
       if (hasCustomJsonUpdates) {

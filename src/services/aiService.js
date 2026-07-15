@@ -126,6 +126,16 @@ REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
 
 8. TIPO DE DOCUMENTO:
    - Identifica qué documento es y colócalo en "TIPO_DOCUMENTO". Usa valores como: "PASAPORTE", "CPF", "RNM", "CARNET DE IDENTIDAD", "PROTOCOLO DE REFUGIO", "CNH", "CERTIFICADO DE NACIMIENTO", "DOCUMENTO", etc.
+9. DATOS ADICIONALES (MUY IMPORTANTE): No te limites a los campos fijos de abajo.
+   Si en el documento ves CUALQUIER OTRO dato personal identificable que no encaje
+   en ninguno de esos campos (ej. número de licencia de conducir, categoría de
+   licencia, profesión, estado civil impreso, dirección impresa, número de seguro,
+   código de registro, restricciones, altura, tipo de sangre, fecha de expedición
+   de otro documento, etc.), agrégalo dentro del objeto "CAMPOS_ADICIONALES" al
+   final del JSON, usando como clave un nombre corto en MAYUSCULAS_CON_GUION_BAJO
+   que describa el dato (ej. "NUMERO_LICENCIA", "CATEGORIA_LICENCIA", "PROFESION").
+   No repitas ahí un dato que ya pusiste en un campo fijo de arriba. Si no hay
+   ningún dato adicional, deja "CAMPOS_ADICIONALES" como un objeto vacío {}.
 
 Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra) con estos campos:
 {
@@ -145,7 +155,8 @@ Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra) con est
   "FECHA_VENCIMIENTO_PASAPORTE": null,
   "FECHA_VENCIMIENTO_REFUGIO": null,
   "SEXO": null,
-  "ILEGIBLE": false
+  "ILEGIBLE": false,
+  "CAMPOS_ADICIONALES": {}
 }
 Usa null para los campos que no estén visibles en el documento. No inventes datos.`;
 
@@ -163,8 +174,20 @@ Usa null para los campos que no estén visibles en el documento. No inventes dat
 
   try {
     const parsed = JSON.parse(cleanJson(raw));
-    // Filtrar campos null para que el UI solo muestre los que tienen valor
-    return Object.fromEntries(Object.entries(parsed).filter(([, v]) => v !== null && v !== ''));
+    // CAMPOS_ADICIONALES viaja como un objeto anidado para que el modelo no
+    // mezcle datos sueltos con los campos fijos, pero el resto del flujo
+    // (modal de revisión, guardado) espera un único objeto plano — se
+    // aplanan acá antes de devolver.
+    const adicionales = parsed.CAMPOS_ADICIONALES && typeof parsed.CAMPOS_ADICIONALES === 'object'
+      ? parsed.CAMPOS_ADICIONALES
+      : {};
+    delete parsed.CAMPOS_ADICIONALES;
+    const merged = { ...parsed, ...adicionales };
+    // Filtrar campos null/vacíos/objetos raros para que el UI solo muestre
+    // datos con valor (y nunca intente renderizar un objeto como texto).
+    return Object.fromEntries(
+      Object.entries(merged).filter(([, v]) => v !== null && v !== '' && typeof v !== 'object')
+    );
   } catch {
     console.warn('[aiService] No se pudo parsear JSON del análisis de imagen. Respuesta cruda:', raw);
     return {};
