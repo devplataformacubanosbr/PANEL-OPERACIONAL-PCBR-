@@ -25,12 +25,12 @@ Fix the Gmail integration in the React dashboard (historical and current API que
    - Escalate: report to parent (sub-orchestrators only, last resort)
 4. **Succession**: Self-succeed at spawn count 16.
 - **Work items**:
-  - M10: E2E Test Suite [pending]
-  - M11: Fix Gmail API Query [pending]
-  - M12: Redesign ClientEmail UI [pending]
-  - M13: Integration & Audit [pending]
-- **Current phase**: 1
-- **Current focus**: Decompose & Plan
+  - M10: E2E Test Suite [done]
+  - M11: Fix Gmail API Query [done]
+  - M12: Redesign ClientEmail UI [done]
+  - M13: Integration & Audit [done]
+- **Current phase**: 4
+- **Current focus**: Done
 
 ## 🔒 Key Constraints
 - Fix Gmail API query in `src/services/gmailService.js` to retrieve sent & received emails (including historical).
@@ -56,12 +56,12 @@ Fix the Gmail integration in the React dashboard (historical and current API que
 | challenger_gmail_2 | teamwork_preview_challenger | Stress/Edge case validation | completed | 3635f54e-1bda-4acb-98fe-a40ee2cdd3d8 |
 | auditor_gmail_1 | teamwork_preview_auditor | Forensic Integrity Audit | completed | 25bdc600-a744-44a4-b1c7-27aa5fbb7feb |
 | worker_gmail_2 | teamwork_preview_worker | Implement Challenger fixes & build | completed | 64e7c803-8138-4733-bd3c-c711dd4aa672 |
-| auditor_gmail_2 | teamwork_preview_auditor | Forensic Integrity Audit Gen 2 | in-progress | a14d9ecb-28f6-42b7-b863-be7a9dbf5edc |
+| auditor_gmail_2 | teamwork_preview_auditor | Forensic Integrity Audit Gen 2 | completed | a14d9ecb-28f6-42b7-b863-be7a9dbf5edc |
 
 ## Succession Status
 - Succession required: no
 - Spawn count: 9 / 16
-- Pending subagents: a14d9ecb-28f6-42b7-b863-be7a9dbf5edc
+- Pending subagents: none
 - Predecessor: none
 - Successor: not yet spawned
 

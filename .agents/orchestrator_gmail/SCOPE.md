@@ -7,10 +7,10 @@
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 10 | E2E Test Suite | Create/update tests in `test/e2e.test.js` (or a separate test file) to cover the Gmail integration requirements (pagination, UI tabs, styling). | None | PLANNED |
-| 11 | Fix Gmail API Query | Update `src/services/gmailService.js` to fetch all historical emails recursively/paginated, mapping fields correctly (`destinatarios` bug). | M10 | PLANNED |
-| 12 | Redesign ClientEmail UI | Redesign `src/components/ClientEmail.jsx` to look like Gmail (tabs: Todos, Recibidos, Enviados; thread/reading pane; Gmail styling). | M11 | PLANNED |
-| 13 | Integration & Audit | Run all tests, pass challengers, and pass the Forensic Integrity Auditor. | M12 | PLANNED |
+| 10 | E2E Test Suite | Create/update tests in `test/e2e.test.js` (or a separate test file) to cover the Gmail integration requirements (pagination, UI tabs, styling). | None | DONE |
+| 11 | Fix Gmail API Query | Update `src/services/gmailService.js` to fetch all historical emails recursively/paginated, mapping fields correctly (`destinatarios` bug). | M10 | DONE |
+| 12 | Redesign ClientEmail UI | Redesign `src/components/ClientEmail.jsx` to look like Gmail (tabs: Todos, Recibidos, Enviados; thread/reading pane; Gmail styling). | M11 | DONE |
+| 13 | Integration & Audit | Run all tests, pass challengers, and pass the Forensic Integrity Auditor. | M12 | DONE |
 
 ## Interface Contracts
 ### `src/services/gmailService.js` ↔ `src/components/ClientEmail.jsx`

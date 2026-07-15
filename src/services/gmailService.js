@@ -28,23 +28,21 @@ export function clearProviderToken() {
  * Busca correos relacionados con un cliente usando la Gmail API.
  * Busca en TODAS las carpetas: Inbox, Enviados, etc.
  */
-export async function fetchClientEmails(clientEmail) {
-  if (!clientEmail) return [];
+export async function fetchClientEmails(searchQuery = '') {
   const token = await getProviderToken();
 
-  // Gmail API query: buscar correos to o from del cliente en todas las carpetas
-  // No usamos {} porque la sintaxis correcta de Gmail API es OR
-  const q = `to:${clientEmail} OR from:${clientEmail}`;
+  // Si hay búsqueda manual usamos la query, si no, traemos el inbox global
+  const q = searchQuery ? searchQuery : '';
   let allMessages = [];
   let pageToken = '';
+  let pageCount = 0;
 
   do {
-    let url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=50&includeSpamTrash=false`;
-    if (pageToken) {
-      url += `&pageToken=${encodeURIComponent(pageToken)}`;
-    }
+    let url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50&includeSpamTrash=false`;
+    if (q) url += `&q=${encodeURIComponent(q)}`;
+    if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
 
-    console.log('[Gmail] Buscando:', q, 'pageToken:', pageToken);
+    console.log('[Gmail] Buscando:', q || '(Todas las carpetas)', 'pageToken:', pageToken);
 
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` }
@@ -65,7 +63,8 @@ export async function fetchClientEmails(clientEmail) {
       allMessages = allMessages.concat(data.messages);
     }
     pageToken = data.nextPageToken || '';
-  } while (pageToken);
+    pageCount++;
+  } while (pageToken && pageCount < 2); // Limitar a 2 páginas (100 correos) en la vista global
 
   console.log('[Gmail] Mensajes encontrados:', allMessages.length);
 

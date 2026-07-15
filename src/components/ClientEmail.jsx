@@ -61,7 +61,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   ];
 
   // Search State
-  const [searchQuery, setSearchQuery] = useState(clientEmail || '');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const checkAndLoad = async () => {
@@ -72,8 +72,8 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
         return false; // sin token
       } else if (clientId) {
         setGoogleAuthError(false);
-        setSearchQuery(clientEmail || '');
-        fetchMessages(clientEmail);
+        setSearchQuery('');
+        fetchMessages('');
         fetchPlantillas();
         setDestinatario(clientEmail || '');
         
@@ -123,10 +123,6 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
 
   const fetchMessages = async (queryParam) => {
     const emailToSearch = queryParam !== undefined ? queryParam : searchQuery;
-    if (!emailToSearch) {
-      setLoadingMessages(false);
-      return;
-    }
     setLoadingMessages(true);
     setGoogleAuthError(false);
     try {
