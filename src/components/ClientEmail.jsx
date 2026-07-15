@@ -33,6 +33,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
   const [selectedThreadId, setSelectedThreadId] = useState(null);
   const [expandedMessages, setExpandedMessages] = useState({});
   const [quickReplyText, setQuickReplyText] = useState('');
+  const [quickReplyAdjuntos, setQuickReplyAdjuntos] = useState([]);
   const [sendingReply, setSendingReply] = useState(false);
   const [client, setClient] = useState(null);
   
@@ -958,7 +959,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                 <button
                                   onClick={async () => {
-                                    if (!quickReplyText.trim() || sendingReply) return;
+                                    if ((!quickReplyText.trim() && quickReplyAdjuntos.length === 0) || sendingReply) return;
                                     setSendingReply(true);
                                     const toastId = toast.loading('Enviando respuesta...');
                                     try {
@@ -968,16 +969,39 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                                         ? `${latestMsg.references} ${latestMsg.messageId}` 
                                         : latestMsg.messageId;
 
+                                      // Procesar adjuntos
+                                      const processedAdjuntos = [];
+                                      for (const adj of quickReplyAdjuntos) {
+                                        if (adj.data instanceof File) {
+                                          const base64Data = await new Promise((resolve, reject) => {
+                                            const reader = new FileReader();
+                                            reader.onload = () => {
+                                              const b64 = reader.result.split(',')[1];
+                                              resolve(b64);
+                                            };
+                                            reader.onerror = reject;
+                                            reader.readAsDataURL(adj.data);
+                                          });
+                                          processedAdjuntos.push({
+                                            nombre: adj.nombre,
+                                            mimeType: adj.data.type || 'application/octet-stream',
+                                            base64Data
+                                          });
+                                        }
+                                      }
+
                                       await sendGmailEmail({
                                         to: replyTo,
                                         subject: repSubject,
                                         bodyText: quickReplyText.trim(),
+                                        adjuntos: processedAdjuntos,
                                         threadId: latestMsg.threadId,
                                         inReplyTo: latestMsg.messageId,
                                         references: newReferences
                                       });
                                   
                                   setQuickReplyText('');
+                                  setQuickReplyAdjuntos([]);
                                   toast.success('Respuesta enviada', { id: toastId });
                                   setTimeout(() => fetchMessages(clientEmail), 1500);
                                 } catch (err) {
@@ -987,7 +1011,7 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                                   setSendingReply(false);
                                 }
                               }}
-                              disabled={!quickReplyText.trim() || sendingReply}
+                              disabled={(!quickReplyText.trim() && quickReplyAdjuntos.length === 0) || sendingReply}
                               style={{
                                 backgroundColor: '#0b57d0',
                                 color: '#FFFFFF',
@@ -996,8 +1020,8 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                                 padding: '0.4rem 1.25rem',
                                 fontSize: '0.85rem',
                                 fontWeight: 500,
-                                cursor: (!quickReplyText.trim() || sendingReply) ? 'not-allowed' : 'pointer',
-                                opacity: (!quickReplyText.trim() || sendingReply) ? 0.7 : 1
+                                cursor: ((!quickReplyText.trim() && quickReplyAdjuntos.length === 0) || sendingReply) ? 'not-allowed' : 'pointer',
+                                opacity: ((!quickReplyText.trim() && quickReplyAdjuntos.length === 0) || sendingReply) ? 0.7 : 1
                               }}
                             >
                               {sendingReply ? 'Enviando...' : 'Enviar'}
@@ -1042,8 +1066,39 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                             >
                               <Sparkles size={16} />
                             </button>
+                            <label 
+                              style={{ color: '#5F6368', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0.25rem', borderRadius: '50%' }} 
+                              className="hover:bg-gray-100"
+                              title="Adjuntar archivo"
+                            >
+                              <input type="file" multiple style={{ display: 'none' }} onChange={(e) => {
+                                const files = Array.from(e.target.files);
+                                if (files.length > 0) {
+                                  const validFiles = files.filter(f => f.size <= 20971520); // 20 MB
+                                  if (validFiles.length < files.length) {
+                                    toast.error('Algunos archivos superan el límite de 20MB y fueron omitidos.');
+                                  }
+                                  if (validFiles.length > 0) {
+                                    setQuickReplyAdjuntos(prev => [...prev, ...validFiles.map(f => ({ nombre: f.name, data: f }))]);
+                                  }
+                                }
+                                e.target.value = null; // reset
+                              }} />
+                              <Paperclip size={16} />
+                            </label>
                           </div>
                         </div>
+                        {/* Render Quick Reply Attachments */}
+                        {quickReplyAdjuntos.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
+                            {quickReplyAdjuntos.map((adj, index) => (
+                              <div key={index} style={{ backgroundColor: '#F1F3F4', borderRadius: '16px', padding: '0.25rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: '#202124', border: '1px solid #E5E7EB' }}>
+                                <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{adj.nombre}</span>
+                                <X size={14} style={{ cursor: 'pointer', color: '#5F6368' }} onClick={() => setQuickReplyAdjuntos(prev => prev.filter((_, i) => i !== index))} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
