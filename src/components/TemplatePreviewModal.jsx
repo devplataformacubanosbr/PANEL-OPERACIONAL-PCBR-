@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Download, Loader2, RefreshCw, ChevronDown, FileText, PenTool, MousePointer2 } from 'lucide-react';
 import { getFilledPdfBlob, getExtendedClientFields, getClientFieldValue } from '../services/templateService';
-import { getDocuments } from '../services/storageService';
+import { getDocuments, getSignedUrl } from '../services/storageService';
 import { convertPdfPageToImageBase64 } from '../services/pdfToImage';
 import toast from 'react-hot-toast';
 
@@ -29,8 +29,23 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
 
   useEffect(() => {
     getExtendedClientFields().then(setAvailableFields);
-    getDocuments(client.id).then(docs => {
-      setSignatures(docs.filter(d => d.tipo_documento === 'FIRMA_DIGITAL'));
+    getDocuments(client.id).then(async docs => {
+      const firmas = docs.filter(d => d.tipo_documento === 'FIRMA_DIGITAL');
+      // url_archivo es la ruta relativa dentro del bucket privado, no una URL
+      // usable — hay que resolverla a una firmada antes de poder mostrarla en
+      // un <img> o de que getFilledPdfBlob pueda hacerle fetch() al generar
+      // el PDF final. Sin esto la firma no aparecía ni en la vista previa ni
+      // en el PDF descargado (fallaba en silencio, solo quedaba en consola).
+      const resolved = await Promise.all(firmas.map(async f => {
+        try {
+          const signedUrl = await getSignedUrl(f.url_archivo);
+          return { ...f, url_archivo: signedUrl };
+        } catch (err) {
+          console.error('Error resolviendo URL de firma:', f.nombre_archivo, err);
+          return null;
+        }
+      }));
+      setSignatures(resolved.filter(Boolean));
     }).catch(console.error);
   }, [client.id]);
 
@@ -134,28 +149,74 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
     }
   };
 
-  const handlePdfClick = (e) => {
+  // Colocar una firma ahora es un arrastre: mousedown marca la esquina inicial,
+  // mousemove dibuja el rectángulo en vivo, y mouseup lo confirma con ESE
+  // tamaño exacto en vez de uno fijo. Un clic simple (arrastre casi nulo)
+  // sigue funcionando como antes — coloca una firma de tamaño por defecto
+  // centrada en el punto clickeado.
+  const DEFAULT_SIG_WIDTH = 0.25;
+  const DEFAULT_SIG_HEIGHT = 0.10;
+  const MIN_DRAG = 0.015;
+
+  const [dragRect, setDragRect] = useState(null);
+  const isDraggingRef = useRef(false);
+
+  const relativePoint = (e, container) => {
+    const rect = container.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height,
+    };
+  };
+
+  const handlePdfMouseDown = (e) => {
     if (!signatureMode || !selectedSignature) return;
-    
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    
-    // Default signature size in relative PDF units
-    const sigWidth = 0.25; 
-    const sigHeight = 0.10; 
+    const { x, y } = relativePoint(e, e.currentTarget);
+    isDraggingRef.current = true;
+    setDragRect({ startX: x, startY: y, x, y, width: 0, height: 0 });
+  };
+
+  const handlePdfMouseMove = (e) => {
+    if (!isDraggingRef.current) return;
+    const { x, y } = relativePoint(e, e.currentTarget);
+    setDragRect(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        x: Math.min(prev.startX, x),
+        y: Math.min(prev.startY, y),
+        width: Math.abs(x - prev.startX),
+        height: Math.abs(y - prev.startY),
+      };
+    });
+  };
+
+  const finishPlacingSignature = () => {
+    if (!isDraggingRef.current || !dragRect || !selectedSignature) {
+      isDraggingRef.current = false;
+      setDragRect(null);
+      return;
+    }
+    isDraggingRef.current = false;
+
+    let { x, y, width, height, startX, startY } = dragRect;
+    if (width < MIN_DRAG && height < MIN_DRAG) {
+      // Arrastre insignificante = clic simple: tamaño por defecto centrado en el punto.
+      width = DEFAULT_SIG_WIDTH;
+      height = DEFAULT_SIG_HEIGHT;
+      x = startX - width / 2;
+      y = startY - height / 2;
+    }
 
     setPlacedSignatures(prev => [...prev, {
       id: Date.now(),
       url: selectedSignature.url_archivo,
-      x: x - (sigWidth / 2),
-      y: y - (sigHeight / 2),
-      width: sigWidth,
-      height: sigHeight,
+      x, y, width, height,
       page: 0 // Default page 0 (first page) for now
     }]);
 
     setSelectedSignature(null);
+    setDragRect(null);
   };
 
   return (
@@ -244,17 +305,20 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
           )}
 
           {signatureMode && pdfPageImage && !isExtractingPdf && (
-            <div 
-               style={{ position: 'relative', cursor: selectedSignature ? 'crosshair' : 'default', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-               onClick={handlePdfClick}
+            <div
+               style={{ position: 'relative', cursor: selectedSignature ? 'crosshair' : 'default', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', userSelect: 'none' }}
+               onMouseDown={handlePdfMouseDown}
+               onMouseMove={handlePdfMouseMove}
+               onMouseUp={finishPlacingSignature}
+               onMouseLeave={() => { if (isDraggingRef.current) finishPlacingSignature(); }}
             >
-               <img src={pdfPageImage} alt="PDF Page 1" style={{ maxWidth: '100%', display: 'block' }} />
-               
+               <img src={pdfPageImage} alt="PDF Page 1" style={{ maxWidth: '100%', display: 'block' }} draggable={false} />
+
                {/* Overlay placed signatures visually */}
                {placedSignatures.map(sig => (
-                 <img 
+                 <img
                     key={sig.id}
-                    src={sig.url} 
+                    src={sig.url}
                     alt="Firma"
                     style={{
                       position: 'absolute',
@@ -268,10 +332,29 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
                     }}
                  />
                ))}
-               
+
+               {/* Rectángulo en vivo mientras se arrastra para definir tamaño */}
+               {dragRect && (
+                 <div style={{
+                   position: 'absolute',
+                   left: `${dragRect.x * 100}%`,
+                   top: `${dragRect.y * 100}%`,
+                   width: `${dragRect.width * 100}%`,
+                   height: `${dragRect.height * 100}%`,
+                   border: '2px dashed var(--color-primary)',
+                   background: 'rgba(37,99,235,0.12)',
+                   pointerEvents: 'none',
+                 }} />
+               )}
+
                {!selectedSignature && (
                  <div style={{ position: 'absolute', top: '1rem', left: '1rem', background: 'rgba(255,255,255,0.9)', padding: '0.5rem 1rem', borderRadius: '4px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', fontWeight: 600, color: 'var(--color-primary)' }}>
                    Selecciona una firma a la derecha
+                 </div>
+               )}
+               {selectedSignature && (
+                 <div style={{ position: 'absolute', top: '1rem', left: '1rem', background: 'rgba(255,255,255,0.9)', padding: '0.5rem 1rem', borderRadius: '4px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', fontWeight: 600, color: 'var(--color-primary)' }}>
+                   Arrastrá para definir el tamaño (o hacé clic para tamaño estándar)
                  </div>
                )}
             </div>
