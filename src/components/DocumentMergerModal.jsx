@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import { X, ArrowUp, ArrowDown, FileText, Loader2, Save } from 'lucide-react';
-import { mergeDocumentsToPdf } from '../services/pdfMergerService';
-import { uploadGeneratedDocumentToClient } from '../services/templateService';
 import toast from 'react-hot-toast';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
@@ -47,11 +45,13 @@ export default function DocumentMergerModal({ documents, client, onClose, onSucc
     const toastId = toast.loading('Fusionando documentos. Esto puede tardar unos segundos...');
 
     try {
+      const { mergeDocumentsToPdf } = await import('../services/pdfMergerService');
       const mergedBlob = await mergeDocumentsToPdf(docs);
-      
+
       const filename = `${mergedName.replace(/[^a-zA-Z0-9.\-_ ]/g, '')}.pdf`;
       
       toast.loading('Guardando en la carpeta del cliente...', { id: toastId });
+      const { uploadGeneratedDocumentToClient } = await import('../services/templateService');
       await uploadGeneratedDocumentToClient(mergedBlob, filename, client);
       
       toast.success('¡Documentos fusionados exitosamente!', { id: toastId });

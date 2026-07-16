@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Loader2, Link as LinkIcon, FileText, AlertCircle, RefreshCw, Search } from 'lucide-react';
-import { getExtendedClientFields, saveTemplateMapping, getPDFFormFields, getFilledPdfBlob } from '../services/templateService';
+import toast from 'react-hot-toast';
 
 export default function TemplateEditorModal({ template, client, onClose, onSaved }) {
   const [loading, setLoading] = useState(true);
@@ -9,7 +9,7 @@ export default function TemplateEditorModal({ template, client, onClose, onSaved
   const [availableFields, setAvailableFields] = useState([]);
 
   useEffect(() => {
-    getExtendedClientFields().then(fields => setAvailableFields(fields));
+    import('../services/templateService').then(({ getExtendedClientFields }) => getExtendedClientFields()).then(fields => setAvailableFields(fields));
   }, []);
   
   // mappings array: { pdfFieldName, kommoFieldId, isCustomText, customValue }
@@ -32,9 +32,9 @@ export default function TemplateEditorModal({ template, client, onClose, onSaved
 
         if (template.tipo_contenido === 'application/pdf' || isWord) {
           let fields = [];
-          
+          const { getDocxFields, getPDFFormFields } = await import('../services/templateService');
+
           if (isWord) {
-             const { getDocxFields } = await import('../services/templateService');
              fields = await getDocxFields(template.url_archivo);
           } else {
              fields = await getPDFFormFields(template.url_archivo);
@@ -109,6 +109,7 @@ export default function TemplateEditorModal({ template, client, onClose, onSaved
            return;
         }
 
+        const { getFilledPdfBlob } = await import('../services/templateService');
         const blob = await getFilledPdfBlob(template.url_archivo, previewMappings, client, {});
         const url = URL.createObjectURL(blob);
         
@@ -137,6 +138,7 @@ export default function TemplateEditorModal({ template, client, onClose, onSaved
 
   const handleSave = async () => {
     setSaving(true);
+    const { saveTemplateMapping } = await import('../services/templateService');
     const result = await saveTemplateMapping(template.id, mappings);
     setSaving(false);
     

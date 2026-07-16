@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import {  UploadCloud, FileText, Loader2, Tag, Eye, Trash2, Sparkles, Plus, Search, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
-import { uploadTemplate, getTemplates, deleteTemplate, analyzeTemplateWithAI, renderPdfPageAsImage } from '../services/templateService';
-import TemplateEditorModal from './TemplateEditorModal';
-import TemplatePreviewModal from './TemplatePreviewModal';
-import HtmlTemplateBuilder from './HtmlTemplateBuilder';
 import { formatDate } from '../utils/dateFormatter';
+
+// Cada uno arrastra sus propias dependencias pesadas (pdf-lib, docxtemplater,
+// html2pdf.js, react-quill) — lazy() para que solo se descarguen cuando el
+// usuario realmente abre uno de estos modales, no al abrir la ficha del cliente.
+const TemplateEditorModal = lazy(() => import('./TemplateEditorModal'));
+const TemplatePreviewModal = lazy(() => import('./TemplatePreviewModal'));
+const HtmlTemplateBuilder = lazy(() => import('./HtmlTemplateBuilder'));
 
 /**
  * TemplateManager
@@ -37,6 +40,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
+    const { getTemplates, renderPdfPageAsImage } = await import('../services/templateService');
     const { data } = await getTemplates();
     setTemplates(data);
     setLoading(false);
@@ -79,6 +83,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
     setUploading(true);
 
     try {
+      const { uploadTemplate, analyzeTemplateWithAI } = await import('../services/templateService');
       const { data: record, error } = await uploadTemplate(file, nombre);
       if (error) { alert('Error: ' + error); return; }
 
@@ -152,6 +157,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
 
   const handleDelete = async (template) => {
     if (!window.confirm(`¿Eliminar la plantilla "${template.nombre}"?`)) return;
+    const { deleteTemplate } = await import('../services/templateService');
     const { error } = await deleteTemplate(template);
     if (error) { alert('Error: ' + error); return; }
     await fetchTemplates();
@@ -476,33 +482,35 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
       </section>
 
       {/* Modals */}
-      {editorTemplate && (
-        <TemplateEditorModal
-          template={editorTemplate}
-          client={fullClientData}
-          onClose={() => setEditorTemplate(null)}
-          onSaved={fetchTemplates}
-        />
-      )}
+      <Suspense fallback={null}>
+        {editorTemplate && (
+          <TemplateEditorModal
+            template={editorTemplate}
+            client={fullClientData}
+            onClose={() => setEditorTemplate(null)}
+            onSaved={fetchTemplates}
+          />
+        )}
 
-      {previewTemplate && (
-        <TemplatePreviewModal
-          template={previewTemplate}
-          client={fullClientData}
-          onClose={() => setPreviewTemplate(null)}
-          onGenerate={onGenerate}
-        />
-      )}
+        {previewTemplate && (
+          <TemplatePreviewModal
+            template={previewTemplate}
+            client={fullClientData}
+            onClose={() => setPreviewTemplate(null)}
+            onGenerate={onGenerate}
+          />
+        )}
 
-      {showHtmlBuilder && (
-        <HtmlTemplateBuilder
-          onClose={() => setShowHtmlBuilder(false)}
-          onSaved={() => {
-            setShowHtmlBuilder(false);
-            fetchTemplates();
-          }}
-        />
-      )}
+        {showHtmlBuilder && (
+          <HtmlTemplateBuilder
+            onClose={() => setShowHtmlBuilder(false)}
+            onSaved={() => {
+              setShowHtmlBuilder(false);
+              fetchTemplates();
+            }}
+          />
+        )}
+      </Suspense>
     </>
   );
 }

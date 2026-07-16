@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill/dist/quill.snow.css';
 import { X, Save, Copy, Check, Loader2 } from 'lucide-react';
-import { createHtmlTemplate, getExtendedClientFields } from '../services/templateService';
 
 export default function HtmlTemplateBuilder({ onClose, onSaved }) {
   const [htmlContent, setHtmlContent] = useState('');
@@ -12,7 +11,7 @@ export default function HtmlTemplateBuilder({ onClose, onSaved }) {
   const [copiedId, setCopiedId] = useState(null);
 
   useEffect(() => {
-    getExtendedClientFields().then(setAvailableFields);
+    import('../services/templateService').then(({ getExtendedClientFields }) => getExtendedClientFields()).then(setAvailableFields);
   }, []);
 
   const handleCopy = (text) => {
@@ -33,6 +32,7 @@ export default function HtmlTemplateBuilder({ onClose, onSaved }) {
 
     setSaving(true);
     try {
+      const { createHtmlTemplate } = await import('../services/templateService');
       const { error } = await createHtmlTemplate(htmlContent, templateName);
       if (error) {
         alert('Error al guardar: ' + error);
