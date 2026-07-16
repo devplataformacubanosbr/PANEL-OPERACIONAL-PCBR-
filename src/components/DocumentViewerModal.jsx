@@ -744,6 +744,7 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
                 isOpen={isCropping}
                 imageUrl={currentUrl}
                 initialDocName={currentName}
+                clientId={doc?.id_cliente || doc?.cliente_id}
                 onClose={() => setIsCropping(false)}
                 onCropComplete={handleCropComplete}
             />
