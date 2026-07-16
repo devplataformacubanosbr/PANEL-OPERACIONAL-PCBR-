@@ -417,6 +417,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         openEditModal={edit.openEditModal}
         openSignatureModal={() => setIsSignatureModalOpen(true)}
         configCabecera={organization?.config_cabecera_cliente}
+        campos={customFieldsConfig}
       />
 
       <div

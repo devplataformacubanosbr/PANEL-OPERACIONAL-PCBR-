@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { Loader2, Save, LayoutTemplate } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { getConfigCamposClientes } from '../../services/clientesService';
 
 const LOCAL_FIXED_FIELDS = [
   { id: 'cpf', name: 'CPF' },
@@ -30,9 +31,18 @@ export default function HeaderSettings() {
 
   const loadData = async () => {
     try {
-      // 1. Load Local Fields
-      const allLocalFields = LOCAL_FIXED_FIELDS.map(f => ({ ...f, type: 'fixed', group: 'Campos Principales' }));
-      setLocalFields(allLocalFields);
+      // 1. Load Local (fixed) fields + campos personalizados dinámicos —
+      // estos últimos ya se leen bien en ClientViewHeader (campos_personalizados
+      // JSONB), solo faltaba poder elegirlos acá.
+      const fixedFields = LOCAL_FIXED_FIELDS.map(f => ({ ...f, type: 'fixed', group: 'Campos Principales' }));
+      const customFields = await getConfigCamposClientes();
+      const customFieldsMapped = customFields.map(cf => ({
+        id: cf.identificador,
+        name: cf.nombre_campo,
+        type: 'custom',
+        group: cf.categoria || 'Campos Personalizados',
+      }));
+      setLocalFields([...fixedFields, ...customFieldsMapped]);
 
       // 2. Load Selected Configuration (empresa única, sin multi-tenant: fila
       // única de `configuracion_empresa`, igual que OrganizationContext/marcaService.js)
@@ -101,8 +111,8 @@ export default function HeaderSettings() {
 
       <div style={{ background: 'var(--color-bg-surface)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
         <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><LayoutTemplate size={18}/> Campos Disponibles</h3>
-        
-        {['Campos Principales'].map(group => {
+
+        {['Campos Principales', ...[...new Set(localFields.map(f => f.group))].filter(g => g !== 'Campos Principales')].map(group => {
            const groupFields = localFields.filter(f => f.group === group);
            if (groupFields.length === 0) return null;
            return (

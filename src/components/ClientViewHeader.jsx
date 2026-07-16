@@ -27,7 +27,7 @@ export default function ClientViewHeader({
      if (fieldId === 'creado_en') return 'Registrado';
      if (fieldId === 'carnet_identidad') return 'RG/ID';
      if (fieldId === 'id_kommo') return 'Kommo ID';
-     const customField = campos.find(c => c.id === fieldId);
+     const customField = campos.find(c => c.identificador === fieldId);
      return customField ? customField.nombre_campo : fieldId;
   };
 
