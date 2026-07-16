@@ -34,7 +34,7 @@ const DEFAULT_SIG_WIDTH = 0.3;
 const DEFAULT_SIG_HEIGHT = 0.12;
 const MIN_DRAG = 0.015;
 
-export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, clientId, onClose, onCropComplete }) {
+export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, clientId, isPdf = false, onClose, onCropComplete }) {
   const [activeTab, setActiveTab] = useState('crop'); // 'crop' | 'firma'
 
   const [crop, setCrop] = useState();
@@ -52,15 +52,57 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
   const isDraggingRef = useRef(false);
   const firmaImgRef = useRef(null);
 
+  // ── PDF: se rasteriza la página 1 para poder mostrarla/firmarla como imagen,
+  // y se recomponen el resto de páginas sin tocar al guardar.
+  const [pdfPageDataUrl, setPdfPageDataUrl] = useState(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+  const pdfBytesRef = useRef(null);
+
   React.useEffect(() => {
     if (isOpen) {
       setCustomName(initialDocName || 'Documento de Kommo');
-      setActiveTab('crop');
+      setActiveTab(isPdf ? 'firma' : 'crop');
       setPlacedFirmas([]);
       setSelectedSignature(null);
       setDragRect(null);
+      setPdfPageDataUrl(null);
     }
-  }, [isOpen, initialDocName]);
+  }, [isOpen, initialDocName, isPdf]);
+
+  useEffect(() => {
+    if (!isOpen || !isPdf || !imageUrl) return;
+    let cancelled = false;
+    setLoadingPdf(true);
+    (async () => {
+      try {
+        const pdfjsLib = await import('pdfjs-dist');
+        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+        }
+        const res = await fetch(imageUrl);
+        const arrayBuffer = await res.arrayBuffer();
+        pdfBytesRef.current = arrayBuffer;
+
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) });
+        const pdf = await loadingTask.promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 2 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        if (!cancelled) setPdfPageDataUrl(canvas.toDataURL('image/png'));
+      } catch (err) {
+        console.error('Error rasterizando PDF para firmar:', err);
+      } finally {
+        if (!cancelled) setLoadingPdf(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen, isPdf, imageUrl]);
 
   useEffect(() => {
     if (!isOpen || !clientId) return;
@@ -194,7 +236,72 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
     setDragRect(null);
   };
 
+  const handleSaveFirmaPdf = async () => {
+    if (!pdfBytesRef.current || placedFirmas.length === 0) {
+      onClose();
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      const { PDFDocument } = await import('pdf-lib');
+
+      // Re-rasterizar a buena resolución (no la miniatura que se ve en pantalla)
+      // para que la firma quede nítida en el PDF final.
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBytesRef.current.slice(0)) });
+      const srcPdf = await loadingTask.promise;
+      const page = await srcPdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2.2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      for (const firma of placedFirmas) {
+        const sigImg = await loadImageElement(firma.url);
+        ctx.drawImage(
+          sigImg,
+          firma.x * canvas.width,
+          firma.y * canvas.height,
+          firma.width * canvas.width,
+          firma.height * canvas.height
+        );
+      }
+
+      const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0));
+
+      const outDoc = await PDFDocument.create();
+      const embeddedImage = await outDoc.embedJpg(jpegBytes);
+      const pageSize = page.getViewport({ scale: 1 });
+      const outPage = outDoc.addPage([pageSize.width, pageSize.height]);
+      outPage.drawImage(embeddedImage, { x: 0, y: 0, width: pageSize.width, height: pageSize.height });
+
+      // El resto de páginas (si las hay) se copian tal cual, sin tocar.
+      if (srcPdf.numPages > 1) {
+        const originalDoc = await PDFDocument.load(pdfBytesRef.current.slice(0));
+        const remainingIndices = Array.from({ length: srcPdf.numPages - 1 }, (_, i) => i + 1);
+        const copiedPages = await outDoc.copyPages(originalDoc, remainingIndices);
+        copiedPages.forEach(p => outDoc.addPage(p));
+      }
+
+      const outBytes = await outDoc.save();
+      const blob = new Blob([outBytes], { type: 'application/pdf' });
+      const file = new File([blob], 'firmado_documento.pdf', { type: 'application/pdf' });
+      onCropComplete(file, customName);
+    } catch (err) {
+      console.error('Error firmando PDF:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleSaveFirma = async () => {
+    if (isPdf) return handleSaveFirmaPdf();
+
     if (!firmaImgRef.current) {
       onClose();
       return;
@@ -275,20 +382,22 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
         border: '1px solid var(--color-border, #333)'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0, color: 'var(--color-text-primary, #fff)', fontSize: '1.25rem' }}>Editar Imagen</h3>
+          <h3 style={{ margin: 0, color: 'var(--color-text-primary, #fff)', fontSize: '1.25rem' }}>{isPdf ? 'Firmar PDF' : 'Editar Imagen'}</h3>
           <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-muted, #999)', cursor: 'pointer' }}>
             <X size={24} />
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => setActiveTab('crop')} style={tabButtonStyle('crop')}>
-            <Crop size={14} /> Recortar
-          </button>
-          <button onClick={() => setActiveTab('firma')} style={tabButtonStyle('firma')}>
-            <PenTool size={14} /> Firmar
-          </button>
-        </div>
+        {!isPdf && (
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button onClick={() => setActiveTab('crop')} style={tabButtonStyle('crop')}>
+              <Crop size={14} /> Recortar
+            </button>
+            <button onClick={() => setActiveTab('firma')} style={tabButtonStyle('firma')}>
+              <PenTool size={14} /> Firmar
+            </button>
+          </div>
+        )}
 
         {activeTab === 'crop' ? (
           <div style={{
@@ -318,9 +427,14 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
           </div>
         ) : (
           <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', minHeight: '300px' }}>
-            {loadingSignatures ? (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--color-text-muted, #999)' }}>
+            {loadingSignatures || (isPdf && loadingPdf) ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: '0.5rem', color: 'var(--color-text-muted, #999)' }}>
                 <RefreshCw size={20} className="animate-spin" />
+                {isPdf && loadingPdf && <span style={{ fontSize: '0.8rem' }}>Preparando el PDF para firmar...</span>}
+              </div>
+            ) : isPdf && !pdfPageDataUrl ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--color-text-muted, #999)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                No se pudo preparar el PDF para firmar. Cerrá esta ventana y probá de nuevo.
               </div>
             ) : signatures.length === 0 ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--color-text-muted, #999)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
@@ -357,7 +471,7 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
                 >
                   <img
                     ref={firmaImgRef}
-                    src={imageUrl}
+                    src={isPdf ? pdfPageDataUrl : imageUrl}
                     alt="Documento"
                     crossOrigin="anonymous"
                     draggable={false}

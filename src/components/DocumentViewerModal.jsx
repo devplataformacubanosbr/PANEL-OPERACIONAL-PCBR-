@@ -113,7 +113,10 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
     const handleCropComplete = async (file, customName) => {
         setIsSavingCrop(true);
         try {
-            const ext = 'jpg';
+            // El archivo resultante puede ser un JPG (recorte/firma sobre imagen)
+            // o un PDF (firma sobre un PDF) — la extensión y el tipo guardado
+            // tienen que reflejar el archivo real, no asumir siempre imagen.
+            const ext = file.type === 'application/pdf' ? 'pdf' : 'jpg';
             const uniqueName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
             const clientId = doc.id_cliente || doc.cliente_id || 'unassigned';
 
@@ -129,12 +132,13 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
 
             const isUuid = typeof doc.id === 'string' && doc.id.includes('-');
             const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
-            
+
             const nameToSave = customName || currentName;
-            
-            const { error: updateError } = await supabase.from(table).update({ 
-                url_archivo: storagePath, 
-                nombre_archivo: nameToSave 
+
+            const { error: updateError } = await supabase.from(table).update({
+                url_archivo: storagePath,
+                nombre_archivo: nameToSave,
+                tipo_contenido: file.type,
             }).eq('id', doc.id);
 
             if (updateError) throw updateError;
@@ -483,11 +487,11 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
                                 <span>IA</span>
                             </button>
                         )}
-                        {isImage && (
+                        {(isImage || isPdf) && (
                             <button
                                 className="btn btn-secondary btn-sm"
                                 onClick={(e) => { e.stopPropagation(); setIsCropping(true); }}
-                                title="Editar (Recortar / Girar)"
+                                title={isImage ? 'Editar (Recortar / Firmar)' : 'Firmar PDF'}
                                 style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
                             >
                                 <Crop size={14} />
@@ -745,6 +749,7 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
                 imageUrl={currentUrl}
                 initialDocName={currentName}
                 clientId={doc?.id_cliente || doc?.cliente_id}
+                isPdf={isPdf}
                 onClose={() => setIsCropping(false)}
                 onCropComplete={handleCropComplete}
             />
