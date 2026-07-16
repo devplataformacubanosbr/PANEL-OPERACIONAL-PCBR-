@@ -25,6 +25,16 @@ const MISSING_TABLE_CODE = '42P01';
 // Postgres no garantiza el mismo orden entre una página y la siguiente —
 // eso hacía que algunas entradas se salteen o se dupliquen entre .range()
 // sucesivos y terminaran faltando en el pipeline. `id` desempata siempre.
+// El Kanban solo pinta/busca sobre estos campos (ver KanbanCard, CardDetailPanel,
+// filteredEntradas más abajo) — traer `select('*')` con clientes(*) completo carga
+// de más por cada una de las ~3000 entradas, incluyendo el JSONB campos_personalizados
+// de cada cliente entero, que acá nunca se usa.
+// Ojo: si alguna vez se activa una automatización de tipo "send_webhook" (ver
+// pipelineService.js runStageAutomations), esa reenvía `entrada`/`entrada.clientes`
+// completos al webhook externo del usuario — habría que ampliar este select si
+// ese webhook necesita más campos de los que trae acá.
+const ENTRADAS_SELECT = 'id, id_cliente, cliente, nombre_pix, servicio, operario, observaciones, valor, etiquetas_ids, creado_en, stage_id, pipeline_id, clientes(id, nombre, cpf, telefono, email, ciudad, estado_federal, estado, nacionalidad)';
+
 async function fetchAllEntradas(pipelineId) {
   const PAGE_SIZE = 1000;
   let all = [];
@@ -32,7 +42,7 @@ async function fetchAllEntradas(pipelineId) {
   for (;;) {
     const { data, error } = await supabase
       .from('entradas')
-      .select('*, clientes(*)')
+      .select(ENTRADAS_SELECT)
       .eq('pipeline_id', pipelineId)
       .order('creado_en', { ascending: false })
       .order('id', { ascending: false })
