@@ -4,10 +4,42 @@ import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { chat } from '../services/aiService';
 import { fetchClientEmails, sendGmailEmail, clearProviderToken, downloadAttachment } from '../services/gmailService';
+import { getSignedUrl } from '../services/storageService';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import AutocompleteTextarea from './ui/AutocompleteTextarea';
 import { useAuth } from '../features/auth/context/AuthContext';
+
+// Un adjunto puede venir de un <input type="file"> (adj.data es un File real)
+// o de arrastrar un documento desde Biblioteca/Documentos (dataTransfer solo
+// puede llevar JSON, nunca un File, así que ahí solo tenemos adj.url — y esa
+// url es una ruta relativa dentro del bucket privado, no una URL usable
+// directamente, hay que resolverla primero).
+async function resolveAttachmentToBase64(adj) {
+  if (adj.data instanceof File) {
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(adj.data);
+    });
+    return { nombre: adj.nombre, mimeType: adj.data.type || 'application/octet-stream', base64Data };
+  }
+  if (adj.url) {
+    const resolvedUrl = await getSignedUrl(adj.url);
+    const response = await fetch(resolvedUrl);
+    if (!response.ok) throw new Error(`No se pudo descargar "${adj.nombre}"`);
+    const blob = await response.blob();
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    return { nombre: adj.nombre, mimeType: adj.tipo || blob.type || 'application/octet-stream', base64Data };
+  }
+  return null;
+}
 
 export default function ClientEmail({ clientId, clientName, clientEmail, tramitesContext }) {
   const { loginWithGoogle, session } = useAuth();
@@ -319,22 +351,12 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
       // Convertir archivos a base64
       const processedAdjuntos = [];
       for (const adj of adjuntos) {
-        if (adj.data instanceof File) {
-          const base64Data = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              // result es "data:image/png;base64,iVBORw0..."
-              const b64 = reader.result.split(',')[1];
-              resolve(b64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(adj.data);
-          });
-          processedAdjuntos.push({
-            nombre: adj.nombre,
-            mimeType: adj.data.type || 'application/octet-stream',
-            base64Data
-          });
+        try {
+          const processed = await resolveAttachmentToBase64(adj);
+          if (processed) processedAdjuntos.push(processed);
+        } catch (err) {
+          console.error('Error procesando adjunto:', adj.nombre, err);
+          toast.error(`No se pudo adjuntar "${adj.nombre}", se sigue sin él`);
         }
       }
 
@@ -380,11 +402,13 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
       if (dataStr) {
         const data = JSON.parse(dataStr);
         if (data.type === 'media_library_item' || data.type === 'document_copy') {
+          // dataTransfer solo puede llevar JSON, nunca un File real — el
+          // contenido se descarga recién al enviar (ver resolveAttachmentToBase64),
+          // resolviendo esta url (ruta relativa del bucket privado) a una firmada.
           setAdjuntos(prev => [...prev, {
             url: data.url,
             nombre: data.nombre,
             tipo: data.tipo || 'application/pdf',
-            data: data.file // Assuming a File object is passed or we'll fetch it if needed
           }]);
         }
       }
@@ -983,21 +1007,12 @@ export default function ClientEmail({ clientId, clientName, clientEmail, tramite
                                       // Procesar adjuntos
                                       const processedAdjuntos = [];
                                       for (const adj of quickReplyAdjuntos) {
-                                        if (adj.data instanceof File) {
-                                          const base64Data = await new Promise((resolve, reject) => {
-                                            const reader = new FileReader();
-                                            reader.onload = () => {
-                                              const b64 = reader.result.split(',')[1];
-                                              resolve(b64);
-                                            };
-                                            reader.onerror = reject;
-                                            reader.readAsDataURL(adj.data);
-                                          });
-                                          processedAdjuntos.push({
-                                            nombre: adj.nombre,
-                                            mimeType: adj.data.type || 'application/octet-stream',
-                                            base64Data
-                                          });
+                                        try {
+                                          const processed = await resolveAttachmentToBase64(adj);
+                                          if (processed) processedAdjuntos.push(processed);
+                                        } catch (err) {
+                                          console.error('Error procesando adjunto:', adj.nombre, err);
+                                          toast.error(`No se pudo adjuntar "${adj.nombre}", se sigue sin él`);
                                         }
                                       }
 
