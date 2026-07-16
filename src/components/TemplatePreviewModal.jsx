@@ -25,6 +25,11 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
   const [pdfPageImage, setPdfPageImage] = useState(null);
   const [isExtractingPdf, setIsExtractingPdf] = useState(false);
 
+  // "Efecto de hoja escaneada" — solo se aplica al PDF final (descarga +
+  // guardado), no a la vista previa en vivo, para no pagar el costo de
+  // rasterizar+recomponer en cada edición de un campo.
+  const [scanEffect, setScanEffect] = useState(false);
+
   const pdfContainerRef = useRef(null);
 
   useEffect(() => {
@@ -98,7 +103,13 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
   const handleGenerateFinal = async () => {
     setGenerating(true);
     try {
-      const blob = await getFilledPdfBlob(template.url_archivo, localMappings, client, editableValues, placedSignatures);
+      let blob = await getFilledPdfBlob(template.url_archivo, localMappings, client, editableValues, placedSignatures);
+
+      if (scanEffect) {
+        const { applyScannedLook } = await import('../services/templateService');
+        blob = await applyScannedLook(await blob.arrayBuffer());
+      }
+
       const url = URL.createObjectURL(blob);
 
       const filename = `${template.nombre.replace(/\.[^/.]+$/, "")}_${client.nombre || 'documento'}.pdf`;
@@ -263,7 +274,15 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
             {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
             Actualizar Vista
           </button>
-          
+
+          <label
+            title="Rasteriza el PDF final con leve rotación, grano y viñeta para que se vea como una hoja escaneada en vez de un PDF digital."
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: 'var(--color-text-secondary)', cursor: 'pointer', userSelect: 'none' }}
+          >
+            <input type="checkbox" checked={scanEffect} onChange={(e) => setScanEffect(e.target.checked)} style={{ width: '1rem', height: '1rem', cursor: 'pointer' }} />
+            Efecto escaneado
+          </label>
+
           <button
             onClick={handleGenerateFinal}
             disabled={loading || generating}

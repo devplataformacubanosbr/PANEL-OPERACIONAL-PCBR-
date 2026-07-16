@@ -819,6 +819,113 @@ export async function renderPdfPageAsImage(url, pageNum = 1, scale = 2) {
 }
 
 // ──────────────────────────────────────────────
+// Efecto "hoja escaneada" — post-procesa un PDF ya generado (con datos y
+// firma insertados) para que se vea como una hoja física escaneada en vez
+// de un PDF digital prolijo: leve rotación, desenfoque, grano, viñeta y
+// recompresión JPEG. Rasteriza cada página y arma un PDF nuevo con esas
+// imágenes — el resultado ya NO tiene texto seleccionable, como cualquier
+// escaneo real.
+// ──────────────────────────────────────────────
+function applyScanTextureToCanvas(sourceCanvas) {
+  const { width, height } = sourceCanvas;
+  const angle = (Math.random() * 2.2 - 1.1) * (Math.PI / 180); // -1.1° a 1.1°
+
+  const out = document.createElement('canvas');
+  out.width = width;
+  out.height = height;
+  const octx = out.getContext('2d');
+
+  // Fondo "papel" por si la rotación deja bordes al descubierto
+  octx.fillStyle = '#f6f4ee';
+  octx.fillRect(0, 0, width, height);
+
+  octx.translate(width / 2, height / 2);
+  octx.rotate(angle);
+  octx.drawImage(sourceCanvas, -width / 2, -height / 2);
+  octx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // Desenfoque leve: una segunda pasada levemente desplazada y semitransparente
+  octx.globalAlpha = 0.35;
+  octx.drawImage(out, 0.6, 0.5);
+  octx.drawImage(out, -0.5, -0.4);
+  octx.globalAlpha = 1;
+
+  // Contraste/brillo + tono cálido de papel + grano, todo por píxel
+  const imageData = octx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const contrast = 0.93;
+  const brightness = 5;
+  for (let i = 0; i < data.length; i += 4) {
+    let r = data[i], g = data[i + 1], b = data[i + 2];
+    r = (r - 128) * contrast + 128 + brightness + 3;
+    g = (g - 128) * contrast + 128 + brightness + 1;
+    b = (b - 128) * contrast + 128 + brightness - 5;
+    const noise = (Math.random() - 0.5) * 12;
+    data[i] = Math.max(0, Math.min(255, r + noise));
+    data[i + 1] = Math.max(0, Math.min(255, g + noise));
+    data[i + 2] = Math.max(0, Math.min(255, b + noise));
+  }
+  octx.putImageData(imageData, 0, 0);
+
+  // Viñeta suave en los bordes, como la sombra de la tapa de un scanner
+  const gradient = octx.createRadialGradient(
+    width / 2, height / 2, Math.min(width, height) * 0.5,
+    width / 2, height / 2, Math.max(width, height) * 0.75
+  );
+  gradient.addColorStop(0, 'rgba(0,0,0,0)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0.12)');
+  octx.fillStyle = gradient;
+  octx.fillRect(0, 0, width, height);
+
+  return out;
+}
+
+/**
+ * Rasteriza cada página de un PDF ya generado y le aplica una textura de
+ * "hoja escaneada" (rotación, grano, viñeta, recompresión JPEG).
+ * @param {Uint8Array|ArrayBuffer} pdfBytes
+ * @returns {Promise<Blob>} Nuevo PDF (application/pdf)
+ */
+export async function applyScannedLook(pdfBytes) {
+  const pdfjsLib = await import('pdfjs-dist');
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+  }
+
+  const data = pdfBytes instanceof Uint8Array ? pdfBytes : new Uint8Array(pdfBytes);
+  const loadingTask = pdfjsLib.getDocument({ data });
+  const srcPdf = await loadingTask.promise;
+
+  const outDoc = await PDFDocument.create();
+  const scale = 2.2;
+
+  for (let i = 1; i <= srcPdf.numPages; i++) {
+    const page = await srcPdf.getPage(i);
+    const renderViewport = page.getViewport({ scale });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = renderViewport.width;
+    canvas.height = renderViewport.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
+
+    const scannedCanvas = applyScanTextureToCanvas(canvas);
+    const jpegDataUrl = scannedCanvas.toDataURL('image/jpeg', 0.82);
+    const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0));
+    const embeddedImage = await outDoc.embedJpg(jpegBytes);
+
+    const pageSize = page.getViewport({ scale: 1 });
+    const outPage = outDoc.addPage([pageSize.width, pageSize.height]);
+    outPage.drawImage(embeddedImage, { x: 0, y: 0, width: pageSize.width, height: pageSize.height });
+  }
+
+  const outBytes = await outDoc.save();
+  return new Blob([outBytes], { type: 'application/pdf' });
+}
+
+// ──────────────────────────────────────────────
 // 6. Generar Documento (.docx)
 // ──────────────────────────────────────────────
 import PizZip from 'pizzip';
