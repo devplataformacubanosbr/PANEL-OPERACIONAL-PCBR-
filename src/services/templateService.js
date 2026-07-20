@@ -307,7 +307,7 @@ export async function deleteTemplate(template) {
 // ──────────────────────────────────────────────
 export async function analyzeTemplateWithAI(imageBase64) {
   const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
-  const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct';
+  const MODEL_VISION = 'llama-3.2-90b-vision-preview';
 
   const key = import.meta.env['VITE_GROQ_API_' + 'KEY'];
   if (!key) throw new Error('No Groq API Key configurada.');

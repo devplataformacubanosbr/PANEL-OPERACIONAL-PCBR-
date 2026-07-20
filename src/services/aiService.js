@@ -16,7 +16,7 @@ import { resizeImageToBase64 } from '../utils/canvasUtils';
 
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'llama-3.3-70b-versatile';   // Texto / razonamiento general
-const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct'; // Visión + OCR
+const MODEL_VISION = 'llama-3.2-90b-vision-preview'; // Visión + OCR
 
 // La API Key ya no se expone aquí. Ahora usamos Supabase Edge Functions.
 
