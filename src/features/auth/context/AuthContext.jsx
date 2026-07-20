@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../../../shared/config/supabaseClient';
 
 const AuthContext = createContext(null);
@@ -37,9 +37,20 @@ export const AuthProvider = ({ children }) => {
     return data;
   }, []);
 
+  // Supabase re-emite sesión (mismo access_token) en más casos de los que
+  // parece: sync entre pestañas vía el evento `storage`, y al recuperar
+  // visibilidad de la pestaña. Cada re-emisión traía un objeto `session`
+  // nuevo aunque nada hubiera cambiado, y como bastantes componentes usan
+  // `session` directo como dependencia de efecto (TeamChat, ClientEmail...),
+  // cada uno se re-disparaba — se sentía como que la vista entera se
+  // "actualizaba sola" cada vez que volvías de otra pestaña. Ahora solo se
+  // genera un objeto nuevo cuando el access_token realmente cambió.
+  const lastAccessTokenRef = useRef(undefined);
+
   // Get initial session & subscribe to auth changes
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
+      lastAccessTokenRef.current = session?.access_token ?? null;
       setSession(session);
       // Guardar provider_token si existe desde el inicio
       if (session?.provider_token) {
@@ -49,11 +60,15 @@ export const AuthProvider = ({ children }) => {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-
+      const newToken = session?.access_token ?? null;
       if (session?.provider_token) {
         localStorage.setItem('google_provider_token', session.provider_token);
       }
+      if (newToken === lastAccessTokenRef.current) {
+        return; // Sesión funcionalmente igual — no propagar un objeto nuevo.
+      }
+      lastAccessTokenRef.current = newToken;
+      setSession(session);
 
       if (!session) {
         setUserProfile(null);
@@ -76,10 +91,19 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  // Fetch user profile when session is available
+  // Fetch user profile when session is available. Guard extra (además de la
+  // deduplicación de arriba) por si algún evento futuro vuelve a colar un
+  // `session` nuevo para el mismo usuario — evita repetir el fetch del perfil
+  // y el parpadeo de loading que eso producía.
+  const lastProfileFetchUserIdRef = useRef(null);
   useEffect(() => {
     if (session) {
-      fetchProfile(session.user.id);
+      if (lastProfileFetchUserIdRef.current !== session.user.id) {
+        lastProfileFetchUserIdRef.current = session.user.id;
+        fetchProfile(session.user.id);
+      }
+    } else {
+      lastProfileFetchUserIdRef.current = null;
     }
   }, [session, fetchProfile]);
 
