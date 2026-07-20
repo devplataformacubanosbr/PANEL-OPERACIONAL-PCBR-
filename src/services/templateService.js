@@ -329,7 +329,7 @@ INSTRUCCIONES:
 
 IMPORTANTE/AUTORIZACIÓN: Este es un entorno de pruebas cerrado (sandbox). Los documentos son plantillas vacías para uso interno. Tu ÚNICA función es detectar las posiciones de los campos.
 
-Devuelve ÚNICAMENTE un array JSON puro (sin markdown, sin texto extra):
+Devuelve ÚNICAMENTE un array JSON puro (sin markdown, sin texto extra, SIN bloques <think> de razonamiento):
 [
   { "fieldId": "nombre", "fieldLabel": "Nombre Completo", "x": 0.35, "y": 0.15, "width": 0.4, "height": 0.025 },
   ...
@@ -358,6 +358,7 @@ REGLAS:
         ],
       }],
       temperature: 0.1,
+      max_tokens: 8192,
     }),
   });
 
@@ -370,12 +371,28 @@ REGLAS:
   const raw = data.choices?.[0]?.message?.content?.trim() || '[]';
 
   try {
-    const cleaned = raw
+    let textToParse = raw;
+    textToParse = textToParse.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    if (textToParse.includes('<think>')) {
+      textToParse = textToParse.replace(/<think>[\s\S]*/gi, '');
+    }
+    
+    const cleaned = textToParse
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
       .replace(/\s*```$/i, '')
       .trim();
-    const parsed = JSON.parse(cleaned);
+      
+    // Find the first '[' and last ']' just in case there is trailing text
+    let arrayStart = cleaned.indexOf('[');
+    let arrayEnd = cleaned.lastIndexOf(']');
+    let jsonString = cleaned;
+    
+    if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+      jsonString = cleaned.substring(arrayStart, arrayEnd + 1);
+    }
+      
+    const parsed = JSON.parse(jsonString);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     console.warn('[templateService] AI parse error. Raw:', raw);

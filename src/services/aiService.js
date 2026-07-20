@@ -30,7 +30,7 @@ const MODEL_VISION = 'Qwen/Qwen3.6-27B'; // Visión + OCR
 async function callGroq(model, messages, temperature = 0.1) {
   try {
     const { data, error } = await supabase.functions.invoke('ai-proxy', {
-      body: { model, messages, temperature }
+      body: { model, messages, temperature, max_tokens: 8192 }
     });
 
     if (error) throw error;
@@ -53,20 +53,29 @@ async function callGroq(model, messages, temperature = 0.1) {
   }
 }
 
-/** Limpia JSON que el modelo a veces envuelve en ```json ... ``` */
+/** Limpia JSON que el modelo a veces envuelve en ```json ... ``` y remueve bloques <think> */
 function cleanJson(raw) {
+  let cleaned = raw;
+  // Remover bloques <think> completos
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // Si quedó un <think> sin cerrar (modelo cortado), remover desde ahí hasta el final
+  if (cleaned.includes('<think>')) {
+    cleaned = cleaned.replace(/<think>[\s\S]*/gi, '');
+  }
+  cleaned = cleaned.trim();
+
   // Intentar encontrar un bloque de código JSON
-  const match = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const match = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (match) {
     return match[1].trim();
   }
   // Si no hay bloque, intentar encontrar el primer '{' y el último '}'
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
   if (start !== -1 && end !== -1 && end > start) {
-    return raw.substring(start, end + 1).trim();
+    return cleaned.substring(start, end + 1).trim();
   }
-  return raw.trim();
+  return cleaned;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -147,7 +156,7 @@ REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
    No repitas ahí un dato que ya pusiste en un campo fijo de arriba. Si no hay
    ningún dato adicional, deja "CAMPOS_ADICIONALES" como un objeto vacío {}.
 
-Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra) con estos campos:
+Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra, SIN bloques <think> de razonamiento) con estos campos:
 {
   "TIPO_DOCUMENTO": null,
   "NOMBRE_COMPLETO": null,
