@@ -29,27 +29,33 @@ const MODEL_VISION = 'meta-llama/llama-4-scout-17b-16e-instruct'; // Visión + O
  */
 async function callGroq(model, messages, temperature = 0.1) {
   try {
-    const { data, error } = await supabase.functions.invoke('ai-proxy', {
-      body: { model, messages, temperature, max_tokens: 8192 }
+    const apiKey = import.meta.env.VITE_GROQ_API_KEY;
+    if (!apiKey) throw new Error('No Groq API Key configurada en VITE_GROQ_API_KEY.');
+
+    const res = await fetch(GROQ_BASE_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens: 8192
+      })
     });
 
-    if (error) throw error;
-    if (data?.error) throw new Error(data.error);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error?.message || `HTTP ${res.status}`);
+    }
 
+    const data = await res.json();
     return data?.choices?.[0]?.message?.content?.trim() || '';
   } catch (err) {
-    // supabase-js reduce el body de la Edge Function a un mensaje genérico
-    // ("Edge Function returned a non-2xx status code"); el detalle real viaja en
-    // err.context (el Response crudo), que la función ai-proxy llena con { error }.
-    let detail = err.message;
-    if (err?.context?.json) {
-      try {
-        const body = await err.context.json();
-        if (body?.error) detail = body.error;
-      } catch { /* el body no era JSON, nos quedamos con el mensaje genérico */ }
-    }
-    console.error("AI Proxy Error:", detail);
-    throw new Error(`Error en el servicio de IA: ${detail}`);
+    console.error("AI Direct Fetch Error:", err.message);
+    throw new Error(`Error en el servicio de IA: ${err.message}`);
   }
 }
 
