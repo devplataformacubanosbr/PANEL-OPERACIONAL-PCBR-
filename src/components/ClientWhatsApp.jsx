@@ -320,20 +320,31 @@ export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
     if (!files.length) return;
 
     const newMediaList = [];
-    let processed = 0;
+    let settled = 0;
 
     files.forEach(file => {
       const reader = new FileReader();
+      const finish = () => {
+        settled++;
+        if (settled === files.length && newMediaList.length) {
+          setMediaToSend(prev => [...prev, ...newMediaList]);
+        }
+      };
       reader.onload = (event) => {
         newMediaList.push({
           url: event.target.result,
           nombre: file.name,
           tipo: file.type || 'document'
         });
-        processed++;
-        if (processed === files.length) {
-          setMediaToSend(prev => [...prev, ...newMediaList]);
-        }
+        finish();
+      };
+      // Sin este handler, un solo archivo que falle al leerse (ej. permisos,
+      // archivo corrupto) dejaba `settled` sin llegar nunca a files.length —
+      // el resto de los archivos seleccionados quedaba leído en memoria pero
+      // jamás se agregaba a mediaToSend, y el botón de clip parecía "no hacer nada".
+      reader.onerror = () => {
+        toast.error(`No se pudo leer ${file.name}`);
+        finish();
       };
       reader.readAsDataURL(file);
     });
@@ -509,7 +520,15 @@ export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
             const audioObj = {
               url: event.target.result,
               nombre: `Audio_${new Date().getTime()}.ogg`,
-              tipo: mimeType
+              // El navegador graba en audio/webm;codecs=opus (Chrome/Edge no
+              // soportan grabar directo a ogg), pero declararle eso a Evolution
+              // API/Baileys hacía que la nota de voz llegara rota o no
+              // reproducible en WhatsApp. Baileys espera que un audio "ptt" se
+              // declare como audio/ogg;codecs=opus (mismo códec Opus, solo
+              // cambia el contenedor declarado) — el nombre de archivo ya
+              // decía .ogg, esto solo hace que el mimetype declarado sea
+              // consistente con eso.
+              tipo: 'audio/ogg; codecs=opus'
             };
             // Enviar inmediatamente el audio
             await sendMediaToApi(audioObj);

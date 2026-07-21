@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Upload, Trash2, Loader2, FileVideo, ChevronDown, ChevronUp, Search, AlignLeft, Plus, Copy, X, FileText, Image as ImageIcon, Download } from 'lucide-react';
-import { getMediaLibrary, uploadMedia, deleteMedia, addTemplate } from '../services/mediaLibraryService';
+import { getMediaLibrary, uploadMedia, deleteMedia, addTemplate, resolveMediaUrl } from '../services/mediaLibraryService';
 import toast from 'react-hot-toast';
 import { createPortal } from 'react-dom';
 
@@ -8,6 +8,7 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
   const [activeTab, setActiveTab] = useState('audios');
   const [isSectionExpanded, setIsSectionExpanded] = useState(defaultExpanded);
   const [mediaItems, setMediaItems] = useState([]);
+  const [resolvedUrls, setResolvedUrls] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -24,7 +25,16 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
   const fetchMedia = async () => {
     setLoading(true);
     const { data } = await getMediaLibrary();
-    if (data) setMediaItems(data);
+    if (data) {
+      setMediaItems(data);
+      // El bucket es privado — url_archivo es una ruta relativa (o una URL
+      // pública vieja), hay que resolverla a una URL firmada para poder
+      // reproducir/descargar/arrastrar el archivo.
+      const entries = await Promise.all(
+        data.map(async (item) => [item.id, await resolveMediaUrl(item)])
+      );
+      setResolvedUrls(Object.fromEntries(entries));
+    }
     setLoading(false);
   };
 
@@ -86,11 +96,12 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
   };
 
   const handleDragStart = (e, item) => {
-    e.dataTransfer.setData('text/plain', item.url_archivo);
+    const url = resolvedUrls[item.id] || item.url_archivo;
+    e.dataTransfer.setData('text/plain', url);
     e.dataTransfer.setData('application/json', JSON.stringify({
       type: 'media_library_item',
       nombre: item.nombre,
-      url: item.url_archivo,
+      url,
       tipo: item.tipo_contenido
     }));
     e.dataTransfer.effectAllowed = 'copy';
@@ -255,8 +266,10 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
 
             {!loading && filteredItems.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {filteredItems.map((item) => (
-                  <div 
+                {filteredItems.map((item) => {
+                const itemUrl = resolvedUrls[item.id] || item.url_archivo;
+                return (
+                  <div
                     key={item.id}
                     draggable
                     onDragStart={(e) => handleDragStart(e, item)}
@@ -284,9 +297,9 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
                           <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {item.nombre}
                           </span>
-                          <audio 
-                            controls 
-                            src={item.url_archivo} 
+                          <audio
+                            controls
+                            src={itemUrl}
                             style={{ height: '28px', maxWidth: '100%' }} 
                             onPlay={(e) => {
                               const audios = document.getElementsByTagName('audio');
@@ -301,7 +314,7 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
                         </div>
                       ) : activeTab === 'videos' ? (
                         <a
-                          href={item.url_archivo}
+                          href={itemUrl}
                           target="_blank"
                           rel="noreferrer"
                           style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--color-text-secondary)', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
@@ -310,13 +323,13 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
                         </a>
                       ) : activeTab === 'imagenes' ? (
                         <a
-                          href={item.url_archivo}
+                          href={itemUrl}
                           target="_blank"
                           rel="noreferrer"
                           style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden', textDecoration: 'none' }}
                         >
                           <img
-                            src={item.url_archivo}
+                            src={itemUrl}
                             alt={item.nombre}
                             style={{ width: '32px', height: '32px', borderRadius: '4px', objectFit: 'cover', flexShrink: 0 }}
                           />
@@ -326,7 +339,7 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
                         </a>
                       ) : activeTab === 'documentos' ? (
                         <a
-                          href={item.url_archivo}
+                          href={itemUrl}
                           target="_blank"
                           rel="noreferrer"
                           style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', fontWeight: 500, color: 'var(--color-text-secondary)', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
@@ -369,7 +382,8 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
                     </button>
                   </div>
                 </div>
-                ))}
+                );
+                })}
               </div>
             )}
           </div>

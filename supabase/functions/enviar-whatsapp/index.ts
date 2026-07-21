@@ -104,11 +104,20 @@ serve(async (req) => {
         ? `${baseUrl}/message/sendMedia/${integracion.instancia}`
         : `${baseUrl}/message/sendText/${integracion.instancia}`
 
+      let mediaPayload = payload.media_url;
+      if (mediaPayload.startsWith('data:')) {
+        const parts = mediaPayload.split(',');
+        mediaPayload = parts.length > 1 ? parts[1] : mediaPayload;
+      } else if (mediaPayload.startsWith('http')) {
+        mediaPayload = encodeURI(mediaPayload);
+      }
+
       const body = payload.media_url
         ? {
             number: cliente.telefono,
             mediatype: (payload.media_type || '').startsWith('audio/') ? 'audio' : (payload.media_type || '').startsWith('image/') ? 'image' : 'document',
-            media: payload.media_url.replace(/^data:.*?;base64,/, ''),
+            mimetype: payload.media_type || undefined,
+            media: mediaPayload,
             fileName: payload.media_name || undefined,
             caption: payload.texto || undefined,
           }
