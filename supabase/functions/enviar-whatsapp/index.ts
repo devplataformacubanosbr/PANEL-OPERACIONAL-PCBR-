@@ -83,12 +83,15 @@ serve(async (req) => {
       // Servidor compartido del SaaS: la URL/key reales viven en los secrets
       // globales del backend, no en la fila de integraciones_whatsapp
       // (que guarda 'internal' como placeholder — ver evolution-manager).
-      const baseUrl = integracion.proveedor === 'evolution_compartido'
+      const rawBaseUrl = integracion.proveedor === 'evolution_compartido'
         ? Deno.env.get('EVOLUTION_API_URL')
         : integracion.api_url;
-      const apiKey = integracion.proveedor === 'evolution_compartido'
+      const rawApiKey = integracion.proveedor === 'evolution_compartido'
         ? Deno.env.get('EVOLUTION_API_KEY')
         : integracion.api_key;
+
+      const baseUrl = rawBaseUrl?.trim().replace(/\/$/, '');
+      const apiKey = rawApiKey?.trim();
 
       if (!baseUrl || !apiKey) {
         throw new Error('Evolution API no configurada.')
@@ -105,7 +108,7 @@ serve(async (req) => {
         ? {
             number: cliente.telefono,
             mediatype: (payload.media_type || '').startsWith('audio/') ? 'audio' : (payload.media_type || '').startsWith('image/') ? 'image' : 'document',
-            media: payload.media_url,
+            media: payload.media_url.replace(/^data:.*?;base64,/, ''),
             fileName: payload.media_name || undefined,
             caption: payload.texto || undefined,
           }
