@@ -347,30 +347,31 @@ export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
     setSending(true);
     setShowEmojiPicker(false);
     const texto = newMessage.trim();
+
+    const outgoingMsg = {
+      id: 'temp-' + Date.now(),
+      cliente_id: activeChatId,
+      texto,
+      remitente: 'outgoing',
+      fecha_recepcion: new Date().toISOString()
+    };
+
+    // Actualización optimista de la UI inmediatamente
+    setMessages(prev => [...prev, outgoingMsg]);
+    setNewMessage('');
+
     try {
       const { data, error } = await supabase.functions.invoke('enviar-whatsapp', {
         body: { cliente_id: activeChatId, texto }
       });
       if (error) throw new Error(await extractFunctionErrorMessage(error));
       if (data?.error) throw new Error(data.error);
-
-      const outgoingMsg = {
-        id: 'temp-' + Date.now(),
-        cliente_id: activeChatId,
-        texto,
-        remitente: 'outgoing',
-        fecha_recepcion: new Date().toISOString()
-      };
-
-      // Actualización optimista de la UI; la edge function ya insertó el
-      // registro real en `mensajes` — el canal de realtime lo trae y
-      // reemplaza este mensaje temporal.
-      setMessages(prev => [...prev, outgoingMsg]);
-      setNewMessage('');
-      toast.success('Mensaje enviado');
     } catch (err) {
       console.error('Error enviando mensaje:', err);
       toast.error('Error al enviar mensaje: ' + err.message);
+      // Revertir en caso de error
+      setMessages(prev => prev.filter(m => m.id !== outgoingMsg.id));
+      setNewMessage(texto);
     } finally {
       setSending(false);
     }
@@ -378,6 +379,22 @@ export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
 
   const sendMediaToApi = async (mediaObj) => {
     setSending(true);
+    
+    const isAudio = mediaObj.tipo?.startsWith('audio/');
+    const outgoingMsg = {
+      id: 'temp-media-' + Date.now(),
+      cliente_id: activeChatId,
+      texto: `[${isAudio ? 'Audio' : 'Archivo'} enviado] ${mediaObj.nombre}`,
+      remitente: 'outgoing',
+      fecha_recepcion: new Date().toISOString(),
+      media_url: mediaObj.url,
+      media_name: mediaObj.nombre,
+      media_type: mediaObj.tipo
+    };
+
+    // Actualización optimista de la UI inmediatamente
+    setMessages(prev => [...prev, outgoingMsg]);
+
     try {
       const { data, error } = await supabase.functions.invoke('enviar-whatsapp', {
         body: {
@@ -390,26 +407,12 @@ export default function ClientWhatsApp({ clientId, telefono, idKommo }) {
       if (error) throw new Error(await extractFunctionErrorMessage(error));
       if (data?.error) throw new Error(data.error);
 
-      const isAudio = mediaObj.tipo?.startsWith('audio/');
-      const outgoingMsg = {
-        id: 'temp-media-' + Date.now(),
-        cliente_id: activeChatId,
-        texto: `[${isAudio ? 'Audio' : 'Archivo'} enviado] ${mediaObj.nombre}`,
-        remitente: 'outgoing',
-        fecha_recepcion: new Date().toISOString(),
-        media_url: mediaObj.url,
-        media_name: mediaObj.nombre,
-        media_type: mediaObj.tipo
-      };
-
-      // Actualización optimista de la UI; la edge function ya insertó el
-      // registro real en `mensajes` — el canal de realtime lo trae y
-      // reemplaza este mensaje temporal.
-      setMessages(prev => [...prev, outgoingMsg]);
       toast.success(`${isAudio ? 'Audio' : 'Archivo'} enviado con éxito`);
     } catch (err) {
       console.error('Error enviando archivo:', err);
       toast.error('Error al enviar archivo: ' + err.message);
+      // Revertir en caso de error
+      setMessages(prev => prev.filter(m => m.id !== outgoingMsg.id));
     } finally {
       setSending(false);
     }

@@ -27,10 +27,20 @@ const MODEL_VISION = 'qwen/qwen3.6-27b'; // Visión + OCR
  * @param {number} temperature
  * @returns {Promise<string>} contenido del mensaje del asistente
  */
-async function callGroq(model, messages, temperature = 0.1) {
+async function callGroq(model, messages, temperature = 0.1, responseFormat = null) {
   try {
     const apiKey = import.meta.env.VITE_GROQ_API_KEY;
     if (!apiKey) throw new Error('No Groq API Key configurada en VITE_GROQ_API_KEY.');
+
+    const bodyData = {
+      model,
+      messages,
+      temperature,
+      max_tokens: 8192
+    };
+    if (responseFormat) {
+      bodyData.response_format = responseFormat;
+    }
 
     const res = await fetch(GROQ_BASE_URL, {
       method: 'POST',
@@ -38,12 +48,7 @@ async function callGroq(model, messages, temperature = 0.1) {
         'Authorization': 'Bearer ' + apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature,
-        max_tokens: 8192
-      })
+      body: JSON.stringify(bodyData)
     });
 
     if (!res.ok) {
@@ -194,7 +199,8 @@ Usa null para los campos que no estén visibles en el documento. No inventes dat
         { type: 'image_url', image_url: { url: base64 } },
       ],
     }],
-    0.1
+    0.1,
+    { type: "json_object" }
   );
 
   try {

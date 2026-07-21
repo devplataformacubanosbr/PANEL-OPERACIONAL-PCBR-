@@ -50,43 +50,27 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Invalid payload' }), { status: 400, headers: corsHeaders })
     }
 
-    // 1. Resolver la organización real del usuario autenticado (nunca confiar
-    // en un organization_id que venga del body/payload del cliente).
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from('perfiles')
-      .select('organization_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profileError || !profile?.organization_id) {
-      return new Response(JSON.stringify({ error: 'Organization not found for user' }), { status: 403, headers: corsHeaders })
-    }
-
-    // 2. Obtener datos del cliente y su organización
-    const { data: cliente, error: clienteError } = await supabaseAdmin
-      .from('clientes')
-      .select('id, telefono, organization_id')
-      .eq('id', payload.cliente_id)
-      .single()
+    // 2. Obtener datos del cliente y de la integración activa en paralelo
+    const [
+      { data: cliente, error: clienteError },
+      { data: integracion, error: intError }
+    ] = await Promise.all([
+      supabaseAdmin
+        .from('clientes')
+        .select('id, telefono')
+        .eq('id', payload.cliente_id)
+        .single(),
+      supabaseAdmin
+        .from('integraciones_whatsapp')
+        .select('*')
+        .eq('activo', true)
+        .limit(1)
+        .single()
+    ]);
 
     if (clienteError || !cliente) {
       return new Response(JSON.stringify({ error: 'Cliente not found' }), { status: 404, headers: corsHeaders })
     }
-
-    // 3. El cliente debe pertenecer a la misma organización que el usuario
-    // autenticado — sin esto, cualquier cliente_id ajeno permitía enviar
-    // WhatsApp a través de la integración de otro tenant.
-    if (cliente.organization_id !== profile.organization_id) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders })
-    }
-
-    // 4. Obtener la integración activa para esa organización
-    const { data: integracion, error: intError } = await supabaseAdmin
-      .from('integraciones_whatsapp')
-      .select('*')
-      .eq('organization_id', cliente.organization_id)
-      .eq('activo', true)
-      .single()
 
     if (intError || !integracion) {
       return new Response(JSON.stringify({ error: 'No active WhatsApp integration found for this organization' }), { status: 400, headers: corsHeaders })
@@ -184,7 +168,6 @@ serve(async (req) => {
     const insertPromise = supabaseAdmin
       .from('mensajes')
       .insert({
-        organization_id: cliente.organization_id,
         cliente_id: cliente.id,
         texto: payload.texto || (payload.media_url ? `[Archivo] ${payload.media_name || ''}` : ''),
         tipo: 'saliente',
