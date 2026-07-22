@@ -436,6 +436,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             openEditModal={edit.openEditModal}
             handleCopy={handleCopy}
             copiedId={copiedId}
+            onCreateField={edit.handleCreateFieldDefinition}
           />
           <ClientHistory clientId={clientId} />
         </div>

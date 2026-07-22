@@ -206,17 +206,18 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
   // ── Create a brand-new field definition from the edit modal ────────────────
   // Da de alta el campo en config_campos_clientes (mismo catálogo que
   // Configuración > Campos Base) y lo agrega al formulario abierto para que el
-  // usuario pueda cargarle valor de inmediato. El valor se persiste en
-  // clientes.campos_personalizados al Guardar (handleSaveEdits).
-  const handleCreateFieldDefinition = async ({ nombre_campo, categoria, tipo }) => {
+  // usuario pueda cargarle valor de inmediato. Si se pasa `valor`, además lo
+  // guarda de una en clientes.campos_personalizados para este cliente (si no,
+  // el valor se persiste recién al Guardar del modal, handleSaveEdits).
+  const handleCreateFieldDefinition = async ({ nombre_campo, categoria, tipo, valor }) => {
     const nombre = (nombre_campo || '').trim();
     if (!nombre) {
       toast.error('El nombre del campo es obligatorio');
       return false;
     }
-    const identificador = nombre
-      .toLowerCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    const identificador = Array.from(nombre.toLowerCase().normalize('NFD'))
+      .filter(ch => { const code = ch.codePointAt(0); return code < 0x0300 || code > 0x036f; })
+      .join('')
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
     if (!identificador) {
@@ -254,11 +255,24 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
         return false;
       }
 
+      const trimmedValor = (valor ?? '').toString().trim();
+      if (trimmedValor) {
+        const upperValor = trimmedValor.toUpperCase();
+        const { error: valErr } = await supabase
+          .from('clientes')
+          .update({ campos_personalizados: { ...(client.campos_personalizados || {}), [identificador]: upperValor } })
+          .eq('id', clientId);
+        if (valErr) {
+          console.error('[useClientViewEdit] Error guardando valor del campo nuevo:', valErr);
+          toast.error('Campo creado, pero no se pudo guardar el valor');
+        }
+      }
+
       setEditFormData(prev => ([...prev, {
         id: identificador,
         campo_id: identificador,
         nombre_campo: nombre,
-        valor: '',
+        valor: trimmedValor,
         es_fijo: true,
         is_custom_json: true,
         category_name: categoria,
