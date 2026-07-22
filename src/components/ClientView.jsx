@@ -418,6 +418,8 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         openSignatureModal={() => setIsSignatureModalOpen(true)}
         configCabecera={organization?.config_cabecera_cliente}
         campos={customFieldsConfig}
+        handleCopy={handleCopy}
+        copiedId={copiedId}
       />
 
       <div

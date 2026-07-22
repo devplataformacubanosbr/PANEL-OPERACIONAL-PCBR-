@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Loader2, Trash2, Sparkles, Edit2, PenTool } from 'lucide-react';
+import { AlertTriangle, Loader2, Trash2, Sparkles, Edit2, PenTool, Copy, Check } from 'lucide-react';
 import { formatDate } from '../utils/dateFormatter';
 
 export default function ClientViewHeader({
@@ -16,6 +16,8 @@ export default function ClientViewHeader({
   configCabecera,
   clienteDatos = [],
   campos = [],
+  handleCopy,
+  copiedId,
 }) {
   const fieldsToRender = configCabecera || ['telefono', 'email'];
 
@@ -69,7 +71,19 @@ export default function ClientViewHeader({
           )}
         </div>
         <div style={{ minWidth: 0 }}>
-          <h1 style={{ font: 'var(--font-page-title)', margin: '0 0 0.25rem', fontSize: '1.25rem' }}>{client.nombre}</h1>
+          <h1 style={{ font: 'var(--font-page-title)', margin: '0 0 0.25rem', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.nombre}</span>
+            {handleCopy && (
+              <button
+                onClick={() => handleCopy(client.nombre || '', 'nombre-completo')}
+                className="btn btn-ghost"
+                style={{ padding: '0.25rem', borderRadius: 'var(--radius-sm)', flexShrink: 0 }}
+                title="Copiar nombre completo"
+              >
+                {copiedId === 'nombre-completo' ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
+              </button>
+            )}
+          </h1>
           <div style={{ display: 'flex', gap: '0.6rem', color: 'var(--color-text-secondary)', fontSize: '0.8rem', flexWrap: 'wrap', alignItems: 'center' }}>
             {fieldsToRender
               .map(fieldId => ({ fieldId, label: getFieldLabel(fieldId), value: getFieldValue(fieldId) }))
