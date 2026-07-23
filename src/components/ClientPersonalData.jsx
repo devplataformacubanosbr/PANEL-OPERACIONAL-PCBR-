@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { User, Search, Edit2, Copy, Check, Plus, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '../utils/dateFormatter';
+import useHorizontalDragScroll from '../hooks/useHorizontalDragScroll';
 
 const normalizeSearchText = (str = '') =>
   Array.from(String(str).toLowerCase().normalize('NFD'))
@@ -89,6 +90,14 @@ const ClientPersonalData = ({
 
   const [activeCategory, setActiveCategory] = useState(allCategories[0]);
   const currentCategory = allCategories.includes(activeCategory) ? activeCategory : allCategories[0];
+
+  // La barra de pestañas es una sola fila que se desplaza con drag o con el
+  // scroll del mouse (en vez de amontonarse en varias líneas cuando no entran).
+  const { scrollContainerRef: tabsScrollRef, scrollHandlers: tabsScrollHandlers } = useHorizontalDragScroll();
+  const handleTabsWheel = (e) => {
+    if (!tabsScrollRef.current) return;
+    tabsScrollRef.current.scrollLeft += (e.deltaY !== 0 ? e.deltaY : e.deltaX);
+  };
 
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -394,6 +403,13 @@ const ClientPersonalData = ({
     );
   };
 
+  // Se calculan una sola vez para poder decidir el estado vacío sin llamar a
+  // las funciones de render dos veces (antes esto mostraba "Sin campos..."
+  // aunque la categoría sí tuviera contenido en estos bloques extra).
+  const documentosAsociadosContent = currentCategory === 'Documentos de Identidad' ? renderDocumentosAsociados() : null;
+  const direccionContent = currentCategory === 'Informaciones Personales' ? renderDireccion() : null;
+  const isCategoryEmpty = visibleFields.length === 0 && !documentosAsociadosContent && !direccionContent;
+
   return (
     <section id="personal-data" className="glass-panel" style={{ padding: '2rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
@@ -418,8 +434,24 @@ const ClientPersonalData = ({
         </div>
       </div>
 
-      {/* Pestañas de categorías */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+      {/* Pestañas de categorías: una sola fila, se desplaza con scroll/drag en vez de amontonarse en varias líneas */}
+      <div
+        ref={tabsScrollRef}
+        onWheel={handleTabsWheel}
+        {...tabsScrollHandlers}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.25rem',
+          borderBottom: '1px solid var(--color-border)',
+          marginBottom: '1.25rem',
+          flexWrap: 'nowrap',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          scrollbarWidth: 'thin',
+          cursor: 'grab'
+        }}
+      >
         {allCategories.map(cat => (
           <button
             key={cat}
@@ -435,6 +467,8 @@ const ClientPersonalData = ({
               border: 'none',
               borderRadius: 0,
               cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
               transition: 'color 0.2s'
             }}
           >
@@ -443,7 +477,7 @@ const ClientPersonalData = ({
         ))}
 
         {showNewCategoryInput ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.35rem 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.35rem 0', flexShrink: 0 }}>
             <input
               type="text"
               autoFocus
@@ -470,7 +504,7 @@ const ClientPersonalData = ({
             onClick={() => setShowNewCategoryInput(true)}
             className="btn btn-ghost"
             title="Nueva categoría"
-            style={{ padding: '0.5rem 0.6rem', color: 'var(--color-text-muted)' }}
+            style={{ padding: '0.5rem 0.6rem', color: 'var(--color-text-muted)', flexShrink: 0 }}
           >
             <Plus size={16} />
           </button>
@@ -478,7 +512,7 @@ const ClientPersonalData = ({
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {visibleFields.length === 0 ? (
+        {isCategoryEmpty ? (
           <div style={{ padding: '1rem 0', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
             Sin campos en esta categoría todavía.
           </div>
@@ -560,8 +594,8 @@ const ClientPersonalData = ({
           })
         )}
 
-        {currentCategory === 'Documentos de Identidad' && renderDocumentosAsociados()}
-        {currentCategory === 'Informaciones Personales' && renderDireccion()}
+        {documentosAsociadosContent}
+        {direccionContent}
 
         {onCreateField && (
           showNewFieldForm ? (
