@@ -70,6 +70,13 @@ export const FIXED_FIELDS_CATALOG = [
   // ClientView.jsx vía `customFieldsConfig` con `is_custom_json: true`.
 ];
 
+// ── Categorías por defecto de "Datos del Cliente" ────────────────────────────
+// Estructurales: siempre se muestran, no se pueden borrar desde la ficha del
+// cliente (ver ClientPersonalData.jsx). Cualquier otra categoría es dinámica,
+// vive como texto libre en config_campos_clientes.categoria.
+
+export const DEFAULT_CLIENT_CATEGORIES = ['Informaciones Personales', 'Datos Familiares', 'Documentos de Identidad'];
+
 // ── Colores por estado de trámite ────────────────────────────────────────────
 
 export const TRAMITE_COLORS = {

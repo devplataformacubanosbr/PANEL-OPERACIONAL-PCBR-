@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { handleError } from '../utils/errorHandler';
-import { FIXED_FIELDS_CATALOG } from '../components/clientView.constants';
+import { FIXED_FIELDS_CATALOG, DEFAULT_CLIENT_CATEGORIES } from '../components/clientView.constants';
 
 export default function useClientViewEdit({ clientId, client, customFieldsConfig = [], fetchClientData }) {
   // Los 13 campos migratorios de FIXED_FIELDS_CATALOG son columnas fijas de
@@ -84,7 +84,12 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
     let activeCategoriasNombres = [];
 
     if (categoriaId === 'ALL_PERSONAL') {
-      activeCategoriasNombres = ["Informaciones Personales", "Datos Familiares", "Documentos de Identidad"];
+      // Además de las 3 por defecto, incluir cualquier categoría dinámica que
+      // ya tenga campos (ej. una creada con "+" desde la ficha del cliente) —
+      // si no, esos campos quedaban invisibles en este modal.
+      const extraCategorias = [...new Set(customFieldsConfig.map(cf => cf.categoria))]
+        .filter(c => c && !DEFAULT_CLIENT_CATEGORIES.includes(c));
+      activeCategoriasNombres = [...DEFAULT_CLIENT_CATEGORIES, ...extraCategorias];
     } else {
       // If we used a tab string directly, though with the new system, we might not have dynamic tabs anyway.
       // But let's assume we map tabs if passed.
@@ -196,6 +201,47 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
       setEditFormData(editFormData.map(f => f.id === dataId ? { ...f, valor: '' } : f));
       await fetchClientData();
     } catch (err) { handleError(err, 'Error borrando dato base'); }
+  };
+
+  // ── Save a single field's value (autoguardado inline desde la pestaña) ──────
+  const handleSaveFieldValue = async (fieldId, rawValue) => {
+    try {
+      const value = (rawValue ?? '').toString().trim().toUpperCase() || null;
+      const isCustomJson = fixedFields.find(f => f.id === fieldId)?.is_custom_json;
+      if (isCustomJson) {
+        const customJsonUpdates = { ...(client.campos_personalizados || {}) };
+        if (value) customJsonUpdates[fieldId] = value;
+        else delete customJsonUpdates[fieldId];
+        const { error } = await supabase.from('clientes').update({ campos_personalizados: customJsonUpdates }).eq('id', clientId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('clientes').update({ [fieldId]: value }).eq('id', clientId);
+        if (error) throw error;
+      }
+      await fetchClientData();
+      return true;
+    } catch (err) {
+      handleError(err, 'Error guardando el campo');
+      return false;
+    }
+  };
+
+  // ── Delete an entire dynamic category (todas sus filas en config_campos_clientes) ──
+  const handleDeleteCategory = async (categoria) => {
+    const count = customFieldsConfig.filter(cf => cf.categoria === categoria).length;
+    if (!window.confirm(`¿Eliminar la categoría "${categoria}" y sus ${count} campo(s)? Los datos guardados de los clientes en estos campos dejarán de verse en la interfaz, pero seguirán en la base de datos.`)) {
+      return false;
+    }
+    try {
+      const { error } = await supabase.from('config_campos_clientes').delete().eq('categoria', categoria);
+      if (error) throw error;
+      toast.success(`Categoría "${categoria}" eliminada`);
+      await fetchClientData();
+      return true;
+    } catch (err) {
+      handleError(err, 'Error eliminando la categoría');
+      return false;
+    }
   };
 
   // ── Add custom field ───────────────────────────────────────────────────────
@@ -421,6 +467,8 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
     handleDeleteFieldData,
     handleAddCustomField,
     handleCreateFieldDefinition,
+    handleSaveFieldValue,
+    handleDeleteCategory,
     handleCepSearch,
   };
 }

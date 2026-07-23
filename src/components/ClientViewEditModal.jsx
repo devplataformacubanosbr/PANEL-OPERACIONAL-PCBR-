@@ -3,8 +3,9 @@ import { Search, Plus, X, GripVertical } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { DEFAULT_CLIENT_CATEGORIES } from './clientView.constants';
 
-const CATEGORY_ORDER_DEFAULT = ['Informaciones Personales', 'Datos Familiares', 'Documentos de Identidad'];
+const CATEGORY_ORDER_DEFAULT = DEFAULT_CLIENT_CATEGORIES;
 
 function SortableCategory({ id, title, children }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `cat-${id}`, data: { type: 'category' } });

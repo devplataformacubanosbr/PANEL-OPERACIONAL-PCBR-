@@ -1,15 +1,15 @@
 import React, { useState, useMemo } from 'react';
-import { User, Search, Edit2, Copy, Check, Plus, X } from 'lucide-react';
+import { User, Search, Edit2, Copy, Check, Plus, X, Trash2, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '../utils/dateFormatter';
 import useHorizontalDragScroll from '../hooks/useHorizontalDragScroll';
+import { DEFAULT_CLIENT_CATEGORIES, ESTADO_CIVIL_OPTIONS, SEXO_OPTIONS, toIsoDate, toSlashDate } from './clientView.constants';
 
 const normalizeSearchText = (str = '') =>
   Array.from(String(str).toLowerCase().normalize('NFD'))
     .filter(ch => { const code = ch.codePointAt(0); return code < 0x0300 || code > 0x036f; })
     .join('');
 
-const DEFAULT_CATEGORIES = ['Informaciones Personales', 'Datos Familiares', 'Documentos de Identidad'];
 const TITLE_MAP = {
   'Informaciones Personales': 'Datos Personales',
   'Datos Familiares': 'Padres y Familiares',
@@ -30,7 +30,9 @@ const ClientPersonalData = ({
   openEditModal,
   handleCopy,
   copiedId,
-  onCreateField
+  onCreateField,
+  onSaveFieldValue,
+  onDeleteCategory
 }) => {
   // Estos identificadores de "Documentos de Identidad" ya se muestran con su
   // propio diseño agrupado en "Documentos Asociados" (docGroups, más abajo);
@@ -69,7 +71,7 @@ const ClientPersonalData = ({
   const categoriesWithFields = useMemo(() => {
     const seen = new Set();
     const ordered = [];
-    DEFAULT_CATEGORIES.forEach(name => { ordered.push(name); seen.add(name); });
+    DEFAULT_CLIENT_CATEGORIES.forEach(name => { ordered.push(name); seen.add(name); });
     fixedFields.forEach(f => {
       if (f.category_name && !seen.has(f.category_name)) {
         seen.add(f.category_name);
@@ -138,11 +140,76 @@ const ClientPersonalData = ({
     }
   };
 
+  const handleDeleteCategoryClick = async (e, cat) => {
+    e.stopPropagation(); // no cambiar de pestaña al hacer clic en el tacho
+    const isPersisted = categoriesWithFields.includes(cat);
+    if (isPersisted) {
+      if (!onDeleteCategory) return;
+      const ok = await onDeleteCategory(cat);
+      if (!ok) return;
+    }
+    setPendingCategories(prev => prev.filter(c => c !== cat));
+    if (currentCategory === cat) setActiveCategory(DEFAULT_CLIENT_CATEGORIES[0]);
+  };
+
+  // ── Edición inline de valores (autoguardado al salir del campo) ─────────────
+  // Overlay de ediciones en curso: no se sincroniza con `client` en cada
+  // render, solo guarda el borrador mientras se edita. Al confirmar (blur, o
+  // onChange directo en selects) se llama a onSaveFieldValue y se limpia la
+  // key — el valor real llega de vuelta vía el refetch que dispara el hook.
+  const [pendingEdits, setPendingEdits] = useState({});
+  const [savingFieldId, setSavingFieldId] = useState(null);
+  const [savedFieldId, setSavedFieldId] = useState(null);
+  const [nombreDraft, setNombreDraft] = useState(null); // { nombres, apellidos } | null
+
+  const saveField = async (fieldId, value, originalValue) => {
+    if (!onSaveFieldValue) return;
+    if (value === (originalValue || '')) return;
+    setSavingFieldId(fieldId);
+    const ok = await onSaveFieldValue(fieldId, value);
+    setSavingFieldId(null);
+    if (ok) {
+      setSavedFieldId(fieldId);
+      setTimeout(() => setSavedFieldId(prev => (prev === fieldId ? null : prev)), 1500);
+    }
+  };
+
+  const handleGenericChange = (fieldId, value) => {
+    setPendingEdits(prev => ({ ...prev, [fieldId]: value }));
+  };
+
+  const handleGenericBlur = (campo, originalValue) => {
+    const draft = pendingEdits[campo.id];
+    if (draft === undefined) return;
+    setPendingEdits(prev => { const n = { ...prev }; delete n[campo.id]; return n; });
+    saveField(campo.id, draft, originalValue);
+  };
+
+  const handleSelectCommit = (campo, value, originalValue) => {
+    setPendingEdits(prev => ({ ...prev, [campo.id]: value }));
+    saveField(campo.id, value, originalValue);
+  };
+
+  // Nombres/Apellidos se editan como un grupo: recién se guarda cuando el foco
+  // sale de AMBOS inputs (no al pasar de uno al otro con Tab), para no pisar
+  // un campo con el valor viejo del otro mientras el usuario sigue escribiendo.
+  const handleNombreGroupBlur = (e, dato, n_nombres, n_apellidos) => {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    if (!nombreDraft) return;
+    const joined = `${nombreDraft.nombres ?? n_nombres} ${nombreDraft.apellidos ?? n_apellidos}`.trim();
+    setNombreDraft(null);
+    saveField('nombre', joined, dato.valor);
+  };
+
   // ── Campos de la categoría activa ────────────────────────────────────────────
+  // Se listan TODOS los campos definidos, tengan o no valor cargado, para que
+  // se puedan completar ahí mismo (antes un campo recién creado sin valor era
+  // invisible porque se filtraba por `if (!val)`).
   const sectionFields = fixedFields.filter(f => f.category_name === currentCategory);
   const sectionData = [];
   sectionFields.forEach(campo => {
     if (currentCategory === 'Documentos de Identidad' && (DOC_GROUP_FIELD_IDS.has(campo.id) || DYNAMIC_DOC_CARD_IDS.has(campo.id))) return;
+    if (campo.id === 'direccion') return; // se renderiza como su propia sección más abajo
 
     let val = '';
     if (campo.is_custom_json) {
@@ -150,16 +217,12 @@ const ClientPersonalData = ({
     } else {
       val = client[campo.id];
     }
-    if (val) sectionData.push({ campo_id: campo.id, valor: val });
+    sectionData.push({ campo_id: campo.id, valor: val || '' });
   });
 
   const query = normalizeSearchText(localSearchQuery);
 
-  // "Informaciones Personales" excluye "direccion" porque se renderiza como su propia sección más abajo
   const visibleFields = sectionData.filter(d => {
-    if (d.campo_id === 'direccion') return false;
-    if (!d.valor) return false;
-
     if (query) {
       const campoDef = sectionFields.find(c => c.id === d.campo_id);
       if (!campoDef) return false;
@@ -408,7 +471,9 @@ const ClientPersonalData = ({
   // aunque la categoría sí tuviera contenido en estos bloques extra).
   const documentosAsociadosContent = currentCategory === 'Documentos de Identidad' ? renderDocumentosAsociados() : null;
   const direccionContent = currentCategory === 'Informaciones Personales' ? renderDireccion() : null;
-  const isCategoryEmpty = visibleFields.length === 0 && !documentosAsociadosContent && !direccionContent;
+  const hasAnyFieldDefined = sectionFields.length > 0;
+  const isCategoryEmpty = !hasAnyFieldDefined && !documentosAsociadosContent && !direccionContent;
+  const noSearchMatches = hasAnyFieldDefined && visibleFields.length === 0 && !documentosAsociadosContent && !direccionContent;
 
   return (
     <section id="personal-data" className="glass-panel" style={{ padding: '2rem' }}>
@@ -452,29 +517,43 @@ const ClientPersonalData = ({
           cursor: 'grab'
         }}
       >
-        {allCategories.map(cat => (
-          <button
-            key={cat}
-            type="button"
-            onClick={() => setActiveCategory(cat)}
-            style={{
-              padding: '0.6rem 1rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: currentCategory === cat ? 'var(--color-primary)' : 'var(--color-text-muted)',
-              borderBottom: currentCategory === cat ? '2px solid var(--color-primary)' : '2px solid transparent',
-              background: 'transparent',
-              border: 'none',
-              borderRadius: 0,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-              transition: 'color 0.2s'
-            }}
-          >
-            {TITLE_MAP[cat] || cat}
-          </button>
-        ))}
+        {allCategories.map(cat => {
+          const isDefault = DEFAULT_CLIENT_CATEGORIES.includes(cat);
+          return (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setActiveCategory(cat)}
+              style={{
+                padding: '0.6rem 0.6rem 0.6rem 1rem',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: currentCategory === cat ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                borderBottom: currentCategory === cat ? '2px solid var(--color-primary)' : '2px solid transparent',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 0,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                transition: 'color 0.2s'
+              }}
+            >
+              {TITLE_MAP[cat] || cat}
+              {!isDefault && (
+                <Trash2
+                  size={12}
+                  onClick={e => handleDeleteCategoryClick(e, cat)}
+                  style={{ opacity: 0.6 }}
+                  title={`Borrar categoría "${cat}"`}
+                />
+              )}
+            </button>
+          );
+        })}
 
         {showNewCategoryInput ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.35rem 0', flexShrink: 0 }}>
@@ -516,9 +595,15 @@ const ClientPersonalData = ({
           <div style={{ padding: '1rem 0', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
             Sin campos en esta categoría todavía.
           </div>
+        ) : noSearchMatches ? (
+          <div style={{ padding: '1rem 0', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+            Ningún campo coincide con tu búsqueda.
+          </div>
         ) : (
           visibleFields.map(dato => {
             const campo = sectionFields.find(c => c.id === dato.campo_id);
+            const savingThis = savingFieldId === campo.id;
+            const savedThis = savedFieldId === campo.id;
 
             if (campo.id === 'nombre') {
               const fullName = (dato.valor || '').trim().toUpperCase();
@@ -549,44 +634,107 @@ const ClientPersonalData = ({
 
               const n_nombres = parts.slice(0, splitIndex).join(' ') || '';
               const n_apellidos = parts.slice(splitIndex).join(' ') || '';
+              const shownNombres = nombreDraft?.nombres ?? n_nombres;
+              const shownApellidos = nombreDraft?.apellidos ?? n_apellidos;
+              const savingNombre = savingFieldId === 'nombre';
+              const savedNombre = savedFieldId === 'nombre';
 
               return (
-                <React.Fragment key={campo.id}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem 0', borderBottom: '1px solid var(--color-border)' }}>
+                <div
+                  key={campo.id}
+                  onBlur={e => handleNombreGroupBlur(e, dato, n_nombres, n_apellidos)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.8rem 0', borderBottom: '1px solid var(--color-border)' }}>
                     <div style={{ flex: '0 0 140px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
                       Nombres
                     </div>
-                    <div style={{ flex: 1, fontSize: '0.875rem', color: 'var(--color-text-primary)', fontWeight: 500, paddingRight: '1rem', wordBreak: 'break-word' }}>
-                      {n_nombres}
-                    </div>
-                    <button onClick={() => handleCopy(n_nombres || '', 'nombres')} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={shownNombres}
+                      onChange={e => setNombreDraft(prev => ({ nombres: e.target.value, apellidos: prev?.apellidos ?? n_apellidos }))}
+                      style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                    />
+                    {savingNombre && <Loader2 size={14} className="animate-spin" color="var(--color-text-muted)" />}
+                    {savedNombre && <Check size={14} color="var(--color-success)" />}
+                    <button onClick={() => handleCopy(shownNombres || '', 'nombres')} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
                       {copiedId === 'nombres' ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
                     </button>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem 0', borderBottom: '1px solid var(--color-border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.8rem 0', borderBottom: '1px solid var(--color-border)' }}>
                     <div style={{ flex: '0 0 140px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
                       Apellidos
                     </div>
-                    <div style={{ flex: 1, fontSize: '0.875rem', color: 'var(--color-text-primary)', fontWeight: 500, paddingRight: '1rem', wordBreak: 'break-word' }}>
-                      {n_apellidos}
-                    </div>
-                    <button onClick={() => handleCopy(n_apellidos || '', 'apellidos')} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={shownApellidos}
+                      onChange={e => setNombreDraft(prev => ({ nombres: prev?.nombres ?? n_nombres, apellidos: e.target.value }))}
+                      style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                    />
+                    {savingNombre && <Loader2 size={14} className="animate-spin" color="var(--color-text-muted)" />}
+                    {savedNombre && <Check size={14} color="var(--color-success)" />}
+                    <button onClick={() => handleCopy(shownApellidos || '', 'apellidos')} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
                       {copiedId === 'apellidos' ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
                     </button>
                   </div>
-                </React.Fragment>
+                </div>
               );
             }
 
+            const isDate = campo.tipo === 'date' || String(campo.id).includes('fecha');
+            const isNumber = campo.tipo === 'number';
+            const isEstadoCivil = campo.id === 'estado_civil';
+            const isSexo = campo.id === 'sexo';
+            const shownValue = pendingEdits[campo.id] !== undefined ? pendingEdits[campo.id] : dato.valor;
+
             return (
-              <div key={campo.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem 0', borderBottom: '1px solid var(--color-border)' }}>
+              <div key={campo.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.8rem 0', borderBottom: '1px solid var(--color-border)' }}>
                 <div style={{ flex: '0 0 140px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
                   {campo.nombre_campo}
                 </div>
-                <div style={{ flex: 1, fontSize: '0.875rem', color: 'var(--color-text-primary)', fontWeight: 500, paddingRight: '1rem', wordBreak: 'break-word' }}>
-                  {(campo.is_custom_json && campo.tipo === 'date') ? formatDate(dato.valor) : dato.valor}
-                </div>
-                <button onClick={() => handleCopy(dato.valor, campo.id)} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
+                {isDate ? (
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={toIsoDate(shownValue)}
+                    onChange={e => handleGenericChange(campo.id, toSlashDate(e.target.value))}
+                    onBlur={() => handleGenericBlur(campo, dato.valor)}
+                    style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                  />
+                ) : isEstadoCivil ? (
+                  <select
+                    className="form-input"
+                    value={shownValue}
+                    onChange={e => handleSelectCommit(campo, e.target.value, dato.valor)}
+                    style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                  >
+                    <option value="">Seleccione...</option>
+                    {ESTADO_CIVIL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                ) : isSexo ? (
+                  <select
+                    className="form-input"
+                    value={shownValue}
+                    onChange={e => handleSelectCommit(campo, e.target.value, dato.valor)}
+                    style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                  >
+                    <option value="">Seleccione...</option>
+                    {SEXO_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    type={isNumber ? 'number' : 'text'}
+                    className="form-input"
+                    value={shownValue}
+                    onChange={e => handleGenericChange(campo.id, e.target.value)}
+                    onBlur={() => handleGenericBlur(campo, dato.valor)}
+                    style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                  />
+                )}
+                {savingThis && <Loader2 size={14} className="animate-spin" color="var(--color-text-muted)" />}
+                {savedThis && <Check size={14} color="var(--color-success)" />}
+                <button onClick={() => handleCopy(shownValue, campo.id)} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
                   {copiedId === campo.id ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
                 </button>
               </div>
