@@ -1,9 +1,29 @@
 import React, { useState, useMemo } from 'react';
-import { User, Search, Edit2, Copy, Check, Plus, X, Trash2, Loader2 } from 'lucide-react';
+import { User, Search, Edit2, Copy, Check, Plus, X, Trash2, Loader2, GripVertical } from 'lucide-react';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import toast from 'react-hot-toast';
 import { formatDate } from '../utils/dateFormatter';
 import useHorizontalDragScroll from '../hooks/useHorizontalDragScroll';
 import { DEFAULT_CLIENT_CATEGORIES, ESTADO_CIVIL_OPTIONS, SEXO_OPTIONS, toIsoDate, toSlashDate } from './clientView.constants';
+
+function SortableFieldRow({ id, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={{ ...style, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <button type="button" {...attributes} {...listeners} className="btn btn-ghost" style={{ padding: '2px', cursor: 'grab', flexShrink: 0, touchAction: 'none' }} title="Arrastrar para reordenar">
+        <GripVertical size={14} color="var(--color-text-muted)" />
+      </button>
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+    </div>
+  );
+}
 
 const normalizeSearchText = (str = '') =>
   Array.from(String(str).toLowerCase().normalize('NFD'))
@@ -37,7 +57,9 @@ const ClientPersonalData = ({
   copiedId,
   onCreateField,
   onSaveFieldValue,
-  onDeleteCategory
+  onDeleteCategory,
+  onDeleteField,
+  onReorderFields
 }) => {
   // Estos identificadores de "Documentos de Identidad" ya se muestran con su
   // propio diseño agrupado en "Documentos Asociados" (docGroups, más abajo);
@@ -206,6 +228,34 @@ const ClientPersonalData = ({
     saveField('nombre', joined, dato.valor);
   };
 
+  // ── Borrar / reordenar campos dinámicos (los fijos no se pueden tocar) ──────
+  const [deletingFieldId, setDeletingFieldId] = useState(null);
+  const handleDeleteFieldClick = async (campo) => {
+    if (!onDeleteField) return;
+    setDeletingFieldId(campo.id);
+    await onDeleteField(campo.id, campo.nombre_campo);
+    setDeletingFieldId(null);
+  };
+
+  // Overlay optimista: al soltar el drag se ve el nuevo orden al instante, sin
+  // esperar el refetch. Se limpia solo apenas onReorderFields resuelve.
+  const [customOrderOverride, setCustomOrderOverride] = useState(null);
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
+  const handleFieldDragEnd = (customIds) => async (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = customIds.indexOf(active.id);
+    const newIndex = customIds.indexOf(over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newOrder = arrayMove(customIds, oldIndex, newIndex);
+    setCustomOrderOverride(newOrder);
+    if (onReorderFields) await onReorderFields(newOrder);
+    setCustomOrderOverride(null);
+  };
+
   // ── Campos de la categoría activa ────────────────────────────────────────────
   // Se listan TODOS los campos definidos, tengan o no valor cargado, para que
   // se puedan completar ahí mismo (antes un campo recién creado sin valor era
@@ -238,6 +288,18 @@ const ClientPersonalData = ({
     }
     return true;
   });
+
+  // Los fijos (columnas de `clientes`) se listan primero y no se pueden
+  // borrar ni arrastrar; solo los dinámicos (config_campos_clientes) son
+  // arrastrables/borrables — orden persistido vía `orden`.
+  const visibleFieldsFixed = visibleFields.filter(d => !sectionFields.find(c => c.id === d.campo_id)?.is_custom_json);
+  let visibleFieldsCustom = visibleFields.filter(d => sectionFields.find(c => c.id === d.campo_id)?.is_custom_json);
+  if (customOrderOverride) {
+    visibleFieldsCustom = [...visibleFieldsCustom].sort(
+      (a, b) => customOrderOverride.indexOf(a.campo_id) - customOrderOverride.indexOf(b.campo_id)
+    );
+  }
+  const customFieldIds = visibleFieldsCustom.map(d => d.campo_id);
 
   const renderDocumentosAsociados = () => {
     // Los 13 campos migratorios viven en `campos_personalizados` (JSONB), no
@@ -606,7 +668,8 @@ const ClientPersonalData = ({
             Ningún campo coincide con tu búsqueda.
           </div>
         ) : (
-          visibleFields.map(dato => {
+          <>
+          {visibleFieldsFixed.map(dato => {
             const campo = sectionFields.find(c => c.id === dato.campo_id);
             const savingThis = savingFieldId === campo.id;
             const savedThis = savedFieldId === campo.id;
@@ -745,7 +808,68 @@ const ClientPersonalData = ({
                 </button>
               </div>
             );
-          })
+          })}
+
+          {visibleFieldsCustom.length > 0 && (
+            <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={handleFieldDragEnd(customFieldIds)}>
+              <SortableContext items={customFieldIds} strategy={verticalListSortingStrategy}>
+                {visibleFieldsCustom.map(dato => {
+                  const campo = sectionFields.find(c => c.id === dato.campo_id);
+                  const savingThis = savingFieldId === campo.id;
+                  const savedThis = savedFieldId === campo.id;
+                  const isDate = campo.tipo === 'date' || String(campo.id).includes('fecha');
+                  const isNumber = campo.tipo === 'number';
+                  const shownValue = pendingEdits[campo.id] !== undefined ? pendingEdits[campo.id] : dato.valor;
+
+                  return (
+                    <SortableFieldRow key={campo.id} id={campo.id}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.8rem 0', borderBottom: '1px solid var(--color-border)' }}>
+                        <div style={{ flex: '0 0 140px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
+                          {campo.nombre_campo}
+                        </div>
+                        {isDate ? (
+                          <input
+                            type="date"
+                            className="form-input"
+                            value={toIsoDate(shownValue)}
+                            onChange={e => handleGenericChange(campo.id, toSlashDate(e.target.value))}
+                            onBlur={() => handleGenericBlur(campo, dato.valor)}
+                            style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                          />
+                        ) : (
+                          <input
+                            type={isNumber ? 'number' : 'text'}
+                            className="form-input"
+                            value={shownValue}
+                            onChange={e => handleGenericChange(campo.id, e.target.value)}
+                            onBlur={() => handleGenericBlur(campo, dato.valor)}
+                            style={{ flex: 1, fontSize: '0.875rem', padding: '0.35rem 0.5rem' }}
+                          />
+                        )}
+                        {savingThis && <Loader2 size={14} className="animate-spin" color="var(--color-text-muted)" />}
+                        {savedThis && <Check size={14} color="var(--color-success)" />}
+                        <button onClick={() => handleCopy(shownValue, campo.id)} className="btn btn-ghost" style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-elevated)', flexShrink: 0 }} title="Copiar">
+                          {copiedId === campo.id ? <Check size={14} color="var(--color-success)" /> : <Copy size={14} />}
+                        </button>
+                        {onDeleteField && (
+                          <button
+                            onClick={() => handleDeleteFieldClick(campo)}
+                            disabled={deletingFieldId === campo.id}
+                            className="btn btn-ghost"
+                            style={{ padding: '0.35rem', borderRadius: 'var(--radius-sm)', color: 'var(--color-danger)', flexShrink: 0 }}
+                            title="Eliminar campo"
+                          >
+                            {deletingFieldId === campo.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
+                        )}
+                      </div>
+                    </SortableFieldRow>
+                  );
+                })}
+              </SortableContext>
+            </DndContext>
+          )}
+          </>
         )}
 
         {documentosAsociadosContent}

@@ -441,6 +441,8 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             onCreateField={edit.handleCreateFieldDefinition}
             onSaveFieldValue={edit.handleSaveFieldValue}
             onDeleteCategory={edit.handleDeleteCategory}
+            onDeleteField={edit.handleDeleteField}
+            onReorderFields={edit.handleReorderFields}
           />
           <ClientHistory clientId={clientId} />
         </div>

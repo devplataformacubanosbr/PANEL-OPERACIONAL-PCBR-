@@ -244,6 +244,46 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
     }
   };
 
+  // ── Delete a single dynamic field definition (config_campos_clientes) ───────
+  const handleDeleteField = async (identificador, nombre) => {
+    if (!window.confirm(`¿Eliminar el campo "${nombre}"? Los datos guardados de los clientes en este campo dejarán de verse en la interfaz, pero seguirán en la base de datos.`)) {
+      return false;
+    }
+    try {
+      const { error } = await supabase.from('config_campos_clientes').delete().eq('identificador', identificador);
+      if (error) throw error;
+      toast.success(`Campo "${nombre}" eliminado`);
+      await fetchClientData();
+      return true;
+    } catch (err) {
+      handleError(err, 'Error eliminando el campo');
+      return false;
+    }
+  };
+
+  // ── Reordenar campos dinámicos (drag & drop) ─────────────────────────────────
+  // `orderedIdentificadores` puede mezclar campos de más de una categoría real
+  // (ej. la pestaña "Datos Personales" agrupa Informaciones Personales + Datos
+  // Familiares) — no importa: cada campo solo actualiza su propio `orden`, y
+  // como todo el resto del sistema siempre filtra por `categoria` antes de
+  // ordenar, que los números queden con huecos dentro de cada categoría no
+  // rompe el orden ahí.
+  const handleReorderFields = async (orderedIdentificadores) => {
+    try {
+      const { error } = (await Promise.all(
+        orderedIdentificadores.map((identificador, idx) =>
+          supabase.from('config_campos_clientes').update({ orden: idx }).eq('identificador', identificador)
+        )
+      )).find(r => r.error) || {};
+      if (error) throw error;
+      await fetchClientData();
+      return true;
+    } catch (err) {
+      handleError(err, 'Error reordenando los campos');
+      return false;
+    }
+  };
+
   // ── Add custom field ───────────────────────────────────────────────────────
   const handleAddCustomField = () => {
     setNewFields([...newFields, { id: Date.now(), campo_id: '', valor: '', customName: '' }]);
@@ -469,6 +509,8 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
     handleCreateFieldDefinition,
     handleSaveFieldValue,
     handleDeleteCategory,
+    handleDeleteField,
+    handleReorderFields,
     handleCepSearch,
   };
 }
