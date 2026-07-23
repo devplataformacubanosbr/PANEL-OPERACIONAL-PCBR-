@@ -12,9 +12,14 @@ const normalizeSearchText = (str = '') =>
 
 const TITLE_MAP = {
   'Informaciones Personales': 'Datos Personales',
-  'Datos Familiares': 'Padres y Familiares',
   'Documentos de Identidad': 'Documentos'
 };
+// "Datos Familiares" no tiene pestaña propia: sus campos se muestran junto a
+// "Informaciones Personales" (una sola pestaña "Datos Personales").
+const TAB_CATEGORY_GROUPS = {
+  'Informaciones Personales': ['Informaciones Personales', 'Datos Familiares'],
+};
+const DEFAULT_TABS = ['Informaciones Personales', 'Documentos de Identidad'];
 const FIELD_TYPE_OPTIONS = [
   { value: 'text', label: 'Texto' },
   { value: 'date', label: 'Fecha' },
@@ -69,9 +74,9 @@ const ClientPersonalData = ({
   // `categoria` en config_campos_clientes es texto libre: cualquier categoría
   // (además de las 3 por defecto) que tenga al menos un campo aparece acá sola.
   const categoriesWithFields = useMemo(() => {
-    const seen = new Set();
+    const seen = new Set(['Datos Familiares']); // absorbida en "Informaciones Personales", nunca su propia pestaña
     const ordered = [];
-    DEFAULT_CLIENT_CATEGORIES.forEach(name => { ordered.push(name); seen.add(name); });
+    DEFAULT_TABS.forEach(name => { ordered.push(name); seen.add(name); });
     fixedFields.forEach(f => {
       if (f.category_name && !seen.has(f.category_name)) {
         seen.add(f.category_name);
@@ -205,7 +210,8 @@ const ClientPersonalData = ({
   // Se listan TODOS los campos definidos, tengan o no valor cargado, para que
   // se puedan completar ahí mismo (antes un campo recién creado sin valor era
   // invisible porque se filtraba por `if (!val)`).
-  const sectionFields = fixedFields.filter(f => f.category_name === currentCategory);
+  const groupedCategoryNames = TAB_CATEGORY_GROUPS[currentCategory] || [currentCategory];
+  const sectionFields = fixedFields.filter(f => groupedCategoryNames.includes(f.category_name));
   const sectionData = [];
   sectionFields.forEach(campo => {
     if (currentCategory === 'Documentos de Identidad' && (DOC_GROUP_FIELD_IDS.has(campo.id) || DYNAMIC_DOC_CARD_IDS.has(campo.id))) return;
