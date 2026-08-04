@@ -96,7 +96,8 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
   };
 
   const handleDragStart = (e, item) => {
-    const url = resolvedUrls[item.id] || item.url_archivo;
+    const url = resolvedUrls[item.id];
+    if (!url) { e.preventDefault(); return; }
     e.dataTransfer.setData('text/plain', url);
     e.dataTransfer.setData('application/json', JSON.stringify({
       type: 'media_library_item',
@@ -267,20 +268,22 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
             {!loading && filteredItems.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {filteredItems.map((item) => {
-                const itemUrl = resolvedUrls[item.id] || item.url_archivo;
+                const itemUrl = resolvedUrls[item.id];
+                const isBroken = item.tipo_contenido !== 'template' && !itemUrl;
                 return (
                   <div
                     key={item.id}
-                    draggable
+                    draggable={!isBroken}
                     onDragStart={(e) => handleDragStart(e, item)}
-                    style={{ 
+                    style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       padding: '0.5rem 1rem', borderBottom: '1px solid var(--color-border)',
-                      cursor: 'grab', transition: 'background 0.2s'
+                      cursor: isBroken ? 'default' : 'grab', transition: 'background 0.2s',
+                      opacity: isBroken ? 0.6 : 1
                     }}
                     onMouseOver={(e) => e.currentTarget.style.background = 'var(--surface-elevated)'}
                     onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-                    title="Arrastra este archivo al chat de WhatsApp o haz clic derecho para copiar la ruta"
+                    title={isBroken ? 'Archivo no disponible — hay que volver a subirlo' : 'Arrastra este archivo al chat de WhatsApp o haz clic derecho para copiar la ruta'}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', overflow: 'hidden', flex: 1 }}>
                       <div style={{
@@ -292,7 +295,16 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
                         {activeTab === 'audios' ? <Play size={12} fill="white" /> : activeTab === 'videos' ? <FileVideo size={12} /> : activeTab === 'documentos' ? <FileText size={12} /> : activeTab === 'imagenes' ? <ImageIcon size={12} /> : <AlignLeft size={12} />}
                       </div>
 
-                      {activeTab === 'audios' ? (
+                      {isBroken ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {item.nombre}
+                          </span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)' }}>
+                            Archivo no disponible — hay que volver a subirlo
+                          </span>
+                        </div>
+                      ) : activeTab === 'audios' ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
                           <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {item.nombre}
