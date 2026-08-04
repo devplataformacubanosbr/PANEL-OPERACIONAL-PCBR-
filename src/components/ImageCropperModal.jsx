@@ -52,10 +52,12 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
   const isDraggingRef = useRef(false);
   const firmaImgRef = useRef(null);
 
-  // ── PDF: se rasteriza la página 1 para poder mostrarla/firmarla como imagen,
-  // y se recomponen el resto de páginas sin tocar al guardar.
+  // ── PDF: soporte para múltiples páginas
   const [pdfPageDataUrl, setPdfPageDataUrl] = useState(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
+  const [activePage, setActivePage] = useState(0); // 0-indexed
+  const [totalPages, setTotalPages] = useState(1);
+  const [pdfPageImages, setPdfPageImages] = useState({}); // cache por página
   const pdfBytesRef = useRef(null);
 
   React.useEffect(() => {
@@ -66,43 +68,71 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
       setSelectedSignature(null);
       setDragRect(null);
       setPdfPageDataUrl(null);
+      setActivePage(0);
+      setTotalPages(1);
+      setPdfPageImages({});
     }
   }, [isOpen, initialDocName, isPdf]);
 
+  const loadPdfPage = useCallback(async (pageIdx, arrayBuffer) => {
+    const buffer = arrayBuffer || pdfBytesRef.current;
+    if (!buffer) return;
+    if (pdfPageImages[pageIdx]) {
+      setPdfPageDataUrl(pdfPageImages[pageIdx]);
+      return;
+    }
+    setLoadingPdf(true);
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+      }
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer.slice(0)) });
+      const pdf = await loadingTask.promise;
+      setTotalPages(pdf.numPages);
+      
+      const targetPageNum = Math.min(Math.max(1, pageIdx + 1), pdf.numPages);
+      const page = await pdf.getPage(targetPageNum);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      
+      const dataUrl = canvas.toDataURL('image/png');
+      setPdfPageImages(prev => ({ ...prev, [pageIdx]: dataUrl }));
+      setPdfPageDataUrl(dataUrl);
+    } catch (err) {
+      console.error('Error rasterizando página del PDF:', err);
+    } finally {
+      setLoadingPdf(false);
+    }
+  }, [pdfPageImages]);
+
   useEffect(() => {
     if (!isOpen || !isPdf || !imageUrl) return;
-    let cancelled = false;
-    setLoadingPdf(true);
     (async () => {
       try {
-        const pdfjsLib = await import('pdfjs-dist');
-        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-        }
+        setLoadingPdf(true);
         const res = await fetch(imageUrl);
         const arrayBuffer = await res.arrayBuffer();
         pdfBytesRef.current = arrayBuffer;
-
-        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) });
-        const pdf = await loadingTask.promise;
-        const page = await pdf.getPage(1);
-        const viewport = page.getViewport({ scale: 2 });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        if (!cancelled) setPdfPageDataUrl(canvas.toDataURL('image/png'));
+        await loadPdfPage(0, arrayBuffer);
       } catch (err) {
-        console.error('Error rasterizando PDF para firmar:', err);
-      } finally {
-        if (!cancelled) setLoadingPdf(false);
+        console.error('Error cargando PDF:', err);
+        setLoadingPdf(false);
       }
     })();
-    return () => { cancelled = true; };
   }, [isOpen, isPdf, imageUrl]);
+
+  const handlePageChange = async (newPageIdx) => {
+    if (newPageIdx < 0 || newPageIdx >= totalPages) return;
+    setActivePage(newPageIdx);
+    await loadPdfPage(newPageIdx);
+  };
 
   useEffect(() => {
     if (!isOpen || !clientId) return;
@@ -150,42 +180,36 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
 
       const cropX = completedCrop.x * scaleX;
       const cropY = completedCrop.y * scaleY;
-      const cropWidth = completedCrop.width * scaleX;
-      const cropHeight = completedCrop.height * scaleY;
 
       ctx.drawImage(
         image,
         cropX,
         cropY,
-        cropWidth,
-        cropHeight,
+        completedCrop.width * scaleX,
+        completedCrop.height * scaleY,
         0,
         0,
-        cropWidth,
-        cropHeight
+        completedCrop.width * scaleX,
+        completedCrop.height * scaleY,
       );
 
-      // Extract to blob
       canvas.toBlob((blob) => {
         if (!blob) {
           console.error('Canvas is empty');
           setIsProcessing(false);
           return;
         }
-
-        const file = new File([blob], 'cropped_image.jpg', { type: 'image/jpeg' });
+        const file = new File([blob], 'recortado.jpg', { type: 'image/jpeg' });
         onCropComplete(file, customName);
         setIsProcessing(false);
       }, 'image/jpeg', 0.95);
-
     } catch (err) {
-      console.error('Error cropping image:', err);
+      console.error('Error recortando imagen:', err);
       setIsProcessing(false);
     }
   };
 
-  // ── Colocar firma: arrastre igual que en la vista previa de plantillas ──────
-  const relativePoint = (e, container) => {
+  const relativeFirmaPoint = (e, container) => {
     const rect = container.getBoundingClientRect();
     return {
       x: (e.clientX - rect.left) / rect.width,
@@ -195,14 +219,14 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
 
   const handleFirmaMouseDown = (e) => {
     if (!selectedSignature) return;
-    const { x, y } = relativePoint(e, e.currentTarget);
+    const { x, y } = relativeFirmaPoint(e, e.currentTarget);
     isDraggingRef.current = true;
     setDragRect({ startX: x, startY: y, x, y, width: 0, height: 0 });
   };
 
   const handleFirmaMouseMove = (e) => {
     if (!isDraggingRef.current) return;
-    const { x, y } = relativePoint(e, e.currentTarget);
+    const { x, y } = relativeFirmaPoint(e, e.currentTarget);
     setDragRect(prev => {
       if (!prev) return prev;
       return {
@@ -231,7 +255,13 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
       y = startY - height / 2;
     }
 
-    setPlacedFirmas(prev => [...prev, { id: Date.now(), url: selectedSignature.url_archivo, x, y, width, height }]);
+    setPlacedFirmas(prev => [...prev, {
+      id: Date.now(),
+      url: selectedSignature.url_archivo,
+      x, y, width, height,
+      page: activePage
+    }]);
+
     setSelectedSignature(null);
     setDragRect(null);
   };
@@ -241,51 +271,56 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
       onClose();
       return;
     }
+
     setIsProcessing(true);
     try {
       const pdfjsLib = await import('pdfjs-dist');
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+      }
       const { PDFDocument } = await import('pdf-lib');
-
-      // Re-rasterizar a buena resolución (no la miniatura que se ve en pantalla)
-      // para que la firma quede nítida en el PDF final.
       const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBytesRef.current.slice(0)) });
       const srcPdf = await loadingTask.promise;
-      const page = await srcPdf.getPage(1);
-      const viewport = page.getViewport({ scale: 2.2 });
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvasContext: ctx, viewport }).promise;
-
-      for (const firma of placedFirmas) {
-        const sigImg = await loadImageElement(firma.url);
-        ctx.drawImage(
-          sigImg,
-          firma.x * canvas.width,
-          firma.y * canvas.height,
-          firma.width * canvas.width,
-          firma.height * canvas.height
-        );
-      }
-
-      const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0));
-
+      const originalDoc = await PDFDocument.load(pdfBytesRef.current.slice(0));
       const outDoc = await PDFDocument.create();
-      const embeddedImage = await outDoc.embedJpg(jpegBytes);
-      const pageSize = page.getViewport({ scale: 1 });
-      const outPage = outDoc.addPage([pageSize.width, pageSize.height]);
-      outPage.drawImage(embeddedImage, { x: 0, y: 0, width: pageSize.width, height: pageSize.height });
 
-      // El resto de páginas (si las hay) se copian tal cual, sin tocar.
-      if (srcPdf.numPages > 1) {
-        const originalDoc = await PDFDocument.load(pdfBytesRef.current.slice(0));
-        const remainingIndices = Array.from({ length: srcPdf.numPages - 1 }, (_, i) => i + 1);
-        const copiedPages = await outDoc.copyPages(originalDoc, remainingIndices);
-        copiedPages.forEach(p => outDoc.addPage(p));
+      for (let i = 1; i <= srcPdf.numPages; i++) {
+        const pageIdx = i - 1;
+        const firmasForPage = placedFirmas.filter(f => (f.page || 0) === pageIdx);
+
+        if (firmasForPage.length > 0) {
+          const page = await srcPdf.getPage(i);
+          const viewport = page.getViewport({ scale: 2.2 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          for (const firma of firmasForPage) {
+            const sigImg = await loadImageElement(firma.url);
+            ctx.drawImage(
+              sigImg,
+              firma.x * canvas.width,
+              firma.y * canvas.height,
+              firma.width * canvas.width,
+              firma.height * canvas.height
+            );
+          }
+
+          const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          const jpegBytes = Uint8Array.from(atob(jpegDataUrl.split(',')[1]), c => c.charCodeAt(0));
+          const embeddedImage = await outDoc.embedJpg(jpegBytes);
+          const pageSize = page.getViewport({ scale: 1 });
+          const outPage = outDoc.addPage([pageSize.width, pageSize.height]);
+          outPage.drawImage(embeddedImage, { x: 0, y: 0, width: pageSize.width, height: pageSize.height });
+        } else {
+          // Si la página no tiene firmas, copiarla vectorialmente sin tocar
+          const [copiedPage] = await outDoc.copyPages(originalDoc, [pageIdx]);
+          outDoc.addPage(copiedPage);
+        }
       }
 
       const outBytes = await outDoc.save();
@@ -442,24 +477,52 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
               </div>
             ) : (
               <>
-                <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
-                  {signatures.map(sig => (
-                    <div
-                      key={sig.id}
-                      onClick={() => setSelectedSignature(sig)}
-                      style={{
-                        flexShrink: 0, cursor: 'pointer', padding: '0.4rem', borderRadius: '6px',
-                        border: `2px solid ${selectedSignature?.id === sig.id ? 'var(--color-primary, #2563eb)' : 'transparent'}`,
-                        background: 'repeating-conic-gradient(#e5e5e5 0% 25%, #fff 0% 50%) 50% / 16px 16px',
-                      }}
-                    >
-                      <img src={sig.url_archivo} alt="Firma" style={{ height: '48px', maxWidth: '120px', objectFit: 'contain' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', padding: '0.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', flex: 1 }}>
+                    {signatures.map(sig => (
+                      <div
+                        key={sig.id}
+                        onClick={() => setSelectedSignature(sig)}
+                        style={{
+                          flexShrink: 0, cursor: 'pointer', padding: '0.4rem', borderRadius: '6px',
+                          border: `2px solid ${selectedSignature?.id === sig.id ? 'var(--color-primary, #2563eb)' : 'transparent'}`,
+                          background: 'repeating-conic-gradient(#e5e5e5 0% 25%, #fff 0% 50%) 50% / 16px 16px',
+                        }}
+                      >
+                        <img src={sig.url_archivo} alt="Firma" style={{ height: '48px', maxWidth: '120px', objectFit: 'contain' }} />
+                      </div>
+                    ))}
+                  </div>
+
+                  {isPdf && totalPages > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.08)', padding: '0.35rem 0.65rem', borderRadius: '6px', flexShrink: 0 }}>
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        onClick={() => handlePageChange(activePage - 1)}
+                        disabled={activePage <= 0 || loadingPdf}
+                        style={{ color: '#fff', border: '1px solid #555', padding: '0.2rem 0.5rem' }}
+                      >
+                        &lt;
+                      </button>
+                      <span style={{ fontSize: '0.8rem', color: '#fff', fontWeight: 600, minWidth: '70px', textAlign: 'center' }}>
+                        Pág. {activePage + 1} / {totalPages}
+                      </span>
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        onClick={() => handlePageChange(activePage + 1)}
+                        disabled={activePage >= totalPages - 1 || loadingPdf}
+                        style={{ color: '#fff', border: '1px solid #555', padding: '0.2rem 0.5rem' }}
+                      >
+                        &gt;
+                      </button>
                     </div>
-                  ))}
+                  )}
                 </div>
 
                 <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted, #999)', margin: 0 }}>
-                  {selectedSignature ? 'Arrastrá sobre la imagen para definir el tamaño (o hacé clic para tamaño estándar).' : 'Elegí una firma arriba y luego colocala sobre la imagen.'}
+                  {selectedSignature
+                    ? (isPdf ? `Arrastrá para definir el tamaño de firma en la Pág. ${activePage + 1}.` : 'Arrastrá sobre la imagen para definir el tamaño.')
+                    : 'Elegí una firma arriba y luego colocala sobre la imagen.'}
                 </p>
 
                 <div
@@ -478,7 +541,7 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
                     style={{ maxHeight: '50vh', maxWidth: '100%', objectFit: 'contain', display: 'block' }}
                   />
 
-                  {placedFirmas.map(firma => (
+                  {placedFirmas.filter(firma => !isPdf || (firma.page || 0) === activePage).map(firma => (
                     <img
                       key={firma.id}
                       src={firma.url}

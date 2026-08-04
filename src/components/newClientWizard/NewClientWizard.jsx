@@ -135,7 +135,7 @@ export default function NewClientWizard({ onClose, onClientCreated, mode = "full
       let fileOrBase64 = file;
       if (file.type === "application/pdf") {
         const { convertPdfPageToImageBase64 } = await import("../../services/pdfToImage");
-        fileOrBase64 = await convertPdfPageToImageBase64(file);
+        ({ base64: fileOrBase64 } = await convertPdfPageToImageBase64(file));
       }
 
       const aiData = await analyzeDocumentImage(fileOrBase64);

@@ -99,7 +99,7 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
           let base64;
           if (file.type === 'application/pdf') {
             const { convertPdfPageToImageBase64 } = await import('../services/pdfToImage');
-            base64 = await convertPdfPageToImageBase64(file);
+            ({ base64 } = await convertPdfPageToImageBase64(file));
           } else {
             base64 = await new Promise((resolve, reject) => {
               const reader = new FileReader();

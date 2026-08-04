@@ -1,16 +1,18 @@
 /**
  * Redimensiona una imagen a un data URL JPEG comprimido, para no mandar fotos de
- * varios MB (típico de cámaras de celular) a una Edge Function con límite de tamaño
- * de request. No mejora la lectura OCR mandar más resolución de la que un modelo de
- * visión puede usar igual.
+ * varios MB a una Edge Function / API con límite de tamaño o de tokens.
+ * Acepta tanto objetos File/Blob como cadenas Data URL.
  */
-export const resizeImageToBase64 = async (file, maxDimension = 1600, quality = 0.85) => {
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+export const resizeImageToBase64 = async (fileOrDataUrl, maxDimension = 900, quality = 0.8) => {
+  let dataUrl = fileOrDataUrl;
+  if (typeof fileOrDataUrl !== 'string') {
+    dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(fileOrDataUrl);
+    });
+  }
 
   const image = await new Promise((resolve, reject) => {
     const img = new Image();
@@ -20,6 +22,10 @@ export const resizeImageToBase64 = async (file, maxDimension = 1600, quality = 0
   });
 
   const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  if (scale >= 1 && typeof fileOrDataUrl === 'string' && dataUrl.length < 400000) {
+    return dataUrl;
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(image.width * scale);
   canvas.height = Math.round(image.height * scale);

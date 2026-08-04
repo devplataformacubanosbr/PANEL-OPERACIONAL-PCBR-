@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Download, Loader2, RefreshCw, ChevronDown, FileText, PenTool, MousePointer2 } from 'lucide-react';
-import { getFilledPdfBlob, getExtendedClientFields, getClientFieldValue } from '../services/templateService';
+import { X, Download, Loader2, RefreshCw, ChevronDown, FileText, PenTool, MousePointer2, Printer, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getFilledPdfBlob, getExtendedClientFields, getClientFieldValue, printDocumentBlob } from '../services/templateService';
 import { getDocuments, getSignedUrl } from '../services/storageService';
 import { convertPdfPageToImageBase64 } from '../services/pdfToImage';
 import toast from 'react-hot-toast';
@@ -22,12 +22,12 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
   const [selectedSignature, setSelectedSignature] = useState(null);
   const [placedSignatures, setPlacedSignatures] = useState([]);
   
-  const [pdfPageImage, setPdfPageImage] = useState(null);
+  const [activePage, setActivePage] = useState(0); // 0-indexed
+  const [totalPages, setTotalPages] = useState(1);
+  const [pageImages, setPageImages] = useState({});
   const [isExtractingPdf, setIsExtractingPdf] = useState(false);
 
-  // "Efecto de hoja escaneada" — solo se aplica al PDF final (descarga +
-  // guardado), no a la vista previa en vivo, para no pagar el costo de
-  // rasterizar+recomponer en cada edición de un campo.
+  // "Efecto de hoja escaneada"
   const [scanEffect, setScanEffect] = useState(false);
 
   const pdfContainerRef = useRef(null);
@@ -36,11 +36,6 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
     getExtendedClientFields().then(setAvailableFields);
     getDocuments(client.id).then(async docs => {
       const firmas = docs.filter(d => d.tipo_documento === 'FIRMA_DIGITAL');
-      // url_archivo es la ruta relativa dentro del bucket privado, no una URL
-      // usable — hay que resolverla a una firmada antes de poder mostrarla en
-      // un <img> o de que getFilledPdfBlob pueda hacerle fetch() al generar
-      // el PDF final. Sin esto la firma no aparecía ni en la vista previa ni
-      // en el PDF descargado (fallaba en silencio, solo quedaba en consola).
       const resolved = await Promise.all(firmas.map(async f => {
         try {
           const signedUrl = await getSignedUrl(f.url_archivo);
@@ -61,11 +56,10 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
       const loadedMappings = template.field_mappings || [];
       setLocalMappings(loadedMappings);
 
-      // Generate the initial filled PDF blob for the iframe
       const blob = await getFilledPdfBlob(template.url_archivo, loadedMappings, client, editableValues, placedSignatures);
       const url = URL.createObjectURL(blob);
       setPdfPreviewUrl(url);
-      setPdfPageImage(null); // reset image so it regenerates if they enter signature mode again
+      setPageImages({});
     } catch (err) {
       console.error('Error loading preview:', err);
     } finally {
@@ -89,12 +83,51 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
       
       if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
       setPdfPreviewUrl(url);
-      setPdfPageImage(null);
+      setPageImages({});
     } catch (err) {
       console.error('Error updating preview:', err);
     } finally {
       setLoading(false);
-      setSignatureMode(false); // volver a vista iframe
+      setSignatureMode(false);
+    }
+  };
+
+  const loadPageImage = useCallback(async (pageIdx, previewUrl) => {
+    const urlToUse = previewUrl || pdfPreviewUrl;
+    if (!urlToUse) return;
+    setIsExtractingPdf(true);
+    try {
+      const res = await fetch(urlToUse);
+      const blob = await res.blob();
+      const file = new File([blob], 'doc.pdf', { type: 'application/pdf' });
+      const { base64, totalPages: pagesCount } = await convertPdfPageToImageBase64(file, pageIdx + 1);
+      setPageImages(prev => ({ ...prev, [pageIdx]: base64 }));
+      setTotalPages(pagesCount);
+    } catch (e) {
+      console.error(e);
+      toast.error("Error al renderizar la página para firmar.");
+    } finally {
+      setIsExtractingPdf(false);
+    }
+  }, [pdfPreviewUrl]);
+
+  const toggleSignatureMode = async () => {
+    if (!signatureMode) {
+      setSignatureMode(true);
+      if (!pageImages[activePage] && pdfPreviewUrl) {
+        await loadPageImage(activePage, pdfPreviewUrl);
+      }
+    } else {
+      setSignatureMode(false);
+      setSelectedSignature(null);
+    }
+  };
+
+  const handlePageChange = async (newPageIdx) => {
+    if (newPageIdx < 0 || newPageIdx >= totalPages) return;
+    setActivePage(newPageIdx);
+    if (!pageImages[newPageIdx] && pdfPreviewUrl) {
+      await loadPageImage(newPageIdx, pdfPreviewUrl);
     }
   };
 
@@ -111,7 +144,6 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
       }
 
       const url = URL.createObjectURL(blob);
-
       const filename = `${template.nombre.replace(/\.[^/.]+$/, "")}_${client.nombre || 'documento'}.pdf`;
 
       const a = document.createElement('a');
@@ -122,7 +154,6 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      // Guardar también en documentos del cliente
       const { uploadGeneratedDocumentToClient } = await import('../services/templateService');
       await uploadGeneratedDocumentToClient(blob, filename, client);
       
@@ -135,36 +166,26 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
     }
   };
 
-  const toggleSignatureMode = async () => {
-    if (!signatureMode) {
-      if (!pdfPageImage && pdfPreviewUrl) {
-         setIsExtractingPdf(true);
-         try {
-           const res = await fetch(pdfPreviewUrl);
-           const blob = await res.blob();
-           const file = new File([blob], 'doc.pdf', { type: 'application/pdf' });
-           const base64 = await convertPdfPageToImageBase64(file);
-           setPdfPageImage(base64);
-         } catch (e) {
-           console.error(e);
-           toast.error("Error al renderizar el documento para firmar.");
-           return;
-         } finally {
-           setIsExtractingPdf(false);
-         }
+  const handlePrintFinal = async () => {
+    setGenerating(true);
+    try {
+      let blob = await getFilledPdfBlob(template.url_archivo, localMappings, client, editableValues, placedSignatures);
+
+      if (scanEffect) {
+        const { applyScannedLook } = await import('../services/templateService');
+        blob = await applyScannedLook(await blob.arrayBuffer());
       }
-      setSignatureMode(true);
-    } else {
-      setSignatureMode(false);
-      setSelectedSignature(null);
+
+      const filename = `${template.nombre.replace(/\.[^/.]+$/, "")}_${client.nombre || 'documento'}`;
+      await printDocumentBlob(blob, filename);
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al imprimir PDF: ' + err.message);
+    } finally {
+      setGenerating(false);
     }
   };
 
-  // Colocar una firma ahora es un arrastre: mousedown marca la esquina inicial,
-  // mousemove dibuja el rectángulo en vivo, y mouseup lo confirma con ESE
-  // tamaño exacto en vez de uno fijo. Un clic simple (arrastre casi nulo)
-  // sigue funcionando como antes — coloca una firma de tamaño por defecto
-  // centrada en el punto clickeado.
   const DEFAULT_SIG_WIDTH = 0.25;
   const DEFAULT_SIG_HEIGHT = 0.10;
   const MIN_DRAG = 0.015;
@@ -212,7 +233,6 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
 
     let { x, y, width, height, startX, startY } = dragRect;
     if (width < MIN_DRAG && height < MIN_DRAG) {
-      // Arrastre insignificante = clic simple: tamaño por defecto centrado en el punto.
       width = DEFAULT_SIG_WIDTH;
       height = DEFAULT_SIG_HEIGHT;
       x = startX - width / 2;
@@ -223,7 +243,7 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
       id: Date.now(),
       url: selectedSignature.url_archivo,
       x, y, width, height,
-      page: 0 // Default page 0 (first page) for now
+      page: activePage
     }]);
 
     setSelectedSignature(null);
@@ -265,6 +285,32 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
              </button>
           </div>
 
+          {signatureMode && totalPages > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--color-bg-surface)', padding: '0.25rem 0.6rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => handlePageChange(activePage - 1)}
+                disabled={activePage <= 0 || isExtractingPdf}
+                title="Página Anterior"
+                style={{ padding: '0.25rem' }}
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, minWidth: '85px', textAlign: 'center' }}>
+                Pág. {activePage + 1} / {totalPages}
+              </span>
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => handlePageChange(activePage + 1)}
+                disabled={activePage >= totalPages - 1 || isExtractingPdf}
+                title="Página Siguiente"
+                style={{ padding: '0.25rem' }}
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
+
           <button
             onClick={handleUpdatePreview}
             disabled={loading}
@@ -282,6 +328,17 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
             <input type="checkbox" checked={scanEffect} onChange={(e) => setScanEffect(e.target.checked)} style={{ width: '1rem', height: '1rem', cursor: 'pointer' }} />
             Efecto escaneado
           </label>
+
+          <button
+            onClick={handlePrintFinal}
+            disabled={loading || generating}
+            className="btn btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            title="Imprimir PDF final"
+          >
+            {generating ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+            Imprimir
+          </button>
 
           <button
             onClick={handleGenerateFinal}
@@ -311,7 +368,7 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
           {signatureMode && isExtractingPdf && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
               <Loader2 size={40} className="animate-spin text-blue-500 mb-4" />
-              <span className="text-gray-500 font-medium">Preparando documento para firmar...</span>
+              <span className="text-gray-500 font-medium">Cargando página {activePage + 1}...</span>
             </div>
           )}
 
@@ -323,7 +380,7 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
             />
           )}
 
-          {signatureMode && pdfPageImage && !isExtractingPdf && (
+          {signatureMode && pageImages[activePage] && !isExtractingPdf && (
             <div
                style={{ position: 'relative', cursor: selectedSignature ? 'crosshair' : 'default', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', userSelect: 'none' }}
                onMouseDown={handlePdfMouseDown}
@@ -331,10 +388,10 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
                onMouseUp={finishPlacingSignature}
                onMouseLeave={() => { if (isDraggingRef.current) finishPlacingSignature(); }}
             >
-               <img src={pdfPageImage} alt="PDF Page 1" style={{ maxWidth: '100%', display: 'block' }} draggable={false} />
+               <img src={pageImages[activePage]} alt={`PDF Page ${activePage + 1}`} style={{ maxWidth: '100%', display: 'block' }} draggable={false} />
 
-               {/* Overlay placed signatures visually */}
-               {placedSignatures.map(sig => (
+               {/* Overlay placed signatures visually for CURRENT page */}
+               {placedSignatures.filter(sig => (sig.page || 0) === activePage).map(sig => (
                  <img
                     key={sig.id}
                     src={sig.url}
@@ -352,7 +409,7 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
                  />
                ))}
 
-               {/* Rectángulo en vivo mientras se arrastra para definir tamaño */}
+               {/* Rectángulo en vivo mientras se arrastra */}
                {dragRect && (
                  <div style={{
                    position: 'absolute',
@@ -368,12 +425,12 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
 
                {!selectedSignature && (
                  <div style={{ position: 'absolute', top: '1rem', left: '1rem', background: 'rgba(255,255,255,0.9)', padding: '0.5rem 1rem', borderRadius: '4px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', fontWeight: 600, color: 'var(--color-primary)' }}>
-                   Selecciona una firma a la derecha
+                   Selecciona una firma a la derecha (Pág. {activePage + 1})
                  </div>
                )}
                {selectedSignature && (
                  <div style={{ position: 'absolute', top: '1rem', left: '1rem', background: 'rgba(255,255,255,0.9)', padding: '0.5rem 1rem', borderRadius: '4px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', fontWeight: 600, color: 'var(--color-primary)' }}>
-                   Arrastrá para definir el tamaño (o hacé clic para tamaño estándar)
+                   Arrastrá para definir el tamaño en la Pág. {activePage + 1}
                  </div>
                )}
             </div>
@@ -416,7 +473,7 @@ export default function TemplatePreviewModal({ template, client, onClose, onGene
                      <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.5rem' }}>Firmas Colocadas</h3>
                      {placedSignatures.map((ps, i) => (
                        <div key={ps.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'var(--color-bg-secondary)', borderRadius: '4px', marginBottom: '0.5rem' }}>
-                         <span style={{ fontSize: '0.8rem' }}>Firma {i + 1}</span>
+                         <span style={{ fontSize: '0.8rem' }}>Firma {i + 1} (Pág. {(ps.page || 0) + 1})</span>
                          <button 
                            onClick={() => setPlacedSignatures(prev => prev.filter(p => p.id !== ps.id))}
                            style={{ color: 'var(--color-danger)', cursor: 'pointer', background: 'none', border: 'none' }}

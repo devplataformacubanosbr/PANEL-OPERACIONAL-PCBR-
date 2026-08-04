@@ -10,6 +10,7 @@
 
 import { supabase } from '../supabaseClient';
 import { PDFDocument, rgb, StandardFonts, PDFName, PDFBool } from 'pdf-lib';
+import { resizeImageToBase64 } from '../utils/canvasUtils';
 
 const BUCKET = 'documentos_operacionales';
 const TABLE = 'plantillas_documentos';
@@ -306,11 +307,10 @@ export async function deleteTemplate(template) {
 // 5. Análisis IA — detectar campos en la plantilla
 // ──────────────────────────────────────────────
 export async function analyzeTemplateWithAI(imageBase64) {
-  const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
   const MODEL_VISION = 'qwen/qwen3.6-27b';
 
-  const key = import.meta.env['VITE_GROQ_API_' + 'KEY'];
-  if (!key) throw new Error('No Groq API Key configurada.');
+  // Redimensionar la imagen para no superar el límite TPM (8000 tokens en Groq)
+  const resizedImage = await resizeImageToBase64(imageBase64, 900, 0.8);
 
   const fieldList = AVAILABLE_CLIENT_FIELDS.map(f => `"${f.id}" (${f.label})`).join(', ');
 
@@ -342,34 +342,64 @@ REGLAS:
 - Si un campo no está presente, NO lo incluyas.
 - No inventes campos que no estén en la lista de CAMPOS DISPONIBLES.`;
 
-  const res = await fetch(GROQ_BASE_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + key,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: MODEL_VISION,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: imageBase64 } },
-        ],
-      }],
-      temperature: 0.1,
-      max_tokens: 8192,
-      response_format: { type: "json_object" }
-    }),
-  });
+  const messagesPayload = [{
+    role: 'user',
+    content: [
+      { type: 'text', text: prompt },
+      { type: 'image_url', image_url: { url: resizedImage } },
+    ],
+  }];
 
-  if (!res.ok) {
-    const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `Groq HTTP ${res.status}`);
+  let raw = '';
+
+  // 1. Intentar ai-proxy Edge Function de Supabase
+  try {
+    const { data, error } = await supabase.functions.invoke('ai-proxy', {
+      body: {
+        model: MODEL_VISION,
+        messages: messagesPayload,
+        temperature: 0.1,
+        max_tokens: 8192,
+        response_format: { type: "json_object" }
+      }
+    });
+
+    if (!error && data && !data.error) {
+      raw = data.choices?.[0]?.message?.content?.trim() || '[]';
+    }
+  } catch (proxyErr) {
+    console.warn("Template AI Proxy invoke failed, falling back to direct fetch:", proxyErr.message);
   }
 
-  const data = await res.json();
-  const raw = data.choices?.[0]?.message?.content?.trim() || '[]';
+  // 2. Fallback a llamada directa si ai-proxy falló
+  if (!raw) {
+    const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
+    const key = import.meta.env.VITE_GROQ_API_KEY || import.meta.env['VITE_GROQ_API_' + 'KEY'];
+    if (!key) throw new Error('No Groq API Key configurada.');
+
+    const res = await fetch(GROQ_BASE_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + key,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: MODEL_VISION,
+        messages: messagesPayload,
+        temperature: 0.1,
+        max_tokens: 8192,
+        response_format: { type: "json_object" }
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error?.message || `Groq HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    raw = data.choices?.[0]?.message?.content?.trim() || '[]';
+  }
 
   try {
     let textToParse = raw;
@@ -941,6 +971,127 @@ export async function applyScannedLook(pdfBytes) {
 
   const outBytes = await outDoc.save();
   return new Blob([outBytes], { type: 'application/pdf' });
+}
+
+/**
+ * Aplica el efecto de escaneado a una imagen o documento.
+ * @param {Blob|ArrayBuffer|string} inputBlobOrUrl
+ * @param {boolean} isPdf
+ * @returns {Promise<Blob>}
+ */
+export async function applyScannedLookToDocument(inputBlobOrUrl, isPdf = true) {
+  if (isPdf) {
+    let bytes = inputBlobOrUrl;
+    if (inputBlobOrUrl instanceof Blob) {
+      bytes = await inputBlobOrUrl.arrayBuffer();
+    } else if (typeof inputBlobOrUrl === 'string') {
+      bytes = await fetch(inputBlobOrUrl).then(r => r.arrayBuffer());
+    }
+    return await applyScannedLook(bytes);
+  } else {
+    let dataUrl = inputBlobOrUrl;
+    if (inputBlobOrUrl instanceof Blob) {
+      dataUrl = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(inputBlobOrUrl);
+      });
+    } else if (typeof inputBlobOrUrl === 'string' && !inputBlobOrUrl.startsWith('data:')) {
+      const b = await fetch(inputBlobOrUrl).then(r => r.blob());
+      dataUrl = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(b);
+      });
+    }
+
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.crossOrigin = 'anonymous';
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = dataUrl;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+
+    const scannedCanvas = applyScanTextureToCanvas(canvas);
+    const jpegDataUrl = scannedCanvas.toDataURL('image/jpeg', 0.85);
+    const res = await fetch(jpegDataUrl);
+    return await res.blob();
+  }
+}
+
+/**
+ * Imprime un blob de documento (PDF o imagen) usando un iframe limpio o ventana dedicada.
+ * @param {Blob} blob 
+ * @param {string} title 
+ */
+export async function printDocumentBlob(blob, title = 'documento') {
+  const url = URL.createObjectURL(blob);
+  const isImage = blob.type.startsWith('image/');
+
+  if (isImage) {
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>${title}</title>
+            <style>
+              body { margin: 0; display: flex; justify-content: center; align-items: center; background: white; }
+              img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+              @media print { body { margin: 0; } img { width: 100%; height: auto; } }
+            </style>
+          </head>
+          <body>
+            <img src="${url}" onload="window.print(); window.close();" />
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      return;
+    }
+  }
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.src = url;
+
+  document.body.appendChild(iframe);
+
+  iframe.onload = () => {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (err) {
+        console.error('Print failed in iframe, opening new window:', err);
+        window.open(url, '_blank');
+      } finally {
+        setTimeout(() => {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe);
+          }
+          URL.revokeObjectURL(url);
+        }, 60000);
+      }
+    }, 500);
+  };
 }
 
 // ──────────────────────────────────────────────

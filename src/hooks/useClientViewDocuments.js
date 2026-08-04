@@ -101,7 +101,7 @@ export default function useClientViewDocuments({
           let fileOrBase64 = file;
           if (file.type === 'application/pdf') {
             const { convertPdfPageToImageBase64 } = await import('../services/pdfToImage');
-            fileOrBase64 = await convertPdfPageToImageBase64(file);
+            ({ base64: fileOrBase64 } = await convertPdfPageToImageBase64(file));
           }
           const aiData = await analyzeDocumentImage(fileOrBase64);
           if (aiData && Object.keys(aiData).filter(k => aiData[k]).length > 0) {

@@ -28,9 +28,26 @@ const MODEL_VISION = 'qwen/qwen3.6-27b'; // Visión + OCR
  * @returns {Promise<string>} contenido del mensaje del asistente
  */
 async function callGroq(model, messages, temperature = 0.1, responseFormat = null) {
+  // 1. Intentar invocación por Edge Function de Supabase (ai-proxy) usando GROQ_API_KEY guardado en Supabase
+  try {
+    const payload = { model, messages, temperature, max_tokens: 8192 };
+    if (responseFormat) payload.response_format = responseFormat;
+
+    const { data, error } = await supabase.functions.invoke('ai-proxy', {
+      body: payload
+    });
+
+    if (!error && data && !data.error) {
+      return data?.choices?.[0]?.message?.content?.trim() || '';
+    }
+  } catch (proxyErr) {
+    console.warn("AI Proxy invoke failed, trying fallback:", proxyErr.message);
+  }
+
+  // 2. Fallback a llamada directa si ai-proxy no está disponible o falla
   try {
     const apiKey = import.meta.env.VITE_GROQ_API_KEY;
-    if (!apiKey) throw new Error('No Groq API Key configurada en VITE_GROQ_API_KEY.');
+    if (!apiKey) throw new Error('No Groq API Key configurada en VITE_GROQ_API_KEY ni en Supabase secrets.');
 
     const bodyData = {
       model,
@@ -59,7 +76,7 @@ async function callGroq(model, messages, temperature = 0.1, responseFormat = nul
     const data = await res.json();
     return data?.choices?.[0]?.message?.content?.trim() || '';
   } catch (err) {
-    console.error("AI Direct Fetch Error:", err.message);
+    console.error("AI Fetch Error:", err.message);
     throw new Error(`Error en el servicio de IA: ${err.message}`);
   }
 }
@@ -94,17 +111,12 @@ function cleanJson(raw) {
 // ──────────────────────────────────────────────────────────────
 /**
  * Extrae datos personales de la foto de un documento.
- * @param {File} file - Imagen del documento (pasaporte, CPF, RNM, etc.)
+ * @param {File|string} fileOrBase64 - Imagen del documento (pasaporte, CPF, RNM, etc.)
  * @returns {Promise<object>} Campos encontrados en el documento
  */
 export async function analyzeDocumentImage(fileOrBase64) {
-  let base64 = fileOrBase64;
-
-  if (typeof fileOrBase64 !== 'string') {
-    // Redimensionar antes de mandarlo: una foto de celular sin comprimir puede pesar
-    // varios MB y superar el límite de tamaño de request de la Edge Function.
-    base64 = await resizeImageToBase64(fileOrBase64);
-  }
+  // Redimensionar imagen a max 900px / comprimir para mantener visual tokens en ~2000 (dentro del límite TPM de 8000 en Groq)
+  const base64 = await resizeImageToBase64(fileOrBase64, 900, 0.8);
 
 const prompt = `Eres un asistente especializado en leer documentos de identidad e inmigración \
 (Pasaportes, CPF, RNM de Brasil, CNH, Cédulas, etc.) Y TAMBIÉN hojas escritas a mano \

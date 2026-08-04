@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Download, X, FileText, Image as ImageIcon, Loader2, Maximize2, Minus, Plus, RotateCw, Edit2, Check, Sparkles, Crop } from 'lucide-react';
+import { Download, X, FileText, Image as ImageIcon, Loader2, Maximize2, Minus, Plus, RotateCw, Edit2, Check, Sparkles, Crop, Printer } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import ImageCropperModal from './ImageCropperModal';
 import { useSignedUrl } from '../hooks/useSignedUrl';
@@ -20,6 +20,8 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
     const [resizeStartSize, setResizeStartSize] = useState({ width: 0, height: 0 });
     const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 });
     const [isDownloading, setIsDownloading] = useState(false);
+    const [isPrinting, setIsPrinting] = useState(false);
+    const [scanEffect, setScanEffect] = useState(false);
     const [imgLoaded, setImgLoaded] = useState(false);
     const [imgError, setImgError] = useState(false);
     const [zoom, setZoom] = useState(1);
@@ -319,6 +321,21 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
             if (isImage && !filename.match(/\.(jpeg|jpg|gif|png|webp)$/i)) filename += '.jpg';
 
             let downloadUrl = currentUrl || doc.url_archivo;
+
+            if (scanEffect) {
+                const { applyScannedLookToDocument } = await import('../services/templateService');
+                const blob = await applyScannedLookToDocument(downloadUrl, isPdf);
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                return;
+            }
+
             if (downloadUrl.includes('supabase.co/storage/v1/object/public/')) {
                 const pubUrl = new URL(downloadUrl);
                 pubUrl.searchParams.set('download', filename);
@@ -344,10 +361,32 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
             document.body.removeChild(a);
         } catch (err) {
             console.error('Download error:', err);
-            // Fallback: open in new tab
             window.open(doc.url_archivo, '_blank');
         } finally {
             setIsDownloading(false);
+        }
+    };
+
+    const handlePrint = async () => {
+        if (!doc?.url_archivo) return;
+        setIsPrinting(true);
+        try {
+            let downloadUrl = currentUrl || doc.url_archivo;
+            const { applyScannedLookToDocument, printDocumentBlob } = await import('../services/templateService');
+            
+            let blob;
+            if (scanEffect) {
+                blob = await applyScannedLookToDocument(downloadUrl, isPdf);
+            } else {
+                const response = await fetch(downloadUrl);
+                blob = await response.blob();
+            }
+            await printDocumentBlob(blob, currentName);
+        } catch (err) {
+            console.error('Print error:', err);
+            alert('Error al imprimir documento: ' + err.message);
+        } finally {
+            setIsPrinting(false);
         }
     };
 
@@ -475,7 +514,16 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
                             </span>
                         )}
                     </div>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
+                        {(isImage || isPdf) && (
+                            <label
+                                title="Aplica grano, leve rotación y viñeta para simular hoja escaneada al descargar o imprimir."
+                                style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', color: 'var(--color-text-secondary)', cursor: 'pointer', userSelect: 'none', marginRight: '0.25rem' }}
+                            >
+                                <input type="checkbox" checked={scanEffect} onChange={(e) => setScanEffect(e.target.checked)} style={{ width: '0.9rem', height: '0.9rem', cursor: 'pointer' }} />
+                                Escaneado
+                            </label>
+                        )}
                         {onAnalyze && (isImage || isPdf) && (
                             <button
                                 className="btn btn-secondary btn-sm"
@@ -498,6 +546,20 @@ export default function DocumentViewerModal({ document: doc, onClose, onAnalyze 
                                 <span>Editar</span>
                             </button>
                         )}
+                        <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={handlePrint}
+                            disabled={isPrinting || isDownloading}
+                            title="Imprimir documento"
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
+                        >
+                            {isPrinting ? (
+                                <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                                <Printer size={14} />
+                            )}
+                            {isPrinting ? 'Imprimiendo...' : 'Imprimir'}
+                        </button>
                         <button
                             className="btn btn-primary btn-sm"
                             onClick={handleDownload}
