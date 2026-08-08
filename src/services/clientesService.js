@@ -56,7 +56,53 @@ export const deleteCliente = async (id) => {
   if (error) throw error;
 };
 
+// ── Portal de Clientes — Credenciales de Acceso ──────────────────────────────
 
+/** Genera una contraseña aleatoria segura de 6 caracteres alfanuméricos. */
+export const generateSecurePassword = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I/1/O/0 para evitar confusión
+  let pass = '';
+  for (let i = 0; i < 6; i++) {
+    pass += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return pass;
+};
+
+/** Genera un número de cliente secuencial vía la función SQL del servidor. */
+export const generarNumeroCliente = async (clienteId) => {
+  const { data, error } = await supabase.rpc('generar_numero_cliente', {
+    p_cliente_id: clienteId,
+  });
+  if (error) throw error;
+  return data;
+};
+
+/** Actualiza las credenciales de acceso al portal (numero_cliente y/o clave_acceso). */
+export const updateCredencialesPortal = async (id, { numero_cliente, clave_acceso }) => {
+  const updates = {};
+  if (numero_cliente !== undefined) updates.numero_cliente = numero_cliente;
+  if (clave_acceso !== undefined) updates.clave_acceso = clave_acceso;
+  
+  const { data, error } = await supabase
+    .from('clientes')
+    .update(updates)
+    .eq('id', id)
+    .select('numero_cliente, clave_acceso')
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+/** Obtiene las credenciales actuales del cliente. */
+export const getCredencialesPortal = async (id) => {
+  const { data, error } = await supabase
+    .from('clientes')
+    .select('numero_cliente, clave_acceso')
+    .eq('id', id)
+    .single();
+  if (error) throw error;
+  return data;
+};
 
 // ── Búsqueda ──────────────────────────────────────────────────────────────────
 export const searchClientes = async (query) => {

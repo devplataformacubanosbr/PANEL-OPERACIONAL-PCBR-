@@ -99,6 +99,55 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   const [col3Width, setCol3Width] = useState(450); // Ancho inicial
   const col3Ref = useRef(null);
 
+  // ── Portal de Clientes — Credenciales ──────────────────────────────────────
+  const [portalCredentials, setPortalCredentials] = useState(undefined);
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  // Cargar credenciales al montar
+  React.useEffect(() => {
+    if (!clientId) return;
+    import('../services/clientesService').then(({ getCredencialesPortal }) => {
+      getCredencialesPortal(clientId)
+        .then(data => setPortalCredentials(data || {}))
+        .catch(() => setPortalCredentials({}));
+    });
+  }, [clientId]);
+
+  const handleGenerateNumero = useCallback(async () => {
+    setPortalLoading(true);
+    try {
+      const { generarNumeroCliente, getCredencialesPortal } = await import('../services/clientesService');
+      await generarNumeroCliente(clientId);
+      const updated = await getCredencialesPortal(clientId);
+      setPortalCredentials(updated);
+      toast.success('Número de cliente generado: ' + updated.numero_cliente);
+    } catch (err) {
+      toast.error('Error generando número: ' + (err.message || ''));
+    } finally {
+      setPortalLoading(false);
+    }
+  }, [clientId]);
+
+  const handleGeneratePassword = useCallback(async () => {
+    setPortalLoading(true);
+    try {
+      const { generateSecurePassword, updateCredencialesPortal, generarNumeroCliente, getCredencialesPortal } = await import('../services/clientesService');
+      // Asegurar que tenga número de cliente primero
+      if (!portalCredentials?.numero_cliente) {
+        await generarNumeroCliente(clientId);
+      }
+      const newPass = generateSecurePassword();
+      await updateCredencialesPortal(clientId, { clave_acceso: newPass });
+      const updated = await getCredencialesPortal(clientId);
+      setPortalCredentials(updated);
+      toast.success('Contraseña generada: ' + newPass);
+    } catch (err) {
+      toast.error('Error generando contraseña: ' + (err.message || ''));
+    } finally {
+      setPortalLoading(false);
+    }
+  }, [clientId, portalCredentials]);
+
   const fetchClientData = async (_fullReload = false) => {
     await queryClient.invalidateQueries();
   };
@@ -420,6 +469,10 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         campos={customFieldsConfig}
         handleCopy={handleCopy}
         copiedId={copiedId}
+        portalCredentials={portalCredentials}
+        onGeneratePassword={handleGeneratePassword}
+        onGenerateNumero={handleGenerateNumero}
+        portalLoading={portalLoading}
       />
 
       <div

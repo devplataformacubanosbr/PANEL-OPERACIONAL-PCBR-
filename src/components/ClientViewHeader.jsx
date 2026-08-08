@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Loader2, Trash2, Sparkles, Edit2, PenTool, Copy, Check } from 'lucide-react';
+import { AlertTriangle, Loader2, Trash2, Sparkles, Edit2, PenTool, Copy, Check, Smartphone, Key, RefreshCw } from 'lucide-react';
 import { formatDate } from '../utils/dateFormatter';
 
 export default function ClientViewHeader({
@@ -18,6 +18,10 @@ export default function ClientViewHeader({
   campos = [],
   handleCopy,
   copiedId,
+  portalCredentials,
+  onGeneratePassword,
+  onGenerateNumero,
+  portalLoading,
 }) {
   const fieldsToRender = configCabecera || ['telefono', 'email'];
 
@@ -116,6 +120,81 @@ export default function ClientViewHeader({
         </button>
         <button className="btn btn-secondary" onClick={() => openEditModal && openEditModal('ALL_PERSONAL')}><Edit2 size={16} /> Editar Datos</button>
       </div>
+
+      {/* ── Portal de Clientes — Panel de Credenciales ── */}
+      {portalCredentials !== undefined && (
+        <div style={{
+          width: '100%',
+          marginTop: '0.75rem',
+          padding: '0.625rem 0.875rem',
+          background: 'rgba(29,78,216,0.06)',
+          border: '1px solid rgba(29,78,216,0.15)',
+          borderRadius: 'var(--radius-sm, 6px)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.625rem',
+          flexWrap: 'wrap',
+          fontSize: '0.8rem',
+        }}>
+          <Smartphone size={16} color="#1D4ED8" style={{ flexShrink: 0 }} />
+          <span style={{ fontWeight: 600, color: '#1D4ED8' }}>App Clientes</span>
+          <span style={{ color: 'var(--color-text-muted)' }}>•</span>
+
+          {/* Número de cliente */}
+          {portalCredentials?.numero_cliente ? (
+            <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+              {portalCredentials.numero_cliente}
+            </span>
+          ) : (
+            <button
+              className="btn btn-ghost"
+              onClick={onGenerateNumero}
+              disabled={portalLoading}
+              style={{ padding: '0.15rem 0.5rem', fontSize: '0.75rem', gap: '0.25rem' }}
+            >
+              {portalLoading ? <Loader2 size={12} className="animate-spin" /> : <Key size={12} />}
+              Generar N°
+            </button>
+          )}
+
+          {/* Clave de acceso */}
+          {portalCredentials?.clave_acceso ? (
+            <>
+              <span style={{ color: 'var(--color-text-muted)' }}>•</span>
+              <span style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                Clave: <strong>{portalCredentials.clave_acceso}</strong>
+              </span>
+            </>
+          ) : null}
+
+          {/* Botones de acción */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.375rem' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={onGeneratePassword}
+              disabled={portalLoading}
+              title="Generar nueva contraseña"
+              style={{ padding: '0.2rem 0.4rem' }}
+            >
+              <RefreshCw size={13} />
+            </button>
+
+            {portalCredentials?.numero_cliente && portalCredentials?.clave_acceso && handleCopy && (
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  const msg = `🔑 *Acceso App PCBR*\n\n📱 Número de Cliente: *${portalCredentials.numero_cliente}*\n🔐 Contraseña: *${portalCredentials.clave_acceso}*\n\n👉 Ingresa a la App: [link]\n\n_Tu acceso es personal, no lo compartas._`;
+                  handleCopy(msg, 'portal-msg');
+                }}
+                title="Copiar mensaje de credenciales"
+                style={{ padding: '0.2rem 0.4rem' }}
+              >
+                {copiedId === 'portal-msg' ? <Check size={13} color="var(--color-success)" /> : <Copy size={13} />}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
