@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Plus, ChevronDown, ChevronUp, FileText, Send, Loader2, Trash2, Pencil, Check, X, Wallet } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, FileText, Send, Loader2, Trash2, Pencil, Check, X, Wallet, Users } from 'lucide-react';
 import { formatDate } from '../utils/dateFormatter';
 import { formatCurrency } from '../utils/currencyFormatter';
-import { getNotasTramite, createNotaTramite, updateNotaTramite, getPagos, createPago, deletePago, getEtiquetas, updateEntradaEtiquetas } from '../services/tramitesService';
+import { getNotasTramite, createNotaTramite, updateNotaTramite, getPagos, createPago, deletePago, getEtiquetas, updateEntradaEtiquetas, getVinculadosEntrada, vincularClienteATramite, desvincularClienteDeTramite } from '../services/tramitesService';
+import { searchClientes } from '../services/clientesService';
 import toast from 'react-hot-toast';
 import { EmptyState } from './ui/EmptyState';
 
@@ -150,6 +151,135 @@ const PagosSection = ({ entrada, catalogoTramites }) => {
               </button>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Un trámite puede cubrir a más de una persona (ej. un caso de refugio de
+// toda una familia). El titular sigue siendo `entrada.id_cliente`; acá se
+// administran las personas adicionales vinculadas.
+const VinculadosSection = ({ entrada }) => {
+  const [vinculados, setVinculados] = useState(null); // null = cargando
+  const [showSearch, setShowSearch] = useState(false);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [linking, setLinking] = useState(false);
+
+  const load = useCallback(() => {
+    getVinculadosEntrada(entrada.id)
+      .then(setVinculados)
+      .catch((err) => { console.error('[VinculadosSection] Error loading:', err); setVinculados([]); });
+  }, [entrada.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setResults([]); return; }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const data = await searchClientes(query.trim());
+        setResults(data.filter(c => c.id !== entrada.id_cliente && !(vinculados || []).some(v => v.cliente_id === c.id)));
+      } catch (err) {
+        console.error('[VinculadosSection] Error searching:', err);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query, vinculados, entrada.id_cliente]);
+
+  const handleLink = async (clienteId) => {
+    setLinking(true);
+    try {
+      await vincularClienteATramite(entrada.id, clienteId);
+      toast.success('Persona vinculada al trámite');
+      setQuery('');
+      setResults([]);
+      setShowSearch(false);
+      load();
+    } catch (err) {
+      console.error('[VinculadosSection] Error linking:', err);
+      toast.error('No se pudo vincular');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const handleUnlink = async (clienteId) => {
+    if (!window.confirm('¿Desvincular a esta persona del trámite?')) return;
+    try {
+      await desvincularClienteDeTramite(entrada.id, clienteId);
+      setVinculados((prev) => (prev || []).filter((v) => v.cliente_id !== clienteId));
+    } catch (err) {
+      console.error('[VinculadosSection] Error unlinking:', err);
+      toast.error('No se pudo desvincular');
+    }
+  };
+
+  return (
+    <div style={{ background: 'var(--color-bg-base)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--color-border)' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Users size={14} color="var(--color-text-secondary)" />
+          <h4 style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Personas vinculadas
+          </h4>
+        </div>
+        <button onClick={() => setShowSearch((s) => !s)} className="btn btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}>
+          <Plus size={13} /> Vincular
+        </button>
+      </div>
+
+      {vinculados === null ? (
+        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Cargando...</div>
+      ) : vinculados.length === 0 ? (
+        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>Solo el titular, sin personas vinculadas.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          {vinculados.map((v) => (
+            <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', padding: '0.3rem 0' }}>
+              <span style={{ color: 'var(--color-text-primary)' }}>{v.clientes?.nombre || 'Cliente'} {v.clientes?.cpf ? `(${v.clientes.cpf})` : ''}</span>
+              <button onClick={() => handleUnlink(v.cliente_id)} style={{ color: 'var(--color-text-muted)', display: 'inline-flex', background: 'none', border: 'none', cursor: 'pointer' }} aria-label="Desvincular">
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showSearch && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <input
+            type="text"
+            autoFocus
+            placeholder="Buscar cliente por nombre..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ width: '100%', padding: '0.4rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-bg-surface)', color: 'var(--color-text-primary)', fontSize: '0.8rem' }}
+          />
+          {searching && <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>Buscando...</div>}
+          {!searching && query.trim().length >= 2 && results.length === 0 && (
+            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>Sin resultados.</div>
+          )}
+          {results.length > 0 && (
+            <div style={{ marginTop: '0.35rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', maxHeight: '160px', overflowY: 'auto' }}>
+              {results.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => !linking && handleLink(c.id)}
+                  style={{ padding: '0.4rem 0.6rem', cursor: linking ? 'wait' : 'pointer', fontSize: '0.8rem', borderBottom: '1px solid var(--color-border)' }}
+                  onMouseOver={(e) => (e.currentTarget.style.background = 'var(--surface-elevated)')}
+                  onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  {c.nombre || 'Sin nombre'} ({c.cpf || 'Sin CPF'})
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -359,6 +489,18 @@ export default function ClientViewTramites({
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                    {t.es_titular === false && (
+                      <span style={{
+                        fontSize: '0.65rem',
+                        fontWeight: 600,
+                        padding: '0.2rem 0.5rem',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'rgba(124,92,191,0.15)',
+                        color: '#7C5CBF',
+                      }}>
+                        VINCULADO
+                      </span>
+                    )}
                     <span style={{
                       fontSize: '0.7rem',
                       fontWeight: 600,
@@ -559,6 +701,8 @@ export default function ClientViewTramites({
                     </div>
 
                     <PagosSection entrada={t} catalogoTramites={catalogoTramites} />
+
+                    <VinculadosSection entrada={t} />
 
                     {/* Separador */}
                     <div style={{ height: '1px', background: 'var(--color-border)', marginTop: '0.5rem' }} />

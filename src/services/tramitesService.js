@@ -6,14 +6,60 @@
 import { supabase } from '../supabaseClient';
 import { registrarAccionHistorial } from './equipoService';
 
+// Un trámite aparece en la ficha del titular (`id_cliente`) y también en la
+// de cualquier persona vinculada (`entrada_clientes_vinculados`) — ej. un
+// caso de refugio de toda una familia. `es_titular` le indica a la UI si el
+// cliente que se está viendo es el dueño real del trámite o solo un
+// vinculado (Supabase-js no arma fácil un OR entre dos tablas en una sola
+// query, así que se resuelve con dos queries en paralelo y se deduplica).
 export const getEntradas = async (clientId) => {
+  const [propiasRes, vinculadasRes] = await Promise.all([
+    supabase.from('entradas').select('*').eq('id_cliente', clientId),
+    supabase
+      .from('entrada_clientes_vinculados')
+      .select('entradas(*)')
+      .eq('cliente_id', clientId),
+  ]);
+  if (propiasRes.error) throw propiasRes.error;
+  if (vinculadasRes.error) throw vinculadasRes.error;
+
+  const propias = (propiasRes.data || []).map(e => ({ ...e, es_titular: true }));
+  const vinculadas = (vinculadasRes.data || [])
+    .map(r => r.entradas)
+    .filter(Boolean)
+    .map(e => ({ ...e, es_titular: false }));
+
+  const porId = new Map();
+  [...propias, ...vinculadas].forEach(e => porId.set(e.id, e));
+
+  return [...porId.values()].sort((a, b) => new Date(b.creado_en) - new Date(a.creado_en));
+};
+
+/** Personas vinculadas a un trámite (además del titular). */
+export const getVinculadosEntrada = async (entradaId) => {
   const { data, error } = await supabase
-    .from('entradas')
-    .select('*')
-    .eq('id_cliente', clientId)
-    .order('creado_en', { ascending: false });
+    .from('entrada_clientes_vinculados')
+    .select('id, cliente_id, clientes(id, nombre, cpf)')
+    .eq('entrada_id', entradaId);
   if (error) throw error;
   return data || [];
+};
+
+/** Vincula un cliente existente a un trámite (ej. un familiar del titular). */
+export const vincularClienteATramite = async (entradaId, clienteId) => {
+  const { error } = await supabase
+    .from('entrada_clientes_vinculados')
+    .insert({ entrada_id: entradaId, cliente_id: clienteId });
+  if (error && error.code !== '23505') throw error; // 23505 = ya estaba vinculado, ignorar
+};
+
+export const desvincularClienteDeTramite = async (entradaId, clienteId) => {
+  const { error } = await supabase
+    .from('entrada_clientes_vinculados')
+    .delete()
+    .eq('entrada_id', entradaId)
+    .eq('cliente_id', clienteId);
+  if (error) throw error;
 };
 
 export const createEntrada = async ({ id_cliente, servicio, operario, pipeline_id, stage_id }) => {
