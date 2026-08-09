@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Plus, ChevronDown, ChevronUp, FileText, Send, Loader2, Trash2, Pencil, Check, X, Wallet, Users } from 'lucide-react';
 import { formatDate } from '../utils/dateFormatter';
 import { formatCurrency } from '../utils/currencyFormatter';
-import { getNotasTramite, createNotaTramite, updateNotaTramite, getPagos, createPago, deletePago, getEtiquetas, updateEntradaEtiquetas, getVinculadosEntrada, vincularClienteATramite, desvincularClienteDeTramite } from '../services/tramitesService';
+import { getNotasTramite, createNotaTramite, updateNotaTramite, getPagos, createPago, deletePago, getEtiquetas, updateEntradaEtiquetas, getVinculadosEntrada, vincularClienteATramite, desvincularClienteDeTramite, updateEntradaValor } from '../services/tramitesService';
 import { searchClientes } from '../services/clientesService';
 import toast from 'react-hot-toast';
 import { EmptyState } from './ui/EmptyState';
@@ -40,12 +41,15 @@ const mapStageToLegacy = (stageId) => {
 
 
 
-const PagosSection = ({ entrada, catalogoTramites }) => {
+const PagosSection = ({ entrada, catalogoTramites, onCostoUpdated }) => {
   const [pagos, setPagos] = useState(null); // null = not loaded yet
   const [loading, setLoading] = useState(true);
   const [monto, setMonto] = useState('');
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
+  const [editingCosto, setEditingCosto] = useState(false);
+  const [costoDraft, setCostoDraft] = useState('');
+  const [savingCosto, setSavingCosto] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -60,6 +64,35 @@ const PagosSection = ({ entrada, catalogoTramites }) => {
   const baseCosto = catTramite?.costo || 0;
   const costo = Number(entrada.valor) || baseCosto;
   const pagado = (pagos || []).reduce((sum, p) => sum + (Number(p.monto) || 0), 0);
+
+  // El costo se recalcula solo cuando se vincula/desvincula gente al trámite
+  // (costo base × cantidad de personas), pero a veces hace falta un
+  // descuento manual -- por eso queda editable acá. Ojo: un vincular/
+  // desvincular posterior vuelve a pisar este valor con el cálculo automático.
+  const startEditCosto = () => {
+    setCostoDraft(String(costo || ''));
+    setEditingCosto(true);
+  };
+
+  const handleSaveCosto = async () => {
+    const nuevoValor = Number(costoDraft);
+    if (Number.isNaN(nuevoValor) || nuevoValor < 0) {
+      toast.error('Ingresá un monto válido');
+      return;
+    }
+    setSavingCosto(true);
+    try {
+      await updateEntradaValor(entrada.id, nuevoValor);
+      onCostoUpdated && onCostoUpdated(entrada.id, nuevoValor);
+      setEditingCosto(false);
+      toast.success('Costo actualizado');
+    } catch (err) {
+      console.error('[PagosSection] Error actualizando costo:', err);
+      toast.error('No se pudo actualizar el costo');
+    } finally {
+      setSavingCosto(false);
+    }
+  };
   const pendiente = Math.max(costo - pagado, 0);
 
   const handleAdd = async (e) => {
@@ -101,9 +134,37 @@ const PagosSection = ({ entrada, catalogoTramites }) => {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
-        <div>
+        <div onClick={(e) => e.stopPropagation()}>
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>Costo</div>
-          <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text-primary)' }}>{formatCurrency(costo)}</div>
+          {editingCosto ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                autoFocus
+                value={costoDraft}
+                onChange={(e) => setCostoDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveCosto(); if (e.key === 'Escape') setEditingCosto(false); }}
+                style={{ width: '5.5rem', padding: '0.15rem 0.3rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-primary)', background: 'var(--color-bg-surface)', color: 'var(--color-text-primary)', fontSize: '0.85rem' }}
+              />
+              <button onClick={handleSaveCosto} disabled={savingCosto} style={{ display: 'inline-flex', color: 'var(--color-success)' }} aria-label="Guardar costo">
+                {savingCosto ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              </button>
+              <button onClick={() => setEditingCosto(false)} style={{ display: 'inline-flex', color: 'var(--color-text-muted)' }} aria-label="Cancelar">
+                <X size={13} />
+              </button>
+            </div>
+          ) : (
+            <div
+              onClick={startEditCosto}
+              title="Tocar para editar (ej. aplicar un descuento)"
+              style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+            >
+              {formatCurrency(costo)}
+              <Pencil size={10} color="var(--color-text-muted)" />
+            </div>
+          )}
         </div>
         <div>
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>Pagado</div>
@@ -160,7 +221,7 @@ const PagosSection = ({ entrada, catalogoTramites }) => {
 // Un trámite puede cubrir a más de una persona (ej. un caso de refugio de
 // toda una familia). El titular sigue siendo `entrada.id_cliente`; acá se
 // administran las personas adicionales vinculadas.
-const VinculadosSection = ({ entrada }) => {
+const VinculadosSection = ({ entrada, onPersonasChanged }) => {
   const [vinculados, setVinculados] = useState(null); // null = cargando
   const [showSearch, setShowSearch] = useState(false);
   const [query, setQuery] = useState('');
@@ -196,11 +257,12 @@ const VinculadosSection = ({ entrada }) => {
     setLinking(true);
     try {
       await vincularClienteATramite(entrada.id, clienteId);
-      toast.success('Persona vinculada al trámite');
+      toast.success('Persona vinculada al trámite — costo actualizado');
       setQuery('');
       setResults([]);
       setShowSearch(false);
       load();
+      onPersonasChanged && onPersonasChanged();
     } catch (err) {
       console.error('[VinculadosSection] Error linking:', err);
       toast.error('No se pudo vincular');
@@ -214,6 +276,8 @@ const VinculadosSection = ({ entrada }) => {
     try {
       await desvincularClienteDeTramite(entrada.id, clienteId);
       setVinculados((prev) => (prev || []).filter((v) => v.cliente_id !== clienteId));
+      toast.success('Persona desvinculada — costo actualizado');
+      onPersonasChanged && onPersonasChanged();
     } catch (err) {
       console.error('[VinculadosSection] Error unlinking:', err);
       toast.error('No se pudo desvincular');
@@ -299,6 +363,7 @@ export default function ClientViewTramites({
   onDeleteTramite,
   defaultExpanded = true,
 }) {
+  const queryClient = useQueryClient();
   const [isSectionExpanded, setIsSectionExpanded] = useState(defaultExpanded);
   const [expandedId, setExpandedId] = useState(null);
   const [notasCache, setNotasCache] = useState({}); // { [entradaId]: nota[] }
@@ -700,9 +765,16 @@ export default function ClientViewTramites({
                       </div>
                     </div>
 
-                    <PagosSection entrada={t} catalogoTramites={catalogoTramites} />
+                    <PagosSection
+                      entrada={t}
+                      catalogoTramites={catalogoTramites}
+                      onCostoUpdated={(entradaId, nuevoValor) => setLocalEntradas(prev => prev.map(ent => ent.id === entradaId ? { ...ent, valor: nuevoValor } : ent))}
+                    />
 
-                    <VinculadosSection entrada={t} />
+                    <VinculadosSection
+                      entrada={t}
+                      onPersonasChanged={() => queryClient.invalidateQueries({ queryKey: ['entradas'] })}
+                    />
 
                     {/* Separador */}
                     <div style={{ height: '1px', background: 'var(--color-border)', marginTop: '0.5rem' }} />

@@ -45,12 +45,43 @@ export const getVinculadosEntrada = async (entradaId) => {
   return data || [];
 };
 
+// Cada persona vinculada suma el mismo precio del trámite (confirmado con el
+// usuario: "el mismo precio del trámite" por persona extra) — el costo total
+// termina siendo costo_base × cantidad de personas (titular + vinculados).
+// Se recalcula y persiste en entradas.valor cada vez que se vincula/desvincula
+// a alguien, para que tanto el panel como la app de clientes (que solo LEEN
+// entradas.valor, no recalculan nada) muestren el total correcto. El staff
+// puede seguir editando el costo a mano después (ej. para un descuento) desde
+// el campo "Costo" de Pagos — pero un vincular/desvincular posterior vuelve a
+// pisar ese valor con el cálculo automático.
+const recalcularValorTramite = async (entradaId) => {
+  try {
+    const { data: entrada } = await supabase.from('entradas').select('servicio').eq('id', entradaId).single();
+    if (!entrada) return;
+
+    const [{ data: catalogoRows }, { count: vinculadosCount }] = await Promise.all([
+      supabase.from('tramites_catalogo').select('nombre, costo'),
+      supabase.from('entrada_clientes_vinculados').select('id', { count: 'exact', head: true }).eq('entrada_id', entradaId),
+    ]);
+
+    const catalogoMatch = (catalogoRows || []).find(c => c.nombre?.toUpperCase() === entrada.servicio?.toUpperCase());
+    const costoBase = Number(catalogoMatch?.costo) || 0;
+    if (!costoBase) return; // sin costo definido en el catálogo, no hay nada que recalcular
+
+    const totalPersonas = 1 + (vinculadosCount || 0);
+    await supabase.from('entradas').update({ valor: costoBase * totalPersonas }).eq('id', entradaId);
+  } catch (err) {
+    console.error('[tramitesService] Error recalculando valor del trámite:', err);
+  }
+};
+
 /** Vincula un cliente existente a un trámite (ej. un familiar del titular). */
 export const vincularClienteATramite = async (entradaId, clienteId) => {
   const { error } = await supabase
     .from('entrada_clientes_vinculados')
     .insert({ entrada_id: entradaId, cliente_id: clienteId });
   if (error && error.code !== '23505') throw error; // 23505 = ya estaba vinculado, ignorar
+  await recalcularValorTramite(entradaId);
 };
 
 export const desvincularClienteDeTramite = async (entradaId, clienteId) => {
@@ -59,6 +90,13 @@ export const desvincularClienteDeTramite = async (entradaId, clienteId) => {
     .delete()
     .eq('entrada_id', entradaId)
     .eq('cliente_id', clienteId);
+  if (error) throw error;
+  await recalcularValorTramite(entradaId);
+};
+
+/** Edita el costo del trámite a mano (ej. para aplicar un descuento). */
+export const updateEntradaValor = async (id, valor) => {
+  const { error } = await supabase.from('entradas').update({ valor }).eq('id', id);
   if (error) throw error;
 };
 
