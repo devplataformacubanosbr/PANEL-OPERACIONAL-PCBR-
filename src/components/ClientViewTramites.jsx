@@ -62,7 +62,9 @@ const PagosSection = ({ entrada, catalogoTramites, onCostoUpdated }) => {
 
   const catTramite = catalogoTramites.find(c => c.nombre?.toUpperCase() === entrada.servicio?.toUpperCase());
   const baseCosto = catTramite?.costo || 0;
-  const costo = Number(entrada.valor) || baseCosto;
+  // entrada.valor puede ser legítimamente 0 (descuento total) -- no usar
+  // `||` acá, que trataría el 0 como "sin valor" y lo pisaría con baseCosto.
+  const costo = entrada.valor != null ? Number(entrada.valor) : baseCosto;
   const pagado = (pagos || []).reduce((sum, p) => sum + (Number(p.monto) || 0), 0);
 
   // El costo se recalcula solo cuando se vincula/desvincula gente al trámite
