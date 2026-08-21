@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  LayoutDashboard,
   Users,
   MessageSquare,
   Shield,
@@ -21,7 +20,7 @@ const orgInitials = (name) => {
     : clean.substring(0, 2).toUpperCase();
 };
 
-export default function Sidebar({ currentView, isSidebarOpen, setIsSidebarOpen, navigateToHome, navigateToClientsList, navigateToTeamChat, navigateToTeamManagement, navigateToAutomations }) {
+export default function Sidebar({ currentView, isSidebarOpen, setIsSidebarOpen, navigateToHome, navigateToClientsList, navigateToTeamChat, navigateToTeamManagement }) {
   const { userProfile, logout, isAdmin } = useAuth();
   const { organizationName, logoUrl } = useOrganization();
 
@@ -57,8 +56,6 @@ export default function Sidebar({ currentView, isSidebarOpen, setIsSidebarOpen, 
 
       {/* Navigation */}
       <nav className="flex min-w-[76px] flex-1 flex-col items-center gap-2 px-2">
-        <SidebarButton icon={<LayoutDashboard size={19} />} label="Pipeline" active={currentView === 'dashboard'} onClick={navigateToHome} />
-        <SidebarButton icon={<Zap size={19} />} label="Automatizaciones" active={currentView === 'automations'} onClick={navigateToAutomations} />
         <SidebarButton icon={<Users size={19} />} label="Clientes" active={currentView === 'clients'} onClick={navigateToClientsList} />
         <SidebarButton icon={<MessageSquare size={19} />} label="Mensajes" active={currentView === 'team-chat'} onClick={navigateToTeamChat} />
         {isAdmin && (

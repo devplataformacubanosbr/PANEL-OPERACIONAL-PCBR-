@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronLeft, FileSpreadsheet, MessageCircle, Share2, Mail } from 'lucide-react';
 import IntegracionesSettings from './IntegracionesSettings';
-import WhatsAppSettings from './WhatsAppSettings';
 import KommoSettings from './KommoSettings';
-import EmailSettings from './EmailSettings';
 
 const INTEGRATIONS = [
   {
@@ -15,15 +13,7 @@ const INTEGRATIONS = [
     description: 'Guarda los enlaces a tus formularios de Tally (u otro proveedor) para compartirlos con los clientes desde su ficha. El sistema le agrega automáticamente el ID del cliente a cada enlace que copiás.',
     Component: IntegracionesSettings,
   },
-  {
-    id: 'whatsapp',
-    name: 'WhatsApp',
-    icon: MessageCircle,
-    color: '#25D366',
-    blurb: 'Conectá tu número de WhatsApp y las reglas del bot.',
-    description: 'Conecta el número de WhatsApp de tu equipo (Evolution API, WhatsApp Cloud API oficial de Meta, o un webhook propio) para chatear con tus clientes desde el Panel, y configura las respuestas automáticas del bot fuera de horario.',
-    Component: WhatsAppSettings,
-  },
+
   {
     id: 'kommo',
     name: 'Kommo CRM',
@@ -33,15 +23,7 @@ const INTEGRATIONS = [
     description: 'Sincroniza contactos y leads de tu cuenta de Kommo con los clientes y trámites del Panel: mapeá qué campo de Kommo corresponde a cuál campo local, y recibí las actualizaciones en tiempo real vía webhook.',
     Component: KommoSettings,
   },
-  {
-    id: 'email',
-    name: 'Email (Gmail)',
-    icon: Mail,
-    color: '#D93025',
-    blurb: 'Enviá correos y adjuntos desde tu cuenta de Google Workspace.',
-    description: 'Conecta una cuenta de Gmail o Google Workspace para enviar correos transaccionales a tus clientes y a entidades de forma automatizada, pudiendo adjuntar documentos de la ficha del cliente.',
-    Component: EmailSettings,
-  },
+
 ];
 
 export default function IntegrationsHub() {

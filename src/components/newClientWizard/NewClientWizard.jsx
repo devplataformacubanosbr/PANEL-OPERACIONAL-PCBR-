@@ -11,7 +11,7 @@ import { analyzeDocumentImage } from "../../services/aiService";
 import { uploadDocument } from "../../services/storageService";
 import { createCliente, updateCliente } from "../../services/clientesService";
 import { createEntrada, getCatalogoTramites, getOperarios } from "../../services/tramitesService";
-import { getPipelines, getPipelineStages, runStageAutomations } from "../../services/pipelineService";
+import { getPipelines, getPipelineStages } from "../../services/pipelineService";
 
 const STEP_LABELS = ["Datos personales", "Documentos", "Operación"];
 
@@ -306,7 +306,7 @@ export default function NewClientWizard({ onClose, onClientCreated, mode = "full
           pipeline_id,
           stage_id,
         });
-        if (stage_id) runStageAutomations(stage_id, { id: newEntrada.id, id_cliente: clientId, clientes: { nombre: fullName } });
+
       }
       toast.success("Cliente listo 🎉");
       onClientCreated({ id: clientId, nombre: fullName });

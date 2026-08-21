@@ -1,9 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { FileText, Loader2, UploadCloud, X, ChevronDown, ChevronUp, Layers, CheckSquare, Square } from 'lucide-react';
+import { FileText, Loader2, UploadCloud, X, ChevronDown, ChevronUp, Layers, CheckSquare, Square, CheckCircle2, Circle } from 'lucide-react';
 import { SignedImage } from './SignedImage';
 import EmptyState from './ui/EmptyState';
 import PreUploadDocumentModal from './PreUploadDocumentModal';
 import DocumentMergerModal from './DocumentMergerModal';
+import { supabase } from '../supabaseClient';
+import toast from 'react-hot-toast';
 
 const ClientDocuments = ({
   client,
@@ -30,6 +32,22 @@ const ClientDocuments = ({
   const [selectedDocs, setSelectedDocs] = useState([]);
   const [showMergerModal, setShowMergerModal] = useState(false);
   const inputRef = useRef(null);
+
+  const toggleVerification = async (doc) => {
+    const newStatus = doc.estado === 'verificado' ? 'pendiente' : 'verificado';
+    try {
+      const { error } = await supabase
+        .from('documentos_operacionales')
+        .update({ estado: newStatus })
+        .eq('id', doc.id);
+      if (error) throw error;
+      toast.success(`Documento marcado como ${newStatus}`);
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error('Error toggling document verification:', err);
+      toast.error('Error al actualizar el estado');
+    }
+  };
 
   const openFilePicker = () => inputRef.current?.click();
 
@@ -239,17 +257,30 @@ const ClientDocuments = ({
                   </span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); handleDeleteDocument(doc); }}
-                  style={{
-                    width: 24, height: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: 'transparent', color: 'var(--color-text-muted)', border: 'none', cursor: 'pointer'
-                  }}
-                  title="Eliminar"
-                >
-                  <X size={16} />
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); toggleVerification(doc); }}
+                    style={{
+                      width: 24, height: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'transparent', color: verified ? 'var(--color-success)' : 'var(--color-text-muted)', border: 'none', cursor: 'pointer'
+                    }}
+                    title={verified ? 'Desmarcar verificación' : 'Marcar como verificado'}
+                  >
+                    {verified ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDeleteDocument(doc); }}
+                    style={{
+                      width: 24, height: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'transparent', color: 'var(--color-text-muted)', border: 'none', cursor: 'pointer'
+                    }}
+                    title="Eliminar"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
             );
           })}

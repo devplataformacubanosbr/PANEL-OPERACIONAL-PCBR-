@@ -25,14 +25,14 @@ import { GlobalAiChat } from '../components/GlobalAiChat';
 import { GlobalBotListener } from '../components/GlobalBotListener';
 
 // Views
-const HomeView = lazy(() => import('../components/HomeView'));
+
 const ClientView = lazy(() => import('../components/ClientView'));
 const ClientListView = lazy(() => import('../components/ClientListView'));
 const NewClientWizard = lazy(() => import('../components/newClientWizard/NewClientWizard'));
 const TeamChat = lazy(() => import('../components/TeamChat'));
 const TeamManagement = lazy(() => import('../components/TeamManagement'));
 const SettingsView = lazy(() => import('../components/SettingsView'));
-const AutomationsView = lazy(() => import('../components/AutomationsView'));
+
 
 import '../App.css';
 
@@ -54,7 +54,6 @@ export default function AppLayout() {
     navigateToTeamChat,
     navigateToTeamManagement,
     navigateToSettings,
-    navigateToAutomations,
   } = useNavigation(isAuthenticated);
 
   // --- Recent clients (accesos rápidos al enfocar la búsqueda vacía) ---
@@ -141,7 +140,6 @@ export default function AppLayout() {
           navigateToClientsList={navigateToClientsList}
           navigateToTeamChat={navigateToTeamChat}
           navigateToTeamManagement={navigateToTeamManagement}
-          navigateToAutomations={navigateToAutomations}
         />
 
         {/* Main Content Area */}
@@ -165,13 +163,13 @@ export default function AppLayout() {
           {/* Main Content */}
           <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: currentView === 'client' ? 'hidden' : 'auto' }}>
             <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><LoadingSpinner size="lg" /></div>}>
-              {currentView === 'dashboard' && <HomeView onNavigateToClient={navigateToClientTracked} onNavigateToClientsList={navigateToClientsList} searchQuery={globalSearch} onClearSearch={() => setGlobalSearch('')} />}
+
               {currentView === 'client' && <ClientView clientId={selectedClientId} onBack={navigateToHome} onNavigateToClient={navigateToClientTracked} />}
               {currentView === 'clients' && <ClientListView onNavigateToClient={navigateToClientTracked} searchQuery={globalSearch} />}
               {currentView === 'team-chat' && <TeamChat isFullView={true} />}
               {currentView === 'team-management' && <TeamManagement userProfile={userProfile} />}
               {currentView === 'settings' && <SettingsView userProfile={userProfile} />}
-              {currentView === 'automations' && <AutomationsView />}
+
             </Suspense>
           </main>
         </div>

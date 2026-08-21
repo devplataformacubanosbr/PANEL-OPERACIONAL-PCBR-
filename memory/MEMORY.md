@@ -1,0 +1,2 @@
+- [Arquitectura Supabase de Mi Vida Personal](mivida_arquitectura_supabase.md) — sin git, Supabase multiusuario, bugs de Groq ya arreglados
+- [Finanzas debe integrarse con todo en Mi Vida Personal](mivida_finanzas_integracion.md) — sugerencias deben respetar el ingreso real del usuario

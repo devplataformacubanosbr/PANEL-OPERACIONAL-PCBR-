@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "mi-vida-personal",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd /d C:\\Users\\Desktop\\Documents\\FLUJO-TRABAJO-LIMPIO\\mi-vida-personal && npm run dev"],
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }
