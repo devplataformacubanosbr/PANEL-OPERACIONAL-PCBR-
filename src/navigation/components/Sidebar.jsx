@@ -6,6 +6,7 @@ import {
   X,
   LogOut,
   Zap,
+  BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '../../features/auth/context/AuthContext';
@@ -20,7 +21,7 @@ const orgInitials = (name) => {
     : clean.substring(0, 2).toUpperCase();
 };
 
-export default function Sidebar({ currentView, isSidebarOpen, setIsSidebarOpen, navigateToHome, navigateToClientsList, navigateToTeamChat, navigateToTeamManagement }) {
+export default function Sidebar({ currentView, isSidebarOpen, setIsSidebarOpen, navigateToHome, navigateToClientsList, navigateToTeamChat, navigateToTeamManagement, navigateToDirectory }) {
   const { userProfile, logout, isAdmin } = useAuth();
   const { organizationName, logoUrl } = useOrganization();
 
@@ -58,6 +59,7 @@ export default function Sidebar({ currentView, isSidebarOpen, setIsSidebarOpen, 
       <nav className="flex min-w-[76px] flex-1 flex-col items-center gap-2 px-2">
         <SidebarButton icon={<Users size={19} />} label="Clientes" active={currentView === 'clients'} onClick={navigateToClientsList} />
         <SidebarButton icon={<MessageSquare size={19} />} label="Mensajes" active={currentView === 'team-chat'} onClick={navigateToTeamChat} />
+        <SidebarButton icon={<BookOpen size={19} />} label="Directorio de Operación" active={currentView === 'directory'} onClick={navigateToDirectory} />
         {isAdmin && (
           <SidebarButton icon={<Shield size={19} />} label="Equipo" active={currentView === 'team-management'} onClick={navigateToTeamManagement} />
         )}

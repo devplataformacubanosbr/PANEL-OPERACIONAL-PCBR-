@@ -32,6 +32,7 @@ const NewClientWizard = lazy(() => import('../components/newClientWizard/NewClie
 const TeamChat = lazy(() => import('../components/TeamChat'));
 const TeamManagement = lazy(() => import('../components/TeamManagement'));
 const SettingsView = lazy(() => import('../components/SettingsView'));
+const DirectoryView = lazy(() => import('../components/directory/DirectoryView'));
 
 
 import '../App.css';
@@ -54,6 +55,7 @@ export default function AppLayout() {
     navigateToTeamChat,
     navigateToTeamManagement,
     navigateToSettings,
+    navigateToDirectory,
   } = useNavigation(isAuthenticated);
 
   // --- Recent clients (accesos rápidos al enfocar la búsqueda vacía) ---
@@ -140,6 +142,7 @@ export default function AppLayout() {
           navigateToClientsList={navigateToClientsList}
           navigateToTeamChat={navigateToTeamChat}
           navigateToTeamManagement={navigateToTeamManagement}
+          navigateToDirectory={navigateToDirectory}
         />
 
         {/* Main Content Area */}
@@ -169,6 +172,7 @@ export default function AppLayout() {
               {currentView === 'team-chat' && <TeamChat isFullView={true} />}
               {currentView === 'team-management' && <TeamManagement userProfile={userProfile} />}
               {currentView === 'settings' && <SettingsView userProfile={userProfile} />}
+              {currentView === 'directory' && <DirectoryView />}
 
             </Suspense>
           </main>

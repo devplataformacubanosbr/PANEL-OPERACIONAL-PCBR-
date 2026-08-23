@@ -14,6 +14,7 @@ export const useNavigation = (isReady = true) => {
         if (hash === '#team-chat') return 'team-chat';
         if (hash === '#team-management') return 'team-management';
         if (hash === '#settings') return 'settings';
+        if (hash === '#directory') return 'directory';
         if (hash === '#dashboard') return 'clients';
         const saved = localStorage.getItem('app_currentView');
         if (saved) return saved === 'dashboard' ? 'clients' : saved;
@@ -50,6 +51,8 @@ export const useNavigation = (isReady = true) => {
             window.location.hash = 'team-management';
         } else if (currentView === 'settings') {
             window.location.hash = 'settings';
+        } else if (currentView === 'directory') {
+            window.location.hash = 'directory';
         } else {
             window.location.hash = 'clients';
         }
@@ -75,6 +78,9 @@ export const useNavigation = (isReady = true) => {
                 setSelectedClientId(null);
             } else if (hash === '#settings') {
                 setCurrentView('settings');
+                setSelectedClientId(null);
+            } else if (hash === '#directory') {
+                setCurrentView('directory');
                 setSelectedClientId(null);
             } else {
                 setCurrentView('clients');
@@ -115,6 +121,11 @@ export const useNavigation = (isReady = true) => {
         setCurrentView('settings');
     }, []);
 
+    const navigateToDirectory = useCallback(() => {
+        setSelectedClientId(null);
+        setCurrentView('directory');
+    }, []);
+
 
     return {
         currentView,
@@ -125,5 +136,6 @@ export const useNavigation = (isReady = true) => {
         navigateToTeamChat,
         navigateToTeamManagement,
         navigateToSettings,
+        navigateToDirectory,
     };
 };
