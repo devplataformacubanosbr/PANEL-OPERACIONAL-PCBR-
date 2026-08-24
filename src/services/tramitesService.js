@@ -168,11 +168,52 @@ const LEGACY_MAP = { entrante: 'pendiente', esperando_cliente: 'esperando_docs',
 
 export const updateEntradaStage = async (id, stage) => {
   const updates = { stage_id: stage.id, pipeline_id: stage.pipeline_id };
+  let nuevoEstadoTramite = null;
   if (stage.codigo && LEGACY_CODES.includes(stage.codigo)) {
-    updates.estado_tramite = LEGACY_MAP[stage.codigo];
+    nuevoEstadoTramite = LEGACY_MAP[stage.codigo];
+    updates.estado_tramite = nuevoEstadoTramite;
   }
   const { error } = await supabase.from('entradas').update(updates).eq('id', id);
   if (error) throw error;
+
+  // --- Integración Bot de Agendamiento PF ---
+  // Cuando se mueve a "procesando" (ej. "esperando"), mandamos la orden al bot.
+  if (nuevoEstadoTramite === 'procesando' || stage.codigo === 'esperando') {
+    try {
+      const { data: entrada } = await supabase
+        .from('entradas')
+        .select('servicio, id_cliente, datos_personalizados')
+        .eq('id', id)
+        .single();
+
+      if (entrada && entrada.servicio && entrada.servicio.toUpperCase().includes('AGENDAMIENTO')) {
+        const { data: cliente } = await supabase
+          .from('clientes')
+          .select('fecha_nacimiento, estado_federal, ciudad')
+          .eq('id', entrada.id_cliente)
+          .single();
+
+        if (cliente) {
+          const dp = entrada.datos_personalizados || {};
+          const payload = {
+            entrada_id: id,
+            cliente_id: entrada.id_cliente,
+            requerimento: dp.requerimento || dp.Requerimento || '',
+            dataNascimento: cliente.fecha_nacimiento || dp.dataNascimento || '',
+            uf: cliente.estado_federal || dp.uf || '',
+            ciudad: cliente.ciudad || dp.ciudad || '',
+            posto: dp.posto || dp.Posto || '',
+            estado: 'pendiente'
+          };
+          
+          // Intentar insertar si no existe
+          await supabase.from('agendamientos_pendientes').insert(payload);
+        }
+      }
+    } catch (e) {
+      console.error('[tramitesService] Error enviando a agendamientos_pendientes:', e);
+    }
+  }
 };
 
 export const deleteEntrada = async (id) => {
@@ -205,6 +246,46 @@ export const updateEntradaDatosPersonalizados = async (id, datos_personalizados)
     .update({ datos_personalizados })
     .eq('id', id);
   if (error) throw error;
+
+  // --- Integración Bot de Agendamiento PF ---
+  // Si actualizan los datos de un agendamiento, actualizamos el pendiente en el bot.
+  try {
+    const { data: entrada } = await supabase
+      .from('entradas')
+      .select('servicio, id_cliente, estado_tramite')
+      .eq('id', id)
+      .single();
+
+    if (entrada && entrada.servicio && entrada.servicio.toUpperCase().includes('AGENDAMIENTO')) {
+      // Solo actualizamos si ya estaba enviado al bot (ej. estado_tramite='procesando')
+      if (entrada.estado_tramite === 'procesando') {
+        const { data: cliente } = await supabase
+          .from('clientes')
+          .select('fecha_nacimiento, estado_federal, ciudad')
+          .eq('id', entrada.id_cliente)
+          .single();
+
+        if (cliente) {
+          const dp = datos_personalizados || {};
+          const payload = {
+            requerimento: dp.requerimento || dp.Requerimento || '',
+            dataNascimento: cliente.fecha_nacimiento || dp.dataNascimento || '',
+            uf: cliente.estado_federal || dp.uf || '',
+            ciudad: cliente.ciudad || dp.ciudad || '',
+            posto: dp.posto || dp.Posto || '',
+            actualizado_em: new Date().toISOString()
+          };
+          
+          await supabase
+            .from('agendamientos_pendientes')
+            .update(payload)
+            .eq('entrada_id', id);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[tramitesService] Error actualizando agendamientos_pendientes:', e);
+  }
 };
 
 export const getCatalogoTramites = async () => {

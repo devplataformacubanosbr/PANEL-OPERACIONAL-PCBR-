@@ -23,9 +23,11 @@ import { LoadingSpinner } from '../shared/components/ui/LoadingSpinner';
 import { GlobalAiChatProvider } from '../context/GlobalAiChatContext';
 import { GlobalAiChat } from '../components/GlobalAiChat';
 import { GlobalBotListener } from '../components/GlobalBotListener';
+import { GlobalAgendamientoListener } from '../components/GlobalAgendamientoListener';
 
 // Views
 
+const DashboardView = lazy(() => import('../components/dashboard/DashboardView'));
 const ClientView = lazy(() => import('../components/ClientView'));
 const ClientListView = lazy(() => import('../components/ClientListView'));
 const NewClientWizard = lazy(() => import('../components/newClientWizard/NewClientWizard'));
@@ -51,6 +53,7 @@ export default function AppLayout() {
     selectedClientId,
     navigateToClient,
     navigateToHome,
+    navigateToDashboard,
     navigateToClientsList,
     navigateToTeamChat,
     navigateToTeamManagement,
@@ -84,7 +87,7 @@ export default function AppLayout() {
   }, [currentView]);
 
   // --- Search ---
-  // Only 'dashboard' (Pipeline) and 'clients' filter in place; every other view
+  // Only 'dashboard' and 'clients' filter in place; every other view
   // needs to jump to the client list so the search actually shows results.
   const onSearchStart = useCallback(() => {
     if (currentView !== 'dashboard' && currentView !== 'clients') {
@@ -139,6 +142,7 @@ export default function AppLayout() {
           isSidebarOpen={isSidebarOpen}
           setIsSidebarOpen={setIsSidebarOpen}
           navigateToHome={navigateToHome}
+          navigateToDashboard={navigateToDashboard}
           navigateToClientsList={navigateToClientsList}
           navigateToTeamChat={navigateToTeamChat}
           navigateToTeamManagement={navigateToTeamManagement}
@@ -167,6 +171,7 @@ export default function AppLayout() {
           <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: currentView === 'client' ? 'hidden' : 'auto' }}>
             <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><LoadingSpinner size="lg" /></div>}>
 
+              {currentView === 'dashboard' && <DashboardView navigateToClientsList={navigateToClientsList} />}
               {currentView === 'client' && <ClientView clientId={selectedClientId} onBack={navigateToHome} onNavigateToClient={navigateToClientTracked} />}
               {currentView === 'clients' && <ClientListView onNavigateToClient={navigateToClientTracked} searchQuery={globalSearch} />}
               {currentView === 'team-chat' && <TeamChat isFullView={true} />}
@@ -248,6 +253,7 @@ export default function AppLayout() {
         </Suspense>
 
         <GlobalBotListener />
+        <GlobalAgendamientoListener />
         <GlobalAiChat isVisible={currentView !== 'client'} currentView={currentView} onNavigateToClient={navigateToClientTracked} />
       </div>
     </GlobalAiChatProvider>

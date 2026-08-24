@@ -53,7 +53,6 @@ const ClientViewRelateModal = lazy(() => import('./ClientViewRelateModal'));
 const ClientViewNewTramiteModal = lazy(() => import('./ClientViewNewTramiteModal'));
 const ClientViewEditModal = lazy(() => import('./ClientViewEditModal'));
 const ClientViewExtractionModal = lazy(() => import('./ClientViewExtractionModal'));
-const ClientMediaLibrary = lazy(() => import('./ClientMediaLibrary'));
 const SignatureExtractorModal = lazy(() => import('./SignatureExtractorModal'));
 const SyncDataModal = lazy(() => import('./SyncDataModal'));
 import useClientData from '../hooks/useClientData';
@@ -534,13 +533,6 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             entradas={entradas} 
             onGenerate={() => fetchClientData(true)} 
           />
-          <Suspense fallback={<div>Cargando biblioteca...</div>}>
-            <ClientMediaLibrary
-              clientId={clientId}
-              clientName={client.nombre}
-              clientCpf={client.cpf}
-            />
-          </Suspense>
         </div>
 
       </div>
