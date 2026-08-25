@@ -81,7 +81,18 @@ export default function PoliceAndCitiesTab() {
     }
   }
 
-  const filteredPolicias = policias.filter(p => p.nombre.toLowerCase().includes(search.toLowerCase()));
+  const normalize = (s) =>
+    (s || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase();
+
+  const normalizedSearch = normalize(search);
+  const filteredPolicias = policias.filter(
+    (p) =>
+      normalize(p.nombre).includes(normalizedSearch) ||
+      (p.ciudades || []).some((c) => normalize(c.nombre).includes(normalizedSearch))
+  );
 
   return (
     <div className="h-full flex flex-col p-8 overflow-auto">
