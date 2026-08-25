@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { Building2, Book, Landmark } from 'lucide-react';
+import { Building2, Book } from 'lucide-react';
 import PoliceAndCitiesTab from './PoliceAndCitiesTab';
 import ManualsTab from './ManualsTab';
-import PostosPfBrasilTab from './PostosPfBrasilTab';
 
 export default function DirectoryView() {
   const [activeTab, setActiveTab] = useState('policias');
@@ -34,12 +33,6 @@ export default function DirectoryView() {
             isActive={activeTab === 'manuales'}
             onClick={() => setActiveTab('manuales')}
           />
-          <TabButton
-            icon={<Landmark size={18} />}
-            label="Postos PF (Brasil)"
-            isActive={activeTab === 'postos-pf'}
-            onClick={() => setActiveTab('postos-pf')}
-          />
         </div>
       </div>
 
@@ -47,7 +40,6 @@ export default function DirectoryView() {
       <div className="flex-1 overflow-hidden relative bg-chrome-bg-subtle">
         {activeTab === 'policias' && <PoliceAndCitiesTab />}
         {activeTab === 'manuales' && <ManualsTab />}
-        {activeTab === 'postos-pf' && <PostosPfBrasilTab />}
       </div>
     </div>
   );
