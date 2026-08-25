@@ -3,6 +3,26 @@ import { supabase } from '../../supabaseClient';
 import { Building2, MapPin, Plus, Search, Edit2, Trash2 } from 'lucide-react';
 import PoliciaModal from './PoliciaModal';
 
+const PAGE_SIZE = 1000;
+
+// Supabase/PostgREST cap cada respuesta a PAGE_SIZE filas por defecto.
+// ciudades y policias_ciudades ya superan eso, así que hay que paginar
+// con .range() hasta que una página vuelva incompleta.
+async function fetchAllRows(table, select = '*', orderBy = null) {
+  const rows = [];
+  let from = 0;
+  while (true) {
+    let query = supabase.from(table).select(select).range(from, from + PAGE_SIZE - 1);
+    if (orderBy) query = query.order(orderBy);
+    const { data, error } = await query;
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return rows;
+}
+
 export default function PoliceAndCitiesTab() {
   const [policias, setPolicias] = useState([]);
   const [ciudades, setCiudades] = useState([]);
@@ -21,31 +41,22 @@ export default function PoliceAndCitiesTab() {
   async function fetchData() {
     setLoading(true);
     try {
-      // Intentar cargar policías y ciudades. 
-      // Si las tablas no existen, capturaremos el error para mostrar un mensaje amigable o datos de prueba.
-      const { data: policiasData, error: policiasError } = await supabase
-        .from('policias')
-        .select('*')
-        .order('nombre');
-      
-      const { data: ciudadesData, error: ciudadesError } = await supabase
-        .from('ciudades')
-        .select('*')
-        .order('nombre');
-
-      if (policiasError && policiasError.code === '42P01') {
-        throw new Error('Las tablas no existen aún. Por favor, ejecuta el script SQL en Supabase.');
+      // Intentar cargar policías, ciudades y relaciones. Las tres tablas ya
+      // superan el límite por defecto de PostgREST (1000 filas/consulta),
+      // así que se paginan con fetchAllRows en vez de un .select('*') plano.
+      let policiasData, ciudadesData, relData;
+      try {
+        [policiasData, ciudadesData, relData] = await Promise.all([
+          fetchAllRows('policias', '*', 'nombre'),
+          fetchAllRows('ciudades', '*', 'nombre'),
+          fetchAllRows('policias_ciudades', '*'),
+        ]);
+      } catch (err) {
+        if (err.code === '42P01') {
+          throw new Error('Las tablas no existen aún. Por favor, ejecuta el script SQL en Supabase.');
+        }
+        throw err;
       }
-      
-      if (policiasError) throw policiasError;
-      if (ciudadesError) throw ciudadesError;
-
-      // También cargar relaciones si existen
-      const { data: relData, error: relError } = await supabase
-        .from('policias_ciudades')
-        .select('*');
-
-      if (relError && relError.code !== '42P01') throw relError;
 
       // Combinar relaciones en los objetos de policía
       const policiasConCiudades = (policiasData || []).map(p => {
