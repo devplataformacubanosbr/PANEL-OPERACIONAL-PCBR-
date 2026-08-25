@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Save, FileText, Link as LinkIcon, AlignLeft } from 'lucide-react';
+import { Save, FileText, Link as LinkIcon, AlignLeft, Bot, Upload, Loader2 } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
+import { chat } from '../../services/aiService';
+import { extractPdfText } from '../../services/pdfToImage';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 
@@ -12,7 +14,9 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
     url_pdf: '',
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
+  const fileInputRef = React.useRef(null);
 
   useEffect(() => {
     if (manual) {
@@ -36,6 +40,46 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
 
   const handleChange = (e) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const handleOrganizeText = async (textToOrganize) => {
+    const text = typeof textToOrganize === 'string' ? textToOrganize : formData.contenido;
+    if (!text || text.trim().length === 0) return;
+    
+    setIsGenerating(true);
+    setError('');
+    try {
+      const messages = [
+        { role: 'system', content: 'Eres un asistente experto en organizar manuales y procedimientos. Tu objetivo es tomar un texto en bruto y convertirlo en una guía clara, estructurada por pasos y bien formateada usando Markdown. Evita saludos, despedidas o introducciones; devuelve únicamente el contenido organizado.' },
+        { role: 'user', content: `Por favor resume y organiza este texto de un documento de trámites en un plan de pasos claros y ordenados:\n\n${text}` }
+      ];
+      const response = await chat(messages);
+      setFormData(prev => ({ ...prev, contenido: response }));
+    } catch (err) {
+      console.error(err);
+      setError('Error al generar resumen con IA.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = ''; // reset
+    setIsGenerating(true);
+    setError('');
+    try {
+      const text = await extractPdfText(file);
+      if (!text || text.trim().length === 0) {
+        throw new Error('El PDF parece estar vacío o es una imagen escaneada sin texto seleccionable.');
+      }
+      await handleOrganizeText(text);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Error al procesar el PDF.');
+      setIsGenerating(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -132,14 +176,45 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-chrome-text">Contenido (Texto libre / Markdown)</label>
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-medium text-chrome-text">Contenido (Texto libre / Markdown)</label>
+            <div className="flex gap-3">
+              <button 
+                type="button" 
+                onClick={() => fileInputRef.current?.click()} 
+                disabled={isGenerating}
+                className="text-xs flex items-center gap-1.5 text-brand-primary hover:text-brand-primary/80 transition-colors disabled:opacity-50"
+              >
+                {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />} 
+                Subir PDF y Resumir
+              </button>
+              <button 
+                type="button" 
+                onClick={handleOrganizeText} 
+                disabled={isGenerating || !formData.contenido.trim()}
+                className="text-xs flex items-center gap-1.5 text-brand-primary hover:text-brand-primary/80 transition-colors disabled:opacity-50"
+                title="Organizar texto actual con IA"
+              >
+                {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Bot size={14} />} 
+                Mejorar Texto
+              </button>
+            </div>
+          </div>
+          <input 
+            type="file" 
+            accept="application/pdf" 
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleFileUpload} 
+          />
           <textarea
             name="contenido"
             value={formData.contenido}
             onChange={handleChange}
-            rows={5}
-            className="w-full rounded-md border border-chrome-border bg-chrome-bg p-3 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors resize-y"
-            placeholder="Escribe aquí el contenido detallado del trámite o pega la guía..."
+            disabled={isGenerating}
+            rows={6}
+            className="w-full rounded-md border border-chrome-border bg-chrome-bg p-3 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors resize-y disabled:opacity-75"
+            placeholder={isGenerating ? "La IA está analizando y estructurando el contenido..." : "Escribe aquí el contenido detallado del trámite o pega la guía..."}
           />
         </div>
 

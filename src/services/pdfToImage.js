@@ -75,3 +75,36 @@ export async function convertPdfPageToImageBase64(fileOrBuffer, pageNumber = 1, 
     throw error;
   }
 }
+
+/**
+ * Extrae todo el texto de un archivo PDF.
+ * @param {File|ArrayBuffer|Uint8Array} fileOrBuffer 
+ * @returns {Promise<string>}
+ */
+export async function extractPdfText(fileOrBuffer) {
+  try {
+    let arrayBuffer = fileOrBuffer;
+    if (fileOrBuffer instanceof File || fileOrBuffer instanceof Blob) {
+      arrayBuffer = await fileOrBuffer.arrayBuffer();
+    }
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+      cMapPacked: true,
+      standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/standard_fonts/`,
+    });
+    const pdf = await loadingTask.promise;
+    
+    let fullText = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      fullText += pageText + '\n';
+    }
+    return fullText.trim();
+  } catch (error) {
+    console.error('[pdfToImage] Error extracting text from PDF:', error);
+    throw error;
+  }
+}

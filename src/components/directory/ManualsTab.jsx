@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { Book, Plus, Search, FileText, Download, Edit2, Trash2 } from 'lucide-react';
 import ManualModal from './ManualModal';
+import ViewManualModal from './ViewManualModal';
 
 export default function ManualsTab() {
   const [manuales, setManuales] = useState([]);
@@ -11,6 +12,7 @@ export default function ManualsTab() {
 
   // Modal state
   const [isEditingManual, setIsEditingManual] = useState(false);
+  const [isViewingManual, setIsViewingManual] = useState(false);
   const [currentManual, setCurrentManual] = useState(null);
 
   useEffect(() => {
@@ -111,7 +113,10 @@ export default function ManualsTab() {
               </p>
 
               <div className="border-t border-chrome-border pt-4 flex justify-between items-center">
-                <button className="text-sm text-brand-primary hover:text-brand-primary/80 font-medium">
+                <button 
+                  onClick={() => { setCurrentManual(manual); setIsViewingManual(true); }}
+                  className="text-sm text-brand-primary hover:text-brand-primary/80 font-medium"
+                >
                   Leer Documento
                 </button>
                 {manual.url_pdf && (
@@ -131,6 +136,12 @@ export default function ManualsTab() {
         onClose={() => setIsEditingManual(false)}
         manual={currentManual}
         onSave={fetchManuales}
+      />
+
+      <ViewManualModal
+        isOpen={isViewingManual}
+        onClose={() => setIsViewingManual(false)}
+        manual={currentManual}
       />
     </div>
   );
