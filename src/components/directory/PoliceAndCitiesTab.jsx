@@ -172,11 +172,21 @@ export default function PoliceAndCitiesTab() {
                 <p className="text-xs font-medium text-chrome-text-muted mb-2 uppercase tracking-wider">Ciudades Cubiertas</p>
                 <div className="flex flex-wrap gap-2">
                   {policia.ciudades && policia.ciudades.length > 0 ? (
-                    policia.ciudades.map(c => (
-                      <span key={c.id} className="px-2 py-1 bg-chrome-bg-active border border-chrome-border text-chrome-text text-xs rounded-md">
-                        {c.nombre}
-                      </span>
-                    ))
+                    policia.ciudades.map(c => {
+                      const isMatch = normalizedSearch.length > 0 && normalize(c.nombre).includes(normalizedSearch);
+                      return (
+                        <span
+                          key={c.id}
+                          className={`px-2 py-1 border text-xs rounded-md transition-colors ${
+                            isMatch
+                              ? 'bg-brand-primary/10 border-brand-primary text-brand-primary font-medium'
+                              : 'bg-chrome-bg-active border-chrome-border text-chrome-text'
+                          }`}
+                        >
+                          {c.nombre}
+                        </span>
+                      );
+                    })
                   ) : (
                     <span className="text-xs text-chrome-text-muted italic">Ninguna ciudad asignada</span>
                   )}
