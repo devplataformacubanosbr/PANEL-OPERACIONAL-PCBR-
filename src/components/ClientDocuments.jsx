@@ -31,7 +31,31 @@ const ClientDocuments = ({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedDocs, setSelectedDocs] = useState([]);
   const [showMergerModal, setShowMergerModal] = useState(false);
+  const [resolvedUrls, setResolvedUrls] = useState({});
   const inputRef = useRef(null);
+
+  React.useEffect(() => {
+    let active = true;
+    const fetchUrls = async () => {
+      const urls = {};
+      const { getSignedUrl } = await import('../services/storageService');
+      for (const doc of documentos) {
+        if (!doc.url_archivo) continue;
+        if (doc.url_archivo.startsWith('http')) {
+          urls[doc.id] = doc.url_archivo;
+        } else {
+          try {
+            urls[doc.id] = await getSignedUrl(doc.url_archivo);
+          } catch (e) {
+            console.error('Error fetching signed url for drag:', e);
+          }
+        }
+      }
+      if (active) setResolvedUrls(urls);
+    };
+    fetchUrls();
+    return () => { active = false; };
+  }, [documentos]);
 
   const toggleVerification = async (doc) => {
     const newStatus = doc.estado === 'verificado' ? 'pendiente' : 'verificado';
@@ -174,20 +198,21 @@ const ClientDocuments = ({
                 onKeyDown={(e) => { if (e.key === 'Enter') setViewingDocument(doc); }}
                 onDragStart={(event) => {
                   setDraggedDocument(doc);
+                  const dragUrl = resolvedUrls[doc.id] || doc.url_archivo;
                   event.dataTransfer.setData('text/plain', doc.nombre_archivo || 'documento');
                   event.dataTransfer.setData('application/json', JSON.stringify({
                     type: 'document_copy',
-                    url: doc.url_archivo,
+                    url: dragUrl,
                     nombre: doc.nombre_archivo || 'documento',
                     tipo: doc.tipo_contenido || 'application/octet-stream'
                   }));
-                  const isPdf = doc.url_archivo?.toLowerCase().endsWith('.pdf') || doc.tipo_contenido === 'application/pdf';
+                  const isPdf = dragUrl?.toLowerCase().split('?')[0].endsWith('.pdf') || doc.tipo_contenido === 'application/pdf';
                   const mimeType = doc.tipo_contenido || (isPdf ? 'application/pdf' : 'application/octet-stream');
                   let fileName = doc.nombre_archivo || 'documento';
                   if (!fileName.includes('.')) fileName += isPdf ? '.pdf' : '';
                   const safeFileName = fileName.replace(/\s+/g, '_');
-                  event.dataTransfer.setData('DownloadURL', `${mimeType}:${safeFileName}:${doc.url_archivo}`);
-                  try { event.dataTransfer.setData('text/uri-list', doc.url_archivo); } catch (_err) { }
+                  event.dataTransfer.setData('DownloadURL', `${mimeType}:${safeFileName}:${dragUrl}`);
+                  try { event.dataTransfer.setData('text/uri-list', dragUrl); } catch (_err) { }
                   event.dataTransfer.effectAllowed = 'copyLink';
                 }}
                 onDragEnd={() => { setDraggedDocument(null); setDragOverRelId(null); }}

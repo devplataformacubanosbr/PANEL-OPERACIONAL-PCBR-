@@ -105,6 +105,17 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
       url,
       tipo: item.tipo_contenido
     }));
+    
+    if (item.tipo_contenido !== 'template') {
+      const isPdf = url.toLowerCase().split('?')[0].endsWith('.pdf') || item.tipo_contenido === 'application/pdf';
+      const mimeType = item.tipo_contenido || (isPdf ? 'application/pdf' : 'application/octet-stream');
+      let fileName = item.nombre || 'archivo';
+      if (!fileName.includes('.')) fileName += isPdf ? '.pdf' : '';
+      const safeFileName = fileName.replace(/\s+/g, '_');
+      e.dataTransfer.setData('DownloadURL', `${mimeType}:${safeFileName}:${url}`);
+      try { e.dataTransfer.setData('text/uri-list', url); } catch (_err) { }
+    }
+    
     e.dataTransfer.effectAllowed = 'copy';
   };
 
