@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import {  UploadCloud, FileText, Loader2, Tag, Eye, Trash2, Sparkles, Plus, Search, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
-import { formatDate } from '../utils/dateFormatter';
+import {  UploadCloud, FileText, Loader2, Tag, Eye, Trash2, Sparkles, Plus, Search, ChevronDown, ChevronUp, AlertCircle, Files, Sliders, CheckCircle2, Settings2 } from 'lucide-react';
+import { getFastopAcciones, getRequisitosTramite } from '../services/tramitesService';
+
+const VALID_MERGE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+const isValidForMerge = (doc) => {
+  if (doc.tipo_contenido && VALID_MERGE_TYPES.includes(doc.tipo_contenido)) return true;
+  const name = (doc.nombre_archivo || '').toLowerCase();
+  return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
+};
 
 // Cada uno arrastra sus propias dependencias pesadas (pdf-lib, docxtemplater,
 // html2pdf.js, react-quill) — lazy() para que solo se descarguen cuando el
@@ -8,14 +15,17 @@ import { formatDate } from '../utils/dateFormatter';
 const TemplateEditorModal = lazy(() => import('./TemplateEditorModal'));
 const TemplatePreviewModal = lazy(() => import('./TemplatePreviewModal'));
 const HtmlTemplateBuilder = lazy(() => import('./HtmlTemplateBuilder'));
+const DocumentoUnicoModal = lazy(() => import('./DocumentoUnicoModal'));
+const RequisitosDocumentosModal = lazy(() => import('./settings/RequisitosDocumentosModal'));
+const GestionarFastopAccionesModal = lazy(() => import('./GestionarFastopAccionesModal'));
 
 /**
  * TemplateManager
- * 
+ *
  * Reemplaza la sección "Generador de Trámites y Declaraciones".
  * Permite subir plantillas, gestionar mapeos y generar copias para un cliente.
  */
-export default function TemplateManager({ client, clienteDatos, entradas, defaultExpanded = false, onGenerate }) {
+export default function TemplateManager({ client, clienteDatos, entradas, documentos = [], defaultExpanded = false, onGenerate }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -37,6 +47,79 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
 
   // Thumbnails cache (No longer used in UI, but kept for compatibility if needed)
   const [thumbnails, setThumbnails] = useState({});
+
+  // FastOp: acciones rápidas sobre el cliente. "PDF Único" es la primera —
+  // sus variantes viven en tramites_catalogo (fastop_tipo='pdf_unico') y se
+  // administran 100% desde GestionarFastopAccionesModal, sin tocar código.
+  const [pdfUnicoPanelOpen, setPdfUnicoPanelOpen] = useState(false);
+  const [pdfUnicoAcciones, setPdfUnicoAcciones] = useState([]);
+  const [loadingAcciones, setLoadingAcciones] = useState(true);
+  const [accionesRefreshTick, setAccionesRefreshTick] = useState(0);
+  const [selectedAccionId, setSelectedAccionId] = useState(null);
+  const [showGestionarAcciones, setShowGestionarAcciones] = useState(false);
+  const [showDocumentoUnico, setShowDocumentoUnico] = useState(false);
+  const [checklistCatalogo, setChecklistCatalogo] = useState(null);
+  const [exampleSlots, setExampleSlots] = useState([]);
+  const [exampleLoading, setExampleLoading] = useState(false);
+  const [exampleRefreshTick, setExampleRefreshTick] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoadingAcciones(true);
+      try {
+        const data = await getFastopAcciones('pdf_unico');
+        if (!active) return;
+        setPdfUnicoAcciones(data);
+        setSelectedAccionId(prev => (prev && data.some(a => a.id === prev)) ? prev : (data[0]?.id ?? null));
+      } catch (err) {
+        console.error('[TemplateManager] Error cargando acciones FastOp:', err);
+      } finally {
+        if (active) setLoadingAcciones(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [accionesRefreshTick]);
+
+  const currentAccion = pdfUnicoAcciones.find(a => a.id === selectedAccionId) || null;
+
+  // Ejemplo de armado con los archivos reales del cliente, sin abrir ningún
+  // modal — solo lectura, para que el staff vea de un vistazo qué falta antes
+  // de generar.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!currentAccion) { setExampleSlots([]); return; }
+      setExampleLoading(true);
+      try {
+        const requisitos = await getRequisitosTramite(currentAccion.id);
+        const mergeableDocs = documentos.filter(isValidForMerge);
+        const slots = requisitos.map(req => {
+          const candidatos = mergeableDocs
+            .filter(d => d.tipo_documento === req.tipo_documento)
+            .sort((a, b) => new Date(b.creado_en || 0) - new Date(a.creado_en || 0));
+          return { label: req.tipo_dato, obligatorio: !!req.obligatorio, matchedDoc: candidatos[0] || null };
+        });
+        if (active) setExampleSlots(slots);
+      } catch (err) {
+        console.error('[TemplateManager] Error cargando ejemplo de FastOp:', err);
+      } finally {
+        if (active) setExampleLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [currentAccion, documentos, exampleRefreshTick]);
+
+  const handleConfigurarChecklistFor = (accion) => {
+    setPdfUnicoPanelOpen(false);
+    setSelectedAccionId(accion.id);
+    setChecklistCatalogo(accion);
+  };
+
+  const handleGenerarPdfUnico = () => {
+    if (!currentAccion) return;
+    setShowDocumentoUnico(true);
+  };
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
@@ -481,6 +564,132 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
         )}
       </section>
 
+      <section id="fastop" className="glass-panel" style={{ overflow: 'hidden', flexShrink: 0, marginTop: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
+          <Files size={18} color="var(--color-info)" />
+          <h3 style={{ font: 'var(--font-section-title)', margin: 0, fontSize: '1rem' }}>FastOp</h3>
+        </div>
+        <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <button
+                onClick={() => setPdfUnicoPanelOpen(o => !o)}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)',
+                  background: 'var(--color-bg-elevated)', color: 'var(--color-text-primary)', fontSize: '0.85rem', fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Files size={16} color="var(--color-primary)" /> PDF Único
+                </span>
+                {pdfUnicoPanelOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+
+              {pdfUnicoPanelOpen && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 20,
+                  background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-md)', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', overflow: 'hidden',
+                }}>
+                  {loadingAcciones ? (
+                    <div style={{ padding: '0.75rem 0.9rem', fontSize: '0.8rem', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Loader2 size={14} className="animate-spin" /> Cargando...
+                    </div>
+                  ) : pdfUnicoAcciones.length === 0 ? (
+                    <div style={{ padding: '0.75rem 0.9rem', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                      Todavía no hay ninguna variante. Usá "Gestionar" para crear la primera.
+                    </div>
+                  ) : (
+                    pdfUnicoAcciones.map((a, i) => (
+                      <div
+                        key={a.id}
+                        onClick={() => { setSelectedAccionId(a.id); setPdfUnicoPanelOpen(false); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '0.6rem 0.9rem', cursor: 'pointer',
+                          background: a.id === selectedAccionId ? 'rgba(59,130,246,0.1)' : 'transparent',
+                          borderBottom: i < pdfUnicoAcciones.length - 1 ? '1px solid var(--color-border)' : 'none',
+                        }}
+                        onMouseEnter={(e) => { if (a.id !== selectedAccionId) e.currentTarget.style.background = 'var(--color-bg-surface)'; }}
+                        onMouseLeave={(e) => { if (a.id !== selectedAccionId) e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <span style={{ fontSize: '0.85rem', fontWeight: a.id === selectedAccionId ? 600 : 400, color: 'var(--color-text-primary)' }}>
+                          {a.nombre}
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleConfigurarChecklistFor(a); }}
+                          className="btn btn-ghost"
+                          style={{ padding: '0.3rem', color: 'var(--color-text-muted)' }}
+                          title={`Configurar checklist de ${a.nombre}`}
+                        >
+                          <Sliders size={14} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowGestionarAcciones(true)}
+              className="btn btn-secondary"
+              style={{ padding: '0.6rem', borderRadius: 'var(--radius-md)', flexShrink: 0 }}
+              title="Gestionar variantes de PDF Único (agregar, renombrar, desactivar)"
+            >
+              <Settings2 size={16} />
+            </button>
+          </div>
+
+          {currentAccion && (
+            <>
+              <div style={{
+                border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+                padding: '0.85rem', background: 'var(--color-bg-surface)',
+              }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                  Ejemplo con los archivos de este cliente — {currentAccion.nombre}
+                </div>
+                {exampleLoading ? (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Loader2 size={14} className="animate-spin" /> Cargando...
+                  </div>
+                ) : exampleSlots.length === 0 ? (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                    Todavía no hay un checklist configurado para "{currentAccion.nombre}". Usá la ruedita de arriba para definirlo.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    {exampleSlots.map((s, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.8rem' }}>
+                        <span style={{ color: 'var(--color-text-secondary)' }}>{s.label}{s.obligatorio ? ' *' : ''}</span>
+                        {s.matchedDoc ? (
+                          <span style={{ color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>
+                            <CheckCircle2 size={12} style={{ flexShrink: 0 }} /> {s.matchedDoc.nombre_archivo}
+                          </span>
+                        ) : (
+                          <span style={{ color: s.obligatorio ? 'var(--color-danger)' : 'var(--color-text-muted)' }}>— falta —</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                className="btn btn-primary"
+                onClick={handleGenerarPdfUnico}
+                style={{ padding: '0.5rem 0.9rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderRadius: '6px' }}
+              >
+                <Files size={14} /> Generar PDF Único
+              </button>
+            </>
+          )}
+        </div>
+      </section>
+
       {/* Modals */}
       <Suspense fallback={null}>
         {editorTemplate && (
@@ -508,6 +717,40 @@ export default function TemplateManager({ client, clienteDatos, entradas, defaul
               setShowHtmlBuilder(false);
               fetchTemplates();
             }}
+          />
+        )}
+
+        {showDocumentoUnico && currentAccion && (
+          <DocumentoUnicoModal
+            tramiteCatalogo={currentAccion}
+            title={currentAccion?.nombre}
+            client={client}
+            documentos={documentos}
+            onClose={() => setShowDocumentoUnico(false)}
+            onGenerated={() => {
+              setShowDocumentoUnico(false);
+              if (onGenerate) onGenerate();
+            }}
+          />
+        )}
+
+        {checklistCatalogo && (
+          <RequisitosDocumentosModal
+            tramite={checklistCatalogo}
+            onClose={() => setChecklistCatalogo(null)}
+            onSaved={() => {
+              setChecklistCatalogo(null);
+              setExampleRefreshTick(t => t + 1);
+            }}
+          />
+        )}
+
+        {showGestionarAcciones && (
+          <GestionarFastopAccionesModal
+            tipo="pdf_unico"
+            tipoLabel="PDF Único"
+            onClose={() => setShowGestionarAcciones(false)}
+            onChanged={() => setAccionesRefreshTick(t => t + 1)}
           />
         )}
       </Suspense>

@@ -291,7 +291,7 @@ export const updateEntradaDatosPersonalizados = async (id, datos_personalizados)
 export const getCatalogoTramites = async () => {
   const { data, error } = await supabase
     .from('tramites_catalogo')
-    .select('id, nombre, codigo, costo')
+    .select('id, nombre, codigo, costo, fastop_tipo')
     .eq('activo', true)
     .order('nombre');
   if (error) throw error;
@@ -305,6 +305,44 @@ export const getAllCatalogoTramites = async () => {
     .order('nombre');
   if (error) throw error;
   return data || [];
+};
+
+// `codigo` tiene un UNIQUE constraint en la BD -- no podemos mandar '' para
+// cada fila nueva (la segunda ya choca contra la primera), así que generamos
+// un código determinístico a partir del nombre.
+const slugifyCodigo = (nombre) => nombre
+  .normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toUpperCase()
+  .replace(/[^A-Z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '');
+
+// ── Acciones FastOp (ej. variantes de "PDF Único") ──────────────────────────
+// Reutilizan tramites_catalogo como contenedor -- así enganchan gratis con
+// tramites_requisitos (FK a tramite_id) -- pero se distinguen de los trámites
+// facturables reales por la columna fastop_tipo (NULL = trámite real).
+
+export const getFastopAcciones = async (tipo) => {
+  const { data, error } = await supabase
+    .from('tramites_catalogo')
+    .select('*')
+    .eq('fastop_tipo', tipo)
+    .eq('activo', true)
+    .order('nombre');
+  if (error) throw error;
+  return data || [];
+};
+
+export const createFastopAccion = async (nombre, tipo) => {
+  const nombreNorm = nombre.trim().toUpperCase();
+  return createCatalogoTramite({ nombre: nombreNorm, codigo: slugifyCodigo(nombreNorm), fastop_tipo: tipo, costo: 0, activo: true });
+};
+
+export const renameFastopAccion = async (id, nombre) => {
+  return updateCatalogoTramite(id, { nombre: nombre.trim().toUpperCase() });
+};
+
+export const deactivateFastopAccion = async (id) => {
+  return updateCatalogoTramite(id, { activo: false });
 };
 
 export const createCatalogoTramite = async (tramite) => {
@@ -471,5 +509,44 @@ export const updateEntradaEtiquetas = async (id, etiquetas_ids) => {
     .from('entradas')
     .update({ etiquetas_ids: etiquetas_ids || [] })
     .eq('id', id);
+  if (error) throw error;
+};
+
+// ── Requisitos de Documentos (checklist del "PDF Único") ────────────────────
+
+export const getRequisitosTramite = async (tramiteId) => {
+  const { data, error } = await supabase
+    .from('tramites_requisitos')
+    .select('*')
+    .eq('tramite_id', tramiteId)
+    .eq('activo', true)
+    .order('orden', { ascending: true });
+  if (error) throw error;
+  return data || [];
+};
+
+export const createRequisito = async (requisito) => {
+  const { data, error } = await supabase
+    .from('tramites_requisitos')
+    .insert(requisito)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const updateRequisito = async (id, updates) => {
+  const { data, error } = await supabase
+    .from('tramites_requisitos')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const deleteRequisito = async (id) => {
+  const { error } = await supabase.from('tramites_requisitos').delete().eq('id', id);
   if (error) throw error;
 };

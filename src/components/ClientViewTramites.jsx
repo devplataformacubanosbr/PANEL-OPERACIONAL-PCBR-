@@ -609,8 +609,8 @@ export default function ClientViewTramites({
                           }}
                         >
                           <option value="">SELECCIONAR...</option>
-                          {/* Opciones del catálogo */}
-                          {catalogoTramites.map(cat => (
+                          {/* Opciones del catálogo (sin los contenedores internos de FastOp) */}
+                          {catalogoTramites.filter(cat => !cat.fastop_tipo).map(cat => (
                             <option key={cat.id} value={cat.nombre}>{cat.nombre}</option>
                           ))}
                           {/* Si el trámite actual no está en el catálogo, mostrarlo también */}

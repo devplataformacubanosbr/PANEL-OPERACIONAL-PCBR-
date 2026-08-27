@@ -3,6 +3,7 @@ import ReactCrop, { centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { X, RotateCw, FileText } from 'lucide-react';
 import { getCroppedImg } from '../utils/canvasUtils';
+import { DOCUMENT_TYPE_OPTIONS } from './clientView.constants';
 
 export default function PreUploadDocumentModal({ file, onClose, onConfirm }) {
   const [fileName, setFileName] = useState('');
@@ -120,12 +121,9 @@ export default function PreUploadDocumentModal({ file, onClose, onConfirm }) {
                 className="input-field"
                 style={{ width: '100%', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--surface-raised)', color: 'var(--color-text-primary)' }}
               >
-                <option value="FOTO">Foto</option>
-                <option value="COMPROBANTE">Comprobante</option>
-                <option value="DOCUMENTO IDENTIDAD">Documento de Identidad</option>
-                <option value="PASAPORTE">Pasaporte</option>
-                <option value="FORMULARIO">Formulario</option>
-                <option value="OTRO">Otro</option>
+                {DOCUMENT_TYPE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </div>
           </div>

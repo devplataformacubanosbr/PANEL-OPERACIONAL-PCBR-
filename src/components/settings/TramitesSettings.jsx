@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getAllCatalogoTramites, createCatalogoTramite, updateCatalogoTramite } from '../../services/tramitesService';
 import { LoadingSpinner } from '../LoadingSpinner';
-import { Plus, Edit2, Check, X, Sliders } from 'lucide-react';
+import { Plus, Edit2, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatCurrency } from '../../utils/currencyFormatter';
 
@@ -10,7 +10,7 @@ export default function TramitesSettings() {
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ nombre: '', codigo: '', costo: 0, activo: true });
-  
+
   const [isAdding, setIsAdding] = useState(false);
   const [newForm, setNewForm] = useState({ nombre: '', codigo: '', costo: 0 });
   const [saving, setSaving] = useState(false);
@@ -22,7 +22,9 @@ export default function TramitesSettings() {
   const loadTramites = async () => {
     try {
       const data = await getAllCatalogoTramites();
-      setTramites(data);
+      // Las filas fastop_tipo son contenedores internos (ej. checklists de PDF
+      // Único), no trámites facturables reales -- se gestionan desde FastOp.
+      setTramites(data.filter(t => !t.fastop_tipo));
     } catch (_error) {
       toast.error('Error al cargar operaciones');
     } finally {

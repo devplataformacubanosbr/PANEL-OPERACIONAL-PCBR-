@@ -527,11 +527,12 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             onSendToExtension={handleSendToExtension}
             customFieldsConfig={customFieldsConfig}
           />
-          <TemplateManager 
-            defaultExpanded={false} 
-            client={client} 
-            entradas={entradas} 
-            onGenerate={() => fetchClientData(true)} 
+          <TemplateManager
+            defaultExpanded={false}
+            client={client}
+            entradas={entradas}
+            documentos={documentos}
+            onGenerate={() => fetchClientData(true)}
           />
         </div>
 

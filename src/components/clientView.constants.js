@@ -42,6 +42,25 @@ export const SEXO_OPTIONS = [
   "Feminino"
 ];
 
+// ── Tipos de documento (subida de archivos y checklist del "PDF Único") ─────
+// Lista ampliada a partir de los documentos reales que componen el "PDF
+// Único" de trámites como el de Florianópolis (CPF, recibo de Sisconare,
+// comprobante de residencia, fotos 3x4) además de los tipos genéricos ya
+// usados en el sistema. No hay CHECK constraint en la BD para tipo_documento,
+// así que esto es solo la lista sugerida en los selects.
+export const DOCUMENT_TYPE_OPTIONS = [
+  { value: 'FOTO', label: 'Foto' },
+  { value: 'FOTO 3X4', label: 'Foto 3x4' },
+  { value: 'COMPROBANTE', label: 'Comprobante' },
+  { value: 'COMPROBANTE DE RESIDENCIA', label: 'Comprobante de Residencia' },
+  { value: 'DOCUMENTO IDENTIDAD', label: 'Documento de Identidad' },
+  { value: 'PASAPORTE', label: 'Pasaporte' },
+  { value: 'CPF', label: 'CPF' },
+  { value: 'RECIBO SISCONARE', label: 'Recibo Sisconare (Solicitud de Refugio)' },
+  { value: 'FORMULARIO', label: 'Formulario' },
+  { value: 'OTRO', label: 'Otro' },
+];
+
 // ── Campos fijos de la tabla `clientes` ──────────────────────────────────────
 // Definidos una sola vez fuera del componente para evitar recrearlos en cada render.
 
