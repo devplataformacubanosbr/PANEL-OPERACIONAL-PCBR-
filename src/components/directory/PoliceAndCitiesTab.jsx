@@ -58,11 +58,21 @@ export default function PoliceAndCitiesTab() {
         throw err;
       }
 
-      // Combinar relaciones en los objetos de policía
+      // policia_puntos es una tabla opcional/nueva: si todavía no se corrió
+      // la migración, seguir mostrando el resto del directorio igual.
+      let puntosData = [];
+      try {
+        puntosData = await fetchAllRows('policia_puntos', '*');
+      } catch (err) {
+        if (err.code !== '42P01') throw err;
+      }
+
+      // Combinar relaciones y puntos adicionales en los objetos de policía
       const policiasConCiudades = (policiasData || []).map(p => {
         const rels = (relData || []).filter(r => r.policia_id === p.id);
         const pCiudades = rels.map(r => ciudadesData.find(c => c.id === r.ciudad_id)).filter(Boolean);
-        return { ...p, ciudades: pCiudades };
+        const pPuntos = puntosData.filter(punto => punto.policia_id === p.id);
+        return { ...p, ciudades: pCiudades, puntos: pPuntos };
       });
 
       setPolicias(policiasConCiudades);
@@ -73,8 +83,8 @@ export default function PoliceAndCitiesTab() {
       setError(err.message);
       // Fallback a mock data para demostrar UI si no hay tablas
       setPolicias([
-        { id: 1, nombre: 'Policía Federal de São Paulo', direccion: 'Rua Bela Cintra, 123', email: 'pf.sp@gov.br', ciudades: [{ id: 1, nombre: 'São Paulo' }, { id: 2, nombre: 'Campinas' }] },
-        { id: 2, nombre: 'Polícia Civil Rio de Janeiro', direccion: 'Av. Presidente Vargas', email: 'pc.rj@gov.br', ciudades: [{ id: 3, nombre: 'Rio de Janeiro' }] }
+        { id: 1, nombre: 'ALTAMIRA - DPF/ATM/PA', direccion: 'Rua Acesso 3, 850', email: 'nucart.atm.pa@pf.gov.br', ciudades: [{ id: 1, nombre: 'Altamira', estado: 'Pará' }] },
+        { id: 2, nombre: 'BELÉM - SR/PF/PA', direccion: 'Av. Almirante Barroso, 3251', email: 'delemig.drex.spa@pf.gov.br', ciudades: [{ id: 2, nombre: 'Belém', estado: 'Pará' }] },
       ]);
     } finally {
       setLoading(false);
@@ -148,7 +158,7 @@ export default function PoliceAndCitiesTab() {
                   </div>
                 </div>
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button 
+                  <button
                     onClick={() => { setCurrentPolicia(policia); setIsEditingPolicia(true); }}
                     className="p-1.5 text-chrome-text-muted hover:text-brand-primary rounded-md hover:bg-chrome-bg-hover"
                     title="Editar"
@@ -160,7 +170,7 @@ export default function PoliceAndCitiesTab() {
                   </button>
                 </div>
               </div>
-              
+
               <div className="space-y-2 mb-4 text-sm text-chrome-text-muted">
                 <div className="flex items-start gap-2">
                   <MapPin size={16} className="mt-0.5 flex-shrink-0" />
@@ -192,6 +202,24 @@ export default function PoliceAndCitiesTab() {
                   )}
                 </div>
               </div>
+
+              {policia.puntos && policia.puntos.length > 0 && (
+                <div className="border-t border-chrome-border pt-4 mt-4">
+                  <p className="text-xs font-medium text-chrome-text-muted mb-2 uppercase tracking-wider">
+                    Otros puntos de atención
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    {policia.puntos.map(punto => (
+                      <div key={punto.id} className="text-xs text-chrome-text-muted">
+                        {punto.sigla && <span className="font-medium text-chrome-text">{punto.sigla}: </span>}
+                        {punto.direccion || 'Sin dirección'}
+                        {punto.telefono && <span> · {punto.telefono}</span>}
+                        {punto.email && <span> · {punto.email}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

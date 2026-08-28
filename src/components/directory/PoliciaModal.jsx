@@ -1,8 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Building2, MapPin, Mail, Phone, Clock, AlignLeft } from 'lucide-react';
+import { Save, Building2, MapPin, Mail, Phone, Clock, AlignLeft, Plus, X } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
+
+const PUNTO_VACIO = { sigla: '', direccion: '', telefono: '', email: '' };
+
+const normalize = (s) =>
+  (s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
 
 export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSave }) {
   const [formData, setFormData] = useState({
@@ -14,6 +22,8 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
     notas: '',
   });
   const [selectedCiudades, setSelectedCiudades] = useState([]);
+  const [ciudadSearch, setCiudadSearch] = useState('');
+  const [puntos, setPuntos] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -28,6 +38,15 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
         notas: policia.notas || '',
       });
       setSelectedCiudades(policia.ciudades?.map(c => c.id) || []);
+      setPuntos(
+        (policia.puntos || []).map(p => ({
+          id: p.id,
+          sigla: p.sigla || '',
+          direccion: p.direccion || '',
+          telefono: p.telefono || '',
+          email: p.email || '',
+        }))
+      );
     } else {
       setFormData({
         nombre: '',
@@ -38,7 +57,9 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
         notas: '',
       });
       setSelectedCiudades([]);
+      setPuntos([]);
     }
+    setCiudadSearch('');
   }, [policia, isOpen]);
 
   if (!isOpen) return null;
@@ -48,11 +69,23 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
   };
 
   const handleCiudadToggle = (ciudadId) => {
-    setSelectedCiudades(prev => 
-      prev.includes(ciudadId) 
+    setSelectedCiudades(prev =>
+      prev.includes(ciudadId)
         ? prev.filter(id => id !== ciudadId)
         : [...prev, ciudadId]
     );
+  };
+
+  const handlePuntoChange = (index, field, value) => {
+    setPuntos(prev => prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
+  };
+
+  const handleAddPunto = () => {
+    setPuntos(prev => [...prev, { ...PUNTO_VACIO }]);
+  };
+
+  const handleRemovePunto = (index) => {
+    setPuntos(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e) => {
@@ -80,8 +113,9 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
         if (updateError) throw updateError;
         savedPolicia = data;
 
-        // Delete existing relationships
+        // Delete existing relationships and puntos de atención
         await supabase.from('policias_ciudades').delete().eq('policia_id', policia.id);
+        await supabase.from('policia_puntos').delete().eq('policia_id', policia.id);
       } else {
         // Insert
         const { data, error: insertError } = await supabase
@@ -103,6 +137,23 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
           .from('policias_ciudades')
           .insert(relsToInsert);
         if (relError) throw relError;
+      }
+
+      // Save Puntos de atención adicionales (ignora filas completamente vacías)
+      const puntosToInsert = puntos
+        .filter(p => p.sigla || p.direccion || p.telefono || p.email)
+        .map(p => ({
+          policia_id: savedPolicia.id,
+          sigla: p.sigla || null,
+          direccion: p.direccion || null,
+          telefono: p.telefono || null,
+          email: p.email || null,
+        }));
+      if (puntosToInsert.length > 0 && savedPolicia) {
+        const { error: puntosError } = await supabase
+          .from('policia_puntos')
+          .insert(puntosToInsert);
+        if (puntosError) throw puntosError;
       }
 
       onSave(); // Refresh data in parent
@@ -224,27 +275,136 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
           </div>
         </div>
 
+        {/* Puntos de atención adicionales */}
+        <div className="space-y-3 pt-4 border-t border-chrome-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-chrome-text">Puntos de atención adicionales</label>
+              <p className="text-xs text-chrome-text-muted">
+                Para trámites que se atienden en otra dirección dentro de la misma ciudad, ej. el posto de pasaportes.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddPunto}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-chrome-border bg-chrome-bg-active text-sm text-chrome-text hover:border-brand-primary/50 transition-colors flex-shrink-0"
+            >
+              <Plus size={14} />
+              Añadir punto
+            </button>
+          </div>
+
+          {puntos.length > 0 && (
+            <div className="flex flex-col gap-3">
+              {puntos.map((punto, index) => (
+                <div key={punto.id || index} className="rounded-md border border-chrome-border bg-chrome-bg-active p-3">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <input
+                      type="text"
+                      value={punto.sigla}
+                      onChange={(e) => handlePuntoChange(index, 'sigla', e.target.value)}
+                      className="w-full rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors"
+                      placeholder="Sigla (ej. NUCART/ATM/PA)"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePunto(index)}
+                      className="p-1.5 text-chrome-text-muted hover:text-danger rounded-md hover:bg-chrome-bg flex-shrink-0"
+                      title="Quitar punto"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <textarea
+                      value={punto.direccion}
+                      onChange={(e) => handlePuntoChange(index, 'direccion', e.target.value)}
+                      rows={2}
+                      className="w-full rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors resize-none md:col-span-2"
+                      placeholder="Dirección de este punto"
+                    />
+                    <input
+                      type="text"
+                      value={punto.telefono}
+                      onChange={(e) => handlePuntoChange(index, 'telefono', e.target.value)}
+                      className="w-full rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors"
+                      placeholder="Teléfono"
+                    />
+                    <input
+                      type="email"
+                      value={punto.email}
+                      onChange={(e) => handlePuntoChange(index, 'email', e.target.value)}
+                      className="w-full rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors"
+                      placeholder="Email"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Ciudades Relacionadas */}
         <div className="space-y-3 pt-4 border-t border-chrome-border">
           <label className="text-sm font-medium text-chrome-text">Ciudades que cubre</label>
-          <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-1">
-            {ciudades.length === 0 ? (
-              <span className="text-sm text-chrome-text-muted">No hay ciudades registradas.</span>
+
+          <div className="flex flex-wrap gap-2">
+            {selectedCiudades.length === 0 ? (
+              <span className="text-sm text-chrome-text-muted italic">Ninguna ciudad asignada todavía.</span>
             ) : (
-              ciudades.map(c => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => handleCiudadToggle(c.id)}
-                  className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
-                    selectedCiudades.includes(c.id)
-                      ? 'border-brand-primary bg-brand-primary/10 text-brand-primary font-medium'
-                      : 'border-chrome-border bg-chrome-bg-active text-chrome-text-muted hover:border-chrome-border-hover'
-                  }`}
-                >
-                  {c.nombre}
-                </button>
-              ))
+              selectedCiudades.map(id => {
+                const c = ciudades.find(ciudad => ciudad.id === id);
+                if (!c) return null;
+                return (
+                  <span
+                    key={id}
+                    className="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-md border border-brand-primary bg-brand-primary/10 text-brand-primary text-sm font-medium"
+                  >
+                    {c.nombre}
+                    <button
+                      type="button"
+                      onClick={() => handleCiudadToggle(id)}
+                      className="p-0.5 rounded hover:bg-brand-primary/20"
+                      title="Quitar ciudad"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                );
+              })
+            )}
+          </div>
+
+          <div className="relative">
+            <input
+              type="text"
+              value={ciudadSearch}
+              onChange={(e) => setCiudadSearch(e.target.value)}
+              className="w-full rounded-md border border-chrome-border bg-chrome-bg px-3 py-2 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors"
+              placeholder="Buscar ciudad para agregar..."
+            />
+            {ciudadSearch.trim() && (
+              <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-chrome-border bg-chrome-bg shadow-lg">
+                {(() => {
+                  const q = normalize(ciudadSearch);
+                  const resultados = ciudades
+                    .filter(c => !selectedCiudades.includes(c.id) && normalize(c.nombre).includes(q))
+                    .slice(0, 30);
+                  if (resultados.length === 0) {
+                    return <p className="px-3 py-2 text-sm text-chrome-text-muted">Sin resultados.</p>;
+                  }
+                  return resultados.map(c => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => { handleCiudadToggle(c.id); setCiudadSearch(''); }}
+                      className="block w-full text-left px-3 py-2 text-sm text-chrome-text hover:bg-chrome-bg-active"
+                    >
+                      {c.nombre}{c.estado ? ` — ${c.estado}` : ''}
+                    </button>
+                  ));
+                })()}
+              </div>
             )}
           </div>
         </div>
