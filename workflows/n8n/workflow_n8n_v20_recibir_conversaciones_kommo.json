@@ -1,0 +1,400 @@
+{
+  "name": "Recibir Conversaciones y Documentos desde Kommo",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kommo-notas-recibir",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "wh-kommo-notas",
+      "name": "Webhook (Recibir Notas Kommo)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "webhookId": "kommo-notas-recibir-v20"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nconst query = $json.query || {};\n\nconst leadId = body['leads[note][add][0][element_id]']\n  || body['leads[note][update][0][element_id]']\n  || null;\n\nreturn [{\n  json: {\n    valid: !!leadId,\n    leadId: leadId ? parseInt(leadId, 10) : null,\n    secretParam: query.secret || null\n  }\n}];"
+      },
+      "id": "code-extraer-lead",
+      "name": "Extraer Lead Id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$json.valid}}", "value2": true }
+          ]
+        }
+      },
+      "id": "if-hay-lead",
+      "name": "IF Hay Lead Id",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {},
+      "id": "noop-ignorar",
+      "name": "Ignorar",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [760, 620]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$vars.SUPABASE_URL}}/rest/v1/integraciones_kommo?select=subdominio,token,webhook_secret&limit=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Authorization", "value": "=Bearer {{$vars.SUPABASE_SERVICE_ROLE_KEY}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-integracion-kommo",
+      "name": "Obtener Integración Kommo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [760, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const integ = ($json && $json[0]) || null;\nconst base = $('Extraer Lead Id').item.json;\nconst secretOk = !integ || !integ.webhook_secret || integ.webhook_secret === base.secretParam;\n\nreturn [{\n  json: {\n    ...base,\n    secretOk,\n    subdominio: integ ? integ.subdominio : null,\n    token: integ ? integ.token : null\n  }\n}];"
+      },
+      "id": "code-verificar-secret",
+      "name": "Verificar Secret Kommo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$json.secretOk}}", "value2": true }
+          ]
+        }
+      },
+      "id": "if-secret-valido",
+      "name": "IF Secret Válido",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$vars.SUPABASE_URL}}/rest/v1/entradas?id_lead=eq.{{$json.leadId}}&select=id_cliente,clientes(telefono)&limit=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Authorization", "value": "=Bearer {{$vars.SUPABASE_SERVICE_ROLE_KEY}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-resolver-cliente",
+      "name": "Resolver Cliente por Entrada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1420, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$json.length > 0 && !!$json[0].id_cliente}}", "value2": true }
+          ]
+        }
+      },
+      "id": "if-cliente-encontrado",
+      "name": "IF Cliente Encontrado",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1640, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $json[0];\nconst base = $('Verificar Secret Kommo').item.json;\nreturn [{\n  json: {\n    ...base,\n    clienteId: row.id_cliente,\n    telefono: (row.clientes && row.clientes.telefono) || null\n  }\n}];"
+      },
+      "id": "code-fijar-cliente",
+      "name": "Fijar Cliente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1860, 120]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{$json.subdominio}}.kommo.com/api/v4/leads/{{$json.leadId}}/notes?order[created_at]=desc&limit=5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$json.token}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-listar-notas",
+      "name": "Listar Notas Recientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2080, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const note = ($json._embedded && $json._embedded.notes && $json._embedded.notes[0]) || null;\nconst base = $('Fijar Cliente').item.json;\n\nif (!note) {\n  return [{ json: { ...base, texto: null, hasAttachment: false, skip: true } }];\n}\n\nconst params = note.params || {};\nconst noteType = note.note_type;\n\n// Heurística: created_by 0/ausente = mensaje del canal (cliente); >0 = agente humano en Kommo.\nconst fromAgent = !!note.created_by && note.created_by !== 0;\n\n// Kommo no documenta públicamente el shape exacto de un adjunto dentro de una\n// nota de chat — se prueban varias formas conocidas. Si ninguna matchea con un\n// caso real, este es el bloque a ajustar (ver aviso en el chat).\nconst directLink = params.link\n  || (params.attachment && params.attachment.link)\n  || params.media\n  || params.file_url\n  || null;\n\nconst fileUuid = params.file_uuid || (params.attachment && params.attachment.file_uuid) || null;\nconst fileName = params.file_name || (params.attachment && params.attachment.file_name) || null;\nconst hasAttachment = noteType === 'attachment' || !!directLink || !!fileUuid;\n\nconst texto = params.text\n  || params.message\n  || (fileName ? `[Archivo] ${fileName}` : (hasAttachment ? '[Archivo]' : '[Mensaje]'));\n\nreturn [{\n  json: {\n    ...base,\n    texto,\n    tipo: fromAgent ? 'saliente' : 'entrante',\n    remitente: fromAgent ? 'outgoing' : 'incoming',\n    hasAttachment,\n    directLink,\n    fileUuid,\n    fileName: fileName || ('kommo_' + Date.now())\n  }\n}];"
+      },
+      "id": "code-procesar-nota",
+      "name": "Procesar Nota",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2300, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{!!$json.hasAttachment}}", "value2": true }
+          ]
+        }
+      },
+      "id": "if-hay-adjunto",
+      "name": "IF Hay Adjunto",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2520, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{!!$json.directLink}}", "value2": true }
+          ]
+        }
+      },
+      "id": "if-tiene-link",
+      "name": "IF Tiene Link Directo",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2740, 40]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{$json.subdominio}}.kommo.com/api/v4/files/{{$json.fileUuid}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$json.token}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-resolver-archivo",
+      "name": "Resolver Archivo (Files API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2960, -60]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Procesar Nota').item.json;\nconst resp = $json || {};\nconst link = resp.download_link\n  || (resp._links && resp._links.download && resp._links.download.href)\n  || (resp._embedded && resp._embedded.download && resp._embedded.download.href)\n  || resp.url\n  || null;\n\nreturn [{ json: { ...base, directLink: link } }];"
+      },
+      "id": "code-extraer-link-files",
+      "name": "Extraer Link Files API",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3180, -60]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$json.directLink}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$json.token}}" }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "http-descargar-archivo",
+      "name": "Descargar Archivo Kommo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3400, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $json;\nconst mimeType = ($binary && $binary.data && $binary.data.mimeType) || 'application/octet-stream';\n\nfunction guessExt(mt) {\n  const map = { 'image/jpeg': '.jpg', 'image/png': '.png', 'application/pdf': '.pdf', 'audio/ogg': '.ogg', 'audio/mpeg': '.mp3', 'video/mp4': '.mp4' };\n  if (map[mt]) return map[mt];\n  const sub = (mt.split('/')[1] || 'bin').split(';')[0];\n  return '.' + sub;\n}\n\nconst rawName = prev.fileName || ('kommo_' + Date.now());\nconst fileName = /\\.[a-zA-Z0-9]{2,5}$/.test(rawName) ? rawName : rawName + guessExt(mimeType);\n\nreturn [{\n  json: { ...prev },\n  binary: { data: { ...($binary ? $binary.data : {}), fileName, mimeType } }\n}];"
+      },
+      "id": "code-preparar-binario",
+      "name": "Preparar Binario Kommo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3620, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$vars.SUPABASE_URL}}/storage/v1/object/whatsapp_media/{{$binary.data.fileName}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Authorization", "value": "=Bearer {{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Content-Type", "value": "={{$binary.data.mimeType}}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "={{$binary.data.mimeType}}",
+        "sendBinaryData": true,
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "http-subir-storage",
+      "name": "Subir a Supabase Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3840, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$vars.SUPABASE_URL}}/storage/v1/object/sign/whatsapp_media/{{$('Preparar Binario Kommo').item.binary.data.fileName}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Authorization", "value": "=Bearer {{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ expiresIn: 315360000 }) }}",
+        "options": {}
+      },
+      "id": "http-firmar-url",
+      "name": "Firmar URL Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [4060, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Preparar Binario Kommo').item.json;\nconst fileName = $('Preparar Binario Kommo').item.binary.data.fileName;\nconst mimeType = $('Preparar Binario Kommo').item.binary.data.mimeType;\nconst signedURL = $json.signedURL || '';\n\nreturn [{\n  json: {\n    mensajeBody: {\n      cliente_id: prev.clienteId,\n      texto: prev.texto,\n      tipo: prev.tipo,\n      proveedor: 'kommo',\n      leido: false,\n      remitente: prev.remitente,\n      telefono: prev.telefono,\n      media_url: signedURL ? `${$vars.SUPABASE_URL}/storage/v1${signedURL}` : null,\n      media_type: mimeType,\n      media_name: fileName\n    }\n  }\n}];"
+      },
+      "id": "code-fijar-media",
+      "name": "Fijar Media",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4280, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $json;\nreturn [{\n  json: {\n    mensajeBody: {\n      cliente_id: prev.clienteId,\n      texto: prev.texto,\n      tipo: prev.tipo,\n      proveedor: 'kommo',\n      leido: false,\n      remitente: prev.remitente,\n      telefono: prev.telefono,\n      media_url: null,\n      media_type: null,\n      media_name: null\n    }\n  }\n}];"
+      },
+      "id": "code-sin-media",
+      "name": "Sin Media",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2740, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$vars.SUPABASE_URL}}/rest/v1/mensajes",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Authorization", "value": "=Bearer {{$vars.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.mensajeBody) }}",
+        "options": {}
+      },
+      "id": "http-guardar-mensaje",
+      "name": "Guardar Mensaje",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [4500, 180]
+    }
+  ],
+  "connections": {
+    "Webhook (Recibir Notas Kommo)": { "main": [[{ "node": "Extraer Lead Id", "type": "main", "index": 0 }]] },
+    "Extraer Lead Id": { "main": [[{ "node": "IF Hay Lead Id", "type": "main", "index": 0 }]] },
+    "IF Hay Lead Id": {
+      "main": [
+        [{ "node": "Obtener Integración Kommo", "type": "main", "index": 0 }],
+        [{ "node": "Ignorar", "type": "main", "index": 0 }]
+      ]
+    },
+    "Obtener Integración Kommo": { "main": [[{ "node": "Verificar Secret Kommo", "type": "main", "index": 0 }]] },
+    "Verificar Secret Kommo": { "main": [[{ "node": "IF Secret Válido", "type": "main", "index": 0 }]] },
+    "IF Secret Válido": {
+      "main": [
+        [{ "node": "Resolver Cliente por Entrada", "type": "main", "index": 0 }],
+        [{ "node": "Ignorar", "type": "main", "index": 0 }]
+      ]
+    },
+    "Resolver Cliente por Entrada": { "main": [[{ "node": "IF Cliente Encontrado", "type": "main", "index": 0 }]] },
+    "IF Cliente Encontrado": {
+      "main": [
+        [{ "node": "Fijar Cliente", "type": "main", "index": 0 }],
+        [{ "node": "Ignorar", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fijar Cliente": { "main": [[{ "node": "Listar Notas Recientes", "type": "main", "index": 0 }]] },
+    "Listar Notas Recientes": { "main": [[{ "node": "Procesar Nota", "type": "main", "index": 0 }]] },
+    "Procesar Nota": { "main": [[{ "node": "IF Hay Adjunto", "type": "main", "index": 0 }]] },
+    "IF Hay Adjunto": {
+      "main": [
+        [{ "node": "IF Tiene Link Directo", "type": "main", "index": 0 }],
+        [{ "node": "Sin Media", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF Tiene Link Directo": {
+      "main": [
+        [{ "node": "Descargar Archivo Kommo", "type": "main", "index": 0 }],
+        [{ "node": "Resolver Archivo (Files API)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Resolver Archivo (Files API)": { "main": [[{ "node": "Extraer Link Files API", "type": "main", "index": 0 }]] },
+    "Extraer Link Files API": { "main": [[{ "node": "Descargar Archivo Kommo", "type": "main", "index": 0 }]] },
+    "Descargar Archivo Kommo": { "main": [[{ "node": "Preparar Binario Kommo", "type": "main", "index": 0 }]] },
+    "Preparar Binario Kommo": { "main": [[{ "node": "Subir a Supabase Storage", "type": "main", "index": 0 }]] },
+    "Subir a Supabase Storage": { "main": [[{ "node": "Firmar URL Storage", "type": "main", "index": 0 }]] },
+    "Firmar URL Storage": { "main": [[{ "node": "Fijar Media", "type": "main", "index": 0 }]] },
+    "Fijar Media": { "main": [[{ "node": "Guardar Mensaje", "type": "main", "index": 0 }]] },
+    "Sin Media": { "main": [[{ "node": "Guardar Mensaje", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b2c3d4e5-recibir-kommo-v20"
+}
