@@ -310,6 +310,43 @@ export async function chat(messages, temperature = 0.7) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// FUNCIÓN RAG (base vectorial) — Casos parecidos de OTROS clientes
+// ──────────────────────────────────────────────────────────────
+/**
+ * Busca sesiones de conversación de otros clientes semánticamente parecidas
+ * al texto dado, usando la tabla conversaciones_embeddings (pgvector) vía
+ * el Edge Function ai-embeddings. Ver database/standalone/010_vector_conversaciones.sql.
+ * @param {string} texto
+ * @param {{clienteIdExcluir?: number|string, limite?: number}} [opts]
+ * @returns {Promise<Array<{cliente_id:number, contenido:string, servicio:string, similitud:number}>>}
+ */
+export async function searchSimilarCases(texto, opts = {}) {
+  if (!texto || !texto.trim()) return [];
+  try {
+    const { data, error } = await supabase.functions.invoke('ai-embeddings', {
+      body: {
+        action: 'buscar_similares',
+        texto,
+        cliente_id_excluir: opts.clienteIdExcluir ?? null,
+        limite: opts.limite ?? 5,
+      },
+    });
+    if (error || !data?.success) return [];
+    return data.casos || [];
+  } catch (err) {
+    console.warn('[aiService] searchSimilarCases error:', err.message);
+    return [];
+  }
+}
+
+function formatSimilarCases(casos) {
+  if (!casos || casos.length === 0) return 'Sin casos parecidos encontrados.';
+  return casos
+    .map((c, i) => `Caso ${i + 1} (servicio: ${c.servicio || 'desconocido'}, similitud: ${(c.similitud * 100).toFixed(0)}%):\n${c.contenido}`)
+    .join('\n\n---\n\n');
+}
+
+// ──────────────────────────────────────────────────────────────
 // FUNCIÓN RAG — Chat con contexto del cliente (BD + CRM)
 // ──────────────────────────────────────────────────────────────
 /**
@@ -320,6 +357,10 @@ export async function chat(messages, temperature = 0.7) {
  * @param {string} crmContext - Historial de WhatsApp/CRM desde n8n.
  */
 export async function chatWithClientContext(userMessage, chatHistory, supabaseContext, crmContext) {
+  const casosSimilares = await searchSimilarCases(userMessage, {
+    clienteIdExcluir: supabaseContext?.cliente?.id,
+  });
+
   const systemPrompt = `Eres un asistente inteligente para una agencia de gestión migratoria en Brasil.
 Tu objetivo es ayudar al agente a resolver dudas, redactar respuestas o analizar el caso de un cliente específico.
 
@@ -331,11 +372,15 @@ ${JSON.stringify(supabaseContext, null, 2)}
 === HISTORIAL DE CRM / WHATSAPP ===
 ${crmContext}
 
+=== CASOS PARECIDOS DE OTROS CLIENTES (cómo se resolvieron antes, para referencia) ===
+${formatSimilarCases(casosSimilares)}
+
 === INSTRUCCIONES ===
 1. Responde a la pregunta o solicitud del usuario basándote ESTRICTAMENTE en la información anterior.
-2. Si te piden redactar un mensaje para el cliente, hazlo en el tono adecuado (profesional pero cercano, en español o portugués según corresponda).
-3. Si la información no está en el contexto, di que no tienes esa información.
-4. Responde en texto claro, puedes usar markdown para formatear.`;
+2. Si te piden redactar un mensaje para el cliente, hazlo en el tono adecuado (profesional pero cercano, en español o portugués según corresponda), inspirándote en cómo se le habló al cliente en los casos parecidos si aplica.
+3. Si un caso parecido tiene una resolución útil para este cliente, mencionala explícitamente.
+4. Si la información no está en el contexto, di que no tienes esa información.
+5. Responde en texto claro, puedes usar markdown para formatear.`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -577,6 +622,23 @@ const tools = [
         properties: {}
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'searchSimilarCases',
+      description: 'Busca en el historial de conversaciones de WhatsApp de TODOS los clientes casos parecidos a un problema o pregunta dada, para ver cómo se resolvieron antes y cómo se le habló al cliente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          texto: {
+            type: 'string',
+            description: 'Descripción del problema o pregunta a buscar (ej. "cliente con RNM vencido esperando renovación")'
+          }
+        },
+        required: ['texto']
+      }
+    }
   }
 ];
 
@@ -658,6 +720,8 @@ Siempre responde de manera profesional y en español.`;
           result = await countPendingProcedures();
         } else if (functionName === 'getOverallStats') {
           result = await getOverallStats();
+        } else if (functionName === 'searchSimilarCases') {
+          result = await searchSimilarCases(args.texto);
         } else {
           // Fallback check
           throw new Error(`Unknown tool execution requested: ${functionName}`);

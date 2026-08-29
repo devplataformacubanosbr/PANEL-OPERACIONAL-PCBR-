@@ -32,7 +32,23 @@ export default function ManualsTab() {
       }
       if (fetchError) throw fetchError;
 
-      setManuales(data || []);
+      // manual_variantes es una tabla opcional/nueva: si todavía no se corrió
+      // la migración, seguir mostrando el resto de los manuales igual.
+      let variantesData = [];
+      try {
+        const { data: vData, error: vError } = await supabase.from('manual_variantes').select('*');
+        if (vError && vError.code !== '42P01') throw vError;
+        variantesData = vData || [];
+      } catch (vErr) {
+        if (vErr.code !== '42P01') throw vErr;
+      }
+
+      const manualesConVariantes = (data || []).map(m => ({
+        ...m,
+        variantes: variantesData.filter(v => v.manual_id === m.id),
+      }));
+
+      setManuales(manualesConVariantes);
       setError(null);
     } catch (err) {
       console.error(err);

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Save, FileText, Link as LinkIcon, AlignLeft, Bot, Upload, Loader2 } from 'lucide-react';
+import { Save, FileText, Link as LinkIcon, AlignLeft, Bot, Upload, Loader2, Plus, X } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { chat } from '../../services/aiService';
 import { extractPdfText } from '../../services/pdfToImage';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
+
+const VARIANTE_VACIA = { etiqueta: '', url_pdf: '' };
 
 export default function ManualModal({ isOpen, onClose, manual, onSave }) {
   const [formData, setFormData] = useState({
@@ -13,6 +15,7 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
     contenido: '',
     url_pdf: '',
   });
+  const [variantes, setVariantes] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -26,6 +29,13 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
         contenido: manual.contenido || '',
         url_pdf: manual.url_pdf || '',
       });
+      setVariantes(
+        (manual.variantes || []).map(v => ({
+          id: v.id,
+          etiqueta: v.etiqueta || '',
+          url_pdf: v.url_pdf || '',
+        }))
+      );
     } else {
       setFormData({
         titulo: '',
@@ -33,6 +43,7 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
         contenido: '',
         url_pdf: '',
       });
+      setVariantes([]);
     }
   }, [manual, isOpen]);
 
@@ -40,6 +51,18 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
 
   const handleChange = (e) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const handleVarianteChange = (index, field, value) => {
+    setVariantes(prev => prev.map((v, i) => (i === index ? { ...v, [field]: value } : v)));
+  };
+
+  const handleAddVariante = () => {
+    setVariantes(prev => [...prev, { ...VARIANTE_VACIA }]);
+  };
+
+  const handleRemoveVariante = (index) => {
+    setVariantes(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleOrganizeText = async (textToOrganize) => {
@@ -92,7 +115,10 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
     }
 
     setIsSaving(true);
+    let variantesTableMissing = false;
     try {
+      let savedManualId = manual?.id || null;
+
       if (manual?.id) {
         // Update
         const { error: updateError } = await supabase
@@ -100,16 +126,47 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
           .update(formData)
           .eq('id', manual.id);
         if (updateError) throw updateError;
+
+        await supabase.from('manual_variantes').delete().eq('manual_id', manual.id);
       } else {
         // Insert
-        const { error: insertError } = await supabase
+        const { data, error: insertError } = await supabase
           .from('manuales_tramites')
-          .insert([formData]);
+          .insert([formData])
+          .select()
+          .single();
         if (insertError) throw insertError;
+        savedManualId = data.id;
+      }
+
+      // Guardar variantes de PDF por ciudad/posto (ignora filas vacías)
+      const variantesToInsert = variantes
+        .filter(v => v.etiqueta || v.url_pdf)
+        .map(v => ({
+          manual_id: savedManualId,
+          etiqueta: v.etiqueta || null,
+          url_pdf: v.url_pdf || null,
+        }));
+      if (variantesToInsert.length > 0) {
+        const { error: variantesError } = await supabase
+          .from('manual_variantes')
+          .insert(variantesToInsert);
+        if (variantesError) {
+          if (variantesError.code === '42P01') {
+            variantesTableMissing = true;
+          } else {
+            throw variantesError;
+          }
+        }
       }
 
       onSave();
-      onClose();
+
+      if (variantesTableMissing) {
+        setError('Se guardó el manual, pero las variantes de PDF no: falta ejecutar 009_manual_variantes.sql en Supabase.');
+      } else {
+        onClose();
+      }
     } catch (err) {
       console.error(err);
       if (err.code === '42P01') {
@@ -219,7 +276,7 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-chrome-text">Enlace al Documento PDF (Opcional)</label>
+          <label className="text-sm font-medium text-chrome-text">Enlace al PDF principal (Opcional)</label>
           <div className="relative">
             <LinkIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-chrome-text-muted" />
             <input
@@ -231,6 +288,57 @@ export default function ManualModal({ isOpen, onClose, manual, onSave }) {
               placeholder="https://..."
             />
           </div>
+        </div>
+
+        {/* Variantes de PDF por ciudad/posto */}
+        <div className="space-y-3 pt-4 border-t border-chrome-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-chrome-text">Variantes de PDF por ciudad</label>
+              <p className="text-xs text-chrome-text-muted">
+                Cuando el mismo trámite pide un formulario distinto según el posto, ej. Florianópolis, Itajaí o Joinville.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddVariante}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-chrome-border bg-chrome-bg-active text-sm text-chrome-text hover:border-brand-primary/50 transition-colors flex-shrink-0"
+            >
+              <Plus size={14} />
+              Añadir variante
+            </button>
+          </div>
+
+          {variantes.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {variantes.map((variante, index) => (
+                <div key={variante.id || index} className="flex items-start gap-2">
+                  <input
+                    type="text"
+                    value={variante.etiqueta}
+                    onChange={(e) => handleVarianteChange(index, 'etiqueta', e.target.value)}
+                    className="w-40 flex-shrink-0 rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors"
+                    placeholder="Ciudad (ej. Itajaí)"
+                  />
+                  <input
+                    type="url"
+                    value={variante.url_pdf}
+                    onChange={(e) => handleVarianteChange(index, 'url_pdf', e.target.value)}
+                    className="flex-1 rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors"
+                    placeholder="https://..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveVariante(index)}
+                    className="p-1.5 text-chrome-text-muted hover:text-danger rounded-md hover:bg-chrome-bg-active flex-shrink-0"
+                    title="Quitar variante"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
       </form>
