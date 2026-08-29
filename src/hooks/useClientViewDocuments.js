@@ -22,6 +22,9 @@ export default function useClientViewDocuments({
   setExtractedData,
   setIsExtractionModalOpen,
   setUploadedDocRecord,
+  // Campos personalizados ya existentes, para que la IA los reutilice en vez
+  // de crear duplicados (ver useClientViewExtraction.getExtraCustomFieldsForAiPrompt)
+  extraCustomFieldsForAi,
 }) {
   // Upload state
   const [uploading, setUploading] = useState(false);
@@ -103,7 +106,7 @@ export default function useClientViewDocuments({
             const { convertPdfPageToImageBase64 } = await import('../services/pdfToImage');
             ({ base64: fileOrBase64 } = await convertPdfPageToImageBase64(file));
           }
-          const aiData = await analyzeDocumentImage(fileOrBase64);
+          const aiData = await analyzeDocumentImage(fileOrBase64, extraCustomFieldsForAi);
           if (aiData && Object.keys(aiData).filter(k => aiData[k]).length > 0) {
             // Auto-renombrar inmediatamente y añadir al estado
             const tipo = aiData.TIPO_DOCUMENTO || 'DOCUMENTO';
@@ -134,7 +137,7 @@ export default function useClientViewDocuments({
     } finally {
       setUploading(false);
     }
-  }, [clientId, fetchClientData, setExtractedData, setIsExtractionModalOpen]);
+  }, [clientId, fetchClientData, setExtractedData, setIsExtractionModalOpen, extraCustomFieldsForAi]);
 
   // ── Drag & Drop zone handlers ──────────────────────────────────────────────
   const handleDragOver = useCallback((e) => {

@@ -112,11 +112,19 @@ function cleanJson(raw) {
 /**
  * Extrae datos personales de la foto de un documento.
  * @param {File|string} fileOrBase64 - Imagen del documento (pasaporte, CPF, RNM, etc.)
+ * @param {Array<{identificador: string, nombre_campo: string}>} [knownCustomFields] -
+ *   Campos personalizados ya existentes en el sistema (config_campos_clientes),
+ *   para que la IA reutilice su clave exacta en vez de inventar una nueva para
+ *   el mismo dato. Ver useClientViewExtraction.getExtraCustomFieldsForAiPrompt.
  * @returns {Promise<object>} Campos encontrados en el documento
  */
-export async function analyzeDocumentImage(fileOrBase64) {
+export async function analyzeDocumentImage(fileOrBase64, knownCustomFields = []) {
   // Redimensionar imagen a max 900px / comprimir para mantener visual tokens en ~2000 (dentro del límite TPM de 8000 en Groq)
   const base64 = await resizeImageToBase64(fileOrBase64, 900, 0.8);
+
+  const knownCustomFieldsBlock = knownCustomFields.length > 0
+    ? `\n10.5. CAMPOS PERSONALIZADOS QUE YA EXISTEN EN EL SISTEMA (creados antes, a mano o por otra extracción IA). Si dentro de CAMPOS_ADICIONALES vas a agregar un dato que coincide conceptualmente con alguno de estos, usá EXACTAMENTE esta clave (tal cual está escrita, en mayúsculas) — NO inventes una clave distinta para el mismo dato:\n${knownCustomFields.map(f => `   - ${f.identificador.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n   Solo si el dato no coincide con NINGUNO de estos ni con los campos fijos de abajo, agregalo con una clave nueva.\n`
+    : '';
 
 const prompt = `Eres un asistente especializado en leer documentos de identidad e inmigración \
 (Pasaportes, CPF, RNM de Brasil, CNH, Cédulas, etc.) Y TAMBIÉN hojas escritas a mano \
@@ -178,7 +186,7 @@ REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
    que describa el dato (ej. "NUMERO_LICENCIA", "CATEGORIA_LICENCIA", "PROFESION").
    No repitas ahí un dato que ya pusiste en un campo fijo de arriba. Si no hay
    ningún dato adicional, deja "CAMPOS_ADICIONALES" como un objeto vacío {}.
-
+${knownCustomFieldsBlock}
 Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra, SIN bloques <think> de razonamiento) con estos campos:
 {
   "TIPO_DOCUMENTO": null,

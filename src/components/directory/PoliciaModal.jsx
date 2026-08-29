@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Building2, MapPin, Mail, Phone, Clock, AlignLeft, Plus, X } from 'lucide-react';
+import { Save, Building2, MapPin, Mail, Phone, Clock, AlignLeft, FileText, Plus, X } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
@@ -19,6 +19,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
     telefono: '',
     email: '',
     horario_atencion: '',
+    proceso: '',
     notas: '',
   });
   const [selectedCiudades, setSelectedCiudades] = useState([]);
@@ -35,6 +36,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
         telefono: policia.telefono || '',
         email: policia.email || '',
         horario_atencion: policia.horario_atencion || '',
+        proceso: policia.proceso || '',
         notas: policia.notas || '',
       });
       setSelectedCiudades(policia.ciudades?.map(c => c.id) || []);
@@ -54,6 +56,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
         telefono: '',
         email: '',
         horario_atencion: '',
+        proceso: '',
         notas: '',
       });
       setSelectedCiudades([]);
@@ -98,33 +101,31 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
     }
 
     setIsSaving(true);
+    let procesoColumnMissing = false;
     try {
       let savedPolicia = null;
-      
-      // Save Policia
-      if (policia?.id) {
-        // Update
-        const { data, error: updateError } = await supabase
-          .from('policias')
-          .update(formData)
-          .eq('id', policia.id)
-          .select()
-          .single();
-        if (updateError) throw updateError;
-        savedPolicia = data;
 
+      const guardarPolicia = async (payload) =>
+        policia?.id
+          ? supabase.from('policias').update(payload).eq('id', policia.id).select().single()
+          : supabase.from('policias').insert([payload]).select().single();
+
+      let { data, error: saveError } = await guardarPolicia(formData);
+      if (saveError && saveError.code === '42703') {
+        // La columna "proceso" todavía no existe (falta correr la migración
+        // 008_policia_proceso.sql) — reintentar sin ella para no bloquear
+        // el resto de los campos.
+        const { proceso, ...sinProceso } = formData;
+        ({ data, error: saveError } = await guardarPolicia(sinProceso));
+        procesoColumnMissing = !saveError;
+      }
+      if (saveError) throw saveError;
+      savedPolicia = data;
+
+      if (policia?.id) {
         // Delete existing relationships and puntos de atención
         await supabase.from('policias_ciudades').delete().eq('policia_id', policia.id);
         await supabase.from('policia_puntos').delete().eq('policia_id', policia.id);
-      } else {
-        // Insert
-        const { data, error: insertError } = await supabase
-          .from('policias')
-          .insert([formData])
-          .select()
-          .single();
-        if (insertError) throw insertError;
-        savedPolicia = data;
       }
 
       // Save Relationships
@@ -157,7 +158,12 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
       }
 
       onSave(); // Refresh data in parent
-      onClose();
+
+      if (procesoColumnMissing) {
+        setError('Se guardó todo menos "Cómo se hace el proceso": falta ejecutar 008_policia_proceso.sql en Supabase.');
+      } else {
+        onClose();
+      }
     } catch (err) {
       console.error(err);
       if (err.code === '42P01') {
@@ -272,6 +278,22 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
                 placeholder="Lunes a Viernes de 08:00 a 17:00"
               />
             </div>
+          </div>
+        </div>
+
+        {/* Proceso */}
+        <div className="space-y-1.5 pt-4 border-t border-chrome-border">
+          <label className="text-sm font-medium text-chrome-text">Cómo se hace el proceso en este posto</label>
+          <div className="relative">
+            <FileText size={16} className="absolute left-3 top-3 text-chrome-text-muted" />
+            <textarea
+              name="proceso"
+              value={formData.proceso}
+              onChange={handleChange}
+              rows={4}
+              className="w-full rounded-md border border-chrome-border bg-chrome-bg pl-10 pr-4 py-2 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors resize-none"
+              placeholder="Pasos del trámite en este posto: cómo se agenda, qué llevar, tiempos de espera, etc."
+            />
           </div>
         </div>
 

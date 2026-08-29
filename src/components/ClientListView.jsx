@@ -154,8 +154,10 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
 
       if (filterMissingDoc !== 'all') {
         if (filterMissingDoc === 'no_cpf' && c.cpf) return false;
-        if (filterMissingDoc === 'no_pasaporte' && c.numero_pasaporte) return false;
-        if (filterMissingDoc === 'no_rnm' && (c.rnm || c.rne)) return false;
+        // rnm, numero_pasaporte, etc. no son columnas reales de `clientes` —
+        // viven en campos_personalizados (JSONB), ver clientView.constants.js.
+        if (filterMissingDoc === 'no_pasaporte' && c.campos_personalizados?.numero_pasaporte) return false;
+        if (filterMissingDoc === 'no_rnm' && (c.campos_personalizados?.rnm || c.campos_personalizados?.rne)) return false;
       }
 
       if (filterDireccion.trim() !== '') {
@@ -454,10 +456,10 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
                   </div>
                 </td>
                 <td style={{ padding: '1rem', color: 'var(--color-text-secondary)' }}>
-                  <div>{cliente.cpf || cliente.numero_pasaporte || cliente.rnm || '—'}</div>
+                  <div>{cliente.cpf || cliente.campos_personalizados?.numero_pasaporte || cliente.campos_personalizados?.rnm || '—'}</div>
                 </td>
                 <td style={{ padding: '1rem', color: 'var(--color-primary)', fontWeight: 500 }}>
-                  {cliente.fecha_vencimiento_pasaporte ? formatDate(cliente.fecha_vencimiento_pasaporte) : (cliente.fecha_vencimiento_refugio ? formatDate(cliente.fecha_vencimiento_refugio) : <span style={{color: 'var(--color-text-muted)', fontSize: '0.75rem', fontWeight: 400}}>Sin fecha</span>)}
+                  {cliente.campos_personalizados?.fecha_vencimiento_pasaporte ? formatDate(cliente.campos_personalizados.fecha_vencimiento_pasaporte) : (cliente.campos_personalizados?.fecha_vencimiento_refugio ? formatDate(cliente.campos_personalizados.fecha_vencimiento_refugio) : <span style={{color: 'var(--color-text-muted)', fontSize: '0.75rem', fontWeight: 400}}>Sin fecha</span>)}
                 </td>
                 <td style={{ padding: '1rem' }}>
                   <span style={{ 

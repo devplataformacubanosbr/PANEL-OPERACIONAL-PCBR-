@@ -17,7 +17,7 @@
  *   - clientView.constants.js   → FIXED_FIELDS_CATALOG, TRAMITE_COLORS, etc.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import React, { useState, useCallback, lazy, Suspense, useRef } from 'react';
+import React, { useState, useCallback, useMemo, lazy, Suspense, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { analyzeDocumentImage } from '../services/aiService';
@@ -29,7 +29,7 @@ import useClientViewEdit from '../hooks/useClientViewEdit';
 import useClientViewDocuments from '../hooks/useClientViewDocuments';
 import useClientViewRelations from '../hooks/useClientViewRelations';
 import useClientViewTramites from '../hooks/useClientViewTramites';
-import useClientViewExtraction from '../hooks/useClientViewExtraction';
+import useClientViewExtraction, { getExtraCustomFieldsForAiPrompt } from '../hooks/useClientViewExtraction';
 import useHorizontalDragScroll from '../hooks/useHorizontalDragScroll';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -147,7 +147,14 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   };
 
   // ── Compose hooks ──────────────────────────────────────────────────────────
-  const extraction = useClientViewExtraction({ clientId, fetchClientData, client });
+  // Campos personalizados ya existentes, para que la IA los reutilice en vez
+  // de crear duplicados al extraer datos de un documento nuevo.
+  const extraCustomFieldsForAi = useMemo(
+    () => getExtraCustomFieldsForAiPrompt(customFieldsConfig),
+    [customFieldsConfig]
+  );
+
+  const extraction = useClientViewExtraction({ clientId, fetchClientData, client, customFieldsConfig });
 
   const edit = useClientViewEdit({
     clientId,
@@ -163,6 +170,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
     setExtractedData: extraction.setExtractedData,
     setIsExtractionModalOpen: extraction.setIsExtractionModalOpen,
     setUploadedDocRecord: extraction.setUploadedDocRecord,
+    extraCustomFieldsForAi,
   });
 
   const relations = useClientViewRelations({ clientId, queryClient });
@@ -386,7 +394,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         ({ base64: fileOrBase64 } = await convertPdfPageToImageBase64(file));
       }
 
-      const aiData = await analyzeDocumentImage(fileOrBase64);
+      const aiData = await analyzeDocumentImage(fileOrBase64, extraCustomFieldsForAi);
       if (aiData && Object.keys(aiData).filter(k => aiData[k]).length > 0) {
         toast.dismiss(toastId);
         docs.setViewingDocument(null);

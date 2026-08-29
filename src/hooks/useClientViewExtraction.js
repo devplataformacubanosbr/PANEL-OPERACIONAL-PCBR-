@@ -54,6 +54,22 @@ const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO']);
 const humanizeAiKey = (key) => key.toLowerCase().split('_').filter(Boolean)
   .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
+/** Mismo formato de identificador que usa handleSaveExtractedData al generar uno nuevo. */
+const toIdentificador = (key) => key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+/**
+ * Campos personalizados dinámicos (config_campos_clientes) que la IA debería
+ * conocer para reutilizar su clave exacta en vez de crear un duplicado del
+ * mismo dato con otro nombre. Excluye los 13 migratorios y los fijos base,
+ * que ya tienen mapeo determinístico vía AI_FIELD_MAP/FIXED_COLUMN_IDS.
+ */
+export function getExtraCustomFieldsForAiPrompt(customFieldsConfig) {
+  const known = new Set([...FIXED_COLUMN_IDS, ...Object.values(AI_FIELD_MAP)]);
+  return (customFieldsConfig || [])
+    .filter(cf => !known.has(cf.identificador))
+    .map(cf => ({ identificador: cf.identificador, nombre_campo: cf.nombre_campo }));
+}
+
 /**
  * Da de alta un campo dinámico nuevo en config_campos_clientes la primera vez
  * que la IA lo extrae. Si ya existe (mismo identificador, de una extracción
@@ -71,7 +87,7 @@ const ensureCustomFieldDefinition = async (identificador, nombreCampo) => {
   if (error && error.code !== '23505') throw error;
 };
 
-export default function useClientViewExtraction({ clientId, fetchClientData, client }) {
+export default function useClientViewExtraction({ clientId, fetchClientData, client, customFieldsConfig }) {
   // Extraction modal state
   const [extractedData, setExtractedData] = useState(null);
   const [isExtractionModalOpen, setIsExtractionModalOpen] = useState(false);
@@ -93,6 +109,13 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
       // Campos que la IA encontró pero no estaban en el mapeo fijo — se dan de
       // alta como campos dinámicos nuevos (una vez guardados los datos abajo).
       const newCustomFieldDefs = [];
+      // Catálogo actual de campos dinámicos, indexado por identificador
+      // normalizado — para reutilizar un campo ya existente en vez de crear
+      // un duplicado cuando la IA nombra el mismo dato distinto entre
+      // extracciones (ver getExtraCustomFieldsForAiPrompt).
+      const existingCustomFieldsById = new Map(
+        (customFieldsConfig || []).map(cf => [toIdentificador(cf.identificador), cf.identificador])
+      );
 
       for (const [key, value] of Object.entries(extractedData)) {
         if (!value) continue;
@@ -122,11 +145,18 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
           // La IA extrajo un dato que no encaja en ningún campo conocido
           // (CAMPOS_ADICIONALES) — se guarda como campo dinámico nuevo,
           // igual que si un admin lo hubiera creado a mano.
-          const identificador = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-          if (!identificador) continue;
+          const generatedId = toIdentificador(key);
+          if (!generatedId) continue;
+          // Si ya existe un campo personalizado equivalente (el prompt le pide
+          // a la IA reusar la clave exacta, pero esto es la red de seguridad
+          // por si no la sigue al pie de la letra), reusar su identificador en
+          // vez de crear uno nuevo.
+          const identificador = existingCustomFieldsById.get(generatedId) || generatedId;
           customJsonUpdates[identificador] = String(value).toUpperCase();
           hasCustomJsonUpdates = true;
-          newCustomFieldDefs.push({ identificador, nombreCampo: humanizeAiKey(key) });
+          if (!existingCustomFieldsById.has(generatedId)) {
+            newCustomFieldDefs.push({ identificador, nombreCampo: humanizeAiKey(key) });
+          }
         }
       }
 
@@ -233,7 +263,7 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
             ({ base64: fileOrBase64 } = await convertPdfPageToImageBase64(file));
           }
 
-          const aiData = await analyzeDocumentImage(fileOrBase64);
+          const aiData = await analyzeDocumentImage(fileOrBase64, getExtraCustomFieldsForAiPrompt(customFieldsConfig));
           if (aiData && Object.keys(aiData).filter(k => aiData[k]).length > 0) {
             toast.dismiss(toastId);
 
@@ -270,7 +300,7 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
       console.error('[useClientViewExtraction] Error copying document:', err);
       alert('Error al copiar el documento. Verifica la consola.');
     }
-  }, [clientId]);
+  }, [clientId, customFieldsConfig]);
 
   // ── Close / reset extraction modal ─────────────────────────────────────────
   const closeExtractionModal = useCallback((shouldRefresh = false) => {

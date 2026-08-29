@@ -678,8 +678,10 @@ const ClientPersonalData = ({
               const fullName = (dato.valor || '').trim().toUpperCase();
               const parts = fullName.split(' ');
 
-              const padreName = (client.nombre_padre || '').trim().toUpperCase().split(' ');
-              const madreName = (client.nombre_madre || '').trim().toUpperCase().split(' ');
+              // nombre_padre/nombre_madre viven en campos_personalizados (JSONB),
+              // no como columnas reales de `clientes`.
+              const padreName = (client.campos_personalizados?.nombre_padre || '').trim().toUpperCase().split(' ');
+              const madreName = (client.campos_personalizados?.nombre_madre || '').trim().toUpperCase().split(' ');
 
               let splitIndex = 1;
 

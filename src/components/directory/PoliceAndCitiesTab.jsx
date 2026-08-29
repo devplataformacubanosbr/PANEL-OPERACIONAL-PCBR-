@@ -178,6 +178,15 @@ export default function PoliceAndCitiesTab() {
                 </div>
               </div>
 
+              {policia.proceso && (
+                <div className="border-t border-chrome-border pt-4 mb-4">
+                  <p className="text-xs font-medium text-chrome-text-muted mb-2 uppercase tracking-wider">
+                    Cómo se hace el proceso
+                  </p>
+                  <p className="text-sm text-chrome-text whitespace-pre-line">{policia.proceso}</p>
+                </div>
+              )}
+
               <div className="border-t border-chrome-border pt-4">
                 <p className="text-xs font-medium text-chrome-text-muted mb-2 uppercase tracking-wider">Ciudades Cubiertas</p>
                 <div className="flex flex-wrap gap-2">
