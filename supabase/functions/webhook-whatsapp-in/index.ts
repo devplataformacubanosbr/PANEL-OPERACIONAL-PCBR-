@@ -129,13 +129,19 @@ serve(async (req) => {
       })
     }
 
-    // Buscar o crear cliente
+    // Buscar o crear cliente. Un mismo teléfono puede estar en más de un
+    // cliente (familiares que comparten WhatsApp) — .single() rompía con un
+    // error si había más de uno. El "usuario principal" de ese teléfono es,
+    // por convención, el que se registró primero (id más chico).
     let clienteId = null;
-    const { data: cliente } = await supabaseClient
+    const { data: clientesConTelefono } = await supabaseClient
       .from('clientes')
       .select('id')
       .eq('telefono', processedMessage.telefono_cliente)
-      .single();
+      .order('id', { ascending: true })
+      .limit(1);
+
+    const cliente = clientesConTelefono?.[0] || null;
 
     if (cliente) {
       clienteId = cliente.id;

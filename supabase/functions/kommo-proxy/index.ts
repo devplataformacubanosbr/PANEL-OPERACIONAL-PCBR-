@@ -126,6 +126,70 @@ serve(async (req) => {
         return new Response(JSON.stringify({ success: true, pipelines }), { status: 200, headers: corsHeaders });
     }
 
+    // Para clientes que nunca llegaron por un webhook de Kommo (ej. se crearon
+    // por WhatsApp directo o a mano) y por eso no tienen id_kommo: busca en
+    // Kommo un contacto por teléfono y, si hay una única coincidencia, la
+    // vincula. Si hay 0 o más de una coincidencia, no adivina — lo reporta.
+    if (action === 'vincular_ids_faltantes') {
+        const { data: clientesSinId, error: clientesErr } = await supabaseAdmin
+            .from('clientes')
+            .select('id, telefono, nombre')
+            .is('id_kommo', null)
+            .not('telefono', 'is', null);
+
+        if (clientesErr) throw clientesErr;
+
+        let vinculados = 0;
+        let sinCoincidencia = 0;
+        let ambiguos = 0;
+        const detalles: any[] = [];
+
+        for (const cliente of (clientesSinId || [])) {
+            const telefonoLimpio = (cliente.telefono || '').replace(/\D/g, '');
+            if (!telefonoLimpio) {
+                sinCoincidencia++;
+                detalles.push({ cliente_id: cliente.id, nombre: cliente.nombre, estado: 'sin_telefono' });
+                continue;
+            }
+
+            try {
+                const res = await fetch(`${baseUrl}/contacts?query=${encodeURIComponent(telefonoLimpio)}`, { headers });
+                if (!res.ok) {
+                    sinCoincidencia++;
+                    detalles.push({ cliente_id: cliente.id, nombre: cliente.nombre, estado: 'error_busqueda' });
+                    continue;
+                }
+                const data = await res.json();
+                const contactos = data._embedded?.contacts || [];
+
+                if (contactos.length === 1) {
+                    await supabaseAdmin.from('clientes').update({ id_kommo: contactos[0].id.toString() }).eq('id', cliente.id);
+                    vinculados++;
+                    detalles.push({ cliente_id: cliente.id, nombre: cliente.nombre, id_kommo: contactos[0].id, estado: 'vinculado' });
+                } else if (contactos.length === 0) {
+                    sinCoincidencia++;
+                    detalles.push({ cliente_id: cliente.id, nombre: cliente.nombre, estado: 'sin_coincidencia' });
+                } else {
+                    ambiguos++;
+                    detalles.push({ cliente_id: cliente.id, nombre: cliente.nombre, estado: 'ambiguo', opciones: contactos.map((c: any) => c.id) });
+                }
+            } catch (err) {
+                console.error(`Error buscando contacto de Kommo para cliente ${cliente.id}:`, err);
+                sinCoincidencia++;
+                detalles.push({ cliente_id: cliente.id, nombre: cliente.nombre, estado: 'error_busqueda' });
+            }
+        }
+
+        return new Response(JSON.stringify({
+            success: true,
+            total: (clientesSinId || []).length,
+            vinculados,
+            sinCoincidencia,
+            ambiguos,
+            detalles
+        }), { status: 200, headers: corsHeaders });
+    }
+
     return new Response(JSON.stringify({ error: 'Action not supported' }), { status: 400, headers: corsHeaders })
 
   } catch (error) {

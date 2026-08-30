@@ -58,12 +58,15 @@ const ClientDocuments = ({
   }, [documentos]);
 
   const toggleVerification = async (doc) => {
+    // Los documentos que llegaron por Kommo/WhatsApp (id uuid) viven en
+    // documentos_pendientes y usan un booleano `verificado`, no el texto
+    // `estado` de documentos_operacionales.
+    const isPendiente = typeof doc.id === 'string' && doc.id.includes('-');
     const newStatus = doc.estado === 'verificado' ? 'pendiente' : 'verificado';
     try {
-      const { error } = await supabase
-        .from('documentos_operacionales')
-        .update({ estado: newStatus })
-        .eq('id', doc.id);
+      const { error } = isPendiente
+        ? await supabase.from('documentos_pendientes').update({ verificado: newStatus === 'verificado' }).eq('id', doc.id)
+        : await supabase.from('documentos_operacionales').update({ estado: newStatus }).eq('id', doc.id);
       if (error) throw error;
       toast.success(`Documento marcado como ${newStatus}`);
       if (onRefresh) onRefresh();

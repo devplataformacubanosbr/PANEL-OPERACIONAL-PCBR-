@@ -11,6 +11,22 @@ const DYNAMIC_MERGE_FIELDS = new Set([
     'nombre_madre', 'nombre_padre', 'tramite',
 ]);
 
+// Tablas con ON DELETE CASCADE hacia `clientes` (ver database/standalone/001_schema.sql).
+// Si no se reasignan antes de borrar el duplicado, Postgres las borra en
+// cascada junto con él — se perdían silenciosamente chats, documentos
+// pendientes, notificaciones, formularios e historial en cada fusión.
+const CASCADE_CHILD_TABLES = [
+    { table: 'documentos_operacionales', column: 'id_cliente' },
+    { table: 'historial_clientes', column: 'cliente_id' },
+    { table: 'mensajes', column: 'cliente_id' },
+    { table: 'ai_chats', column: 'cliente_id' },
+    { table: 'documentos_pendientes', column: 'cliente_id' },
+    { table: 'notificaciones_equipo', column: 'cliente_id' },
+    { table: 'entradas', column: 'id_cliente' },
+    { table: 'formularios_clientes', column: 'cliente_id' },
+    { table: 'historial_cambios', column: 'id_cliente' },
+];
+
 // Función para fusionar múltiples contactos (2 o más)
 export const mergeContacts = async (keepContactId, contactIdsToDelete, mergedData) => {
     try {
@@ -25,31 +41,23 @@ export const mergeContacts = async (keepContactId, contactIdsToDelete, mergedDat
 
         // Transferir todos los datos relacionados de los contactos a eliminar al contacto a mantener
         for (const contactToDelete of contactIdsToDelete) {
-            // 1. Transferir documentos
-            await supabase
-                .from('documentos_operacionales')
-                .update({ id_cliente: keepContactId })
-                .eq('id_cliente', contactToDelete);
+            for (const { table, column } of CASCADE_CHILD_TABLES) {
+                await supabase
+                    .from(table)
+                    .update({ [column]: keepContactId })
+                    .eq(column, contactToDelete);
+            }
 
-
-
-            // 3. Actualizar relaciones donde el contacto a eliminar es el principal
+            // relaciones_clientes referencia a `clientes` por dos columnas
             await supabase
                 .from('relaciones_clientes')
                 .update({ cliente_id: keepContactId })
                 .eq('cliente_id', contactToDelete);
 
-            // 4. Actualizar relaciones donde el contacto a eliminar es el secundario
             await supabase
                 .from('relaciones_clientes')
                 .update({ cliente_relacionado_id: keepContactId })
                 .eq('cliente_relacionado_id', contactToDelete);
-
-            // 5. Transferir entradas (trámites)
-            await supabase
-                .from('entradas')
-                .update({ id_cliente: keepContactId })
-                .eq('id_cliente', contactToDelete);
         }
 
         // Eliminamos los contactos duplicados

@@ -20,9 +20,14 @@ export const getClientesBase = async () => {
 };
 
 // Catálogo de campos personalizados dinámicos (creados desde Configuración >
-// Campos Base). No incluye los 13 campos migratorios de FIXED_FIELDS_CATALOG
-// (esos son columnas fijas de `clientes`) — solo campos nuevos que un admin
-// define en tiempo real, guardados dentro de clientes.campos_personalizados.
+// Campos Base), incluyendo los 13 campos migratorios (rnm, numero_pasaporte,
+// nombre_madre, nombre_padre, etc. — ver SYSTEM_LINKED_FIELD_IDS en
+// clientView.constants.js). Todos se guardan dentro de
+// clientes.campos_personalizados (JSONB), con `identificador` como clave.
+// Filtra activo=true: "eliminar" un campo es soft-delete (activo=false, ver
+// handleDeleteField en useClientViewEdit.js), no un DELETE real — por eso
+// los inactivos no aparecen acá pero sí siguen listados en
+// ConfigCamposClientesSettings.jsx para poder restaurarlos.
 export const getConfigCamposClientes = async () => {
   const { data, error } = await supabase.from('config_campos_clientes')
     .select('*')

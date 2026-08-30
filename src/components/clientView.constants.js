@@ -89,6 +89,24 @@ export const FIXED_FIELDS_CATALOG = [
   // ClientView.jsx vía `customFieldsConfig` con `is_custom_json: true`.
 ];
 
+// ── Identificadores de config_campos_clientes que el código lee/escribe
+// literalmente en otros lugares del sistema (extracción por IA, generación
+// de firma/carta, fusión de duplicados, importación CSV, plantillas de
+// documentos, autocompletado de la extensión de Chrome) en vez de pasar
+// por el catálogo dinámico. Si se borra uno de estos campos y se recrea
+// con un identificador distinto (typo, nombre distinto), esos otros
+// lugares quedan mirando una clave huérfana y el campo "nuevo" se ve
+// vacío aunque el sistema siga usando el dato viejo por detrás — pasó una
+// vez con nombre_padre (ver database/standalone/013_fix_nombre_padre_identificador.sql).
+// Se usa solo para avisar más fuerte antes de borrar (ver handleDeleteField
+// en useClientViewEdit.js) — no bloquea el borrado.
+export const SYSTEM_LINKED_FIELD_IDS = new Set([
+  'rnm', 'numero_refugio', 'fecha_vencimiento_refugio', 'numero_pasaporte',
+  'fecha_emision_pasaporte', 'fecha_vencimiento_pasaporte', 'carnet_identidad',
+  'policia_federal', 'fecha_entrada_brasil', 'lugar_entrada_brasil',
+  'nombre_madre', 'nombre_padre', 'tramite',
+]);
+
 // ── Categorías por defecto de "Datos del Cliente" ────────────────────────────
 // Estructurales: siempre se muestran, no se pueden borrar desde la ficha del
 // cliente (ver ClientPersonalData.jsx). Cualquier otra categoría es dinámica,

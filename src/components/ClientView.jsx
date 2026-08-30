@@ -235,14 +235,34 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   }, [clientId, onBack]);
 
   const handleSendToExtension = () => {
-    const fullData = { ...client };
+    // client.campos_personalizados es el JSONB donde viven los 13 campos
+    // migratorios (rnm, numero_pasaporte, nombre_madre, nombre_padre,
+    // fecha_entrada_brasil, lugar_entrada_brasil, etc. — ver clientView.constants.js).
+    // Sin este spread, `fullData.rnm` / `fullData.nombre_madre` / etc. no
+    // existían nunca y la extensión no podía autocompletarlos en SERPRO/PF/MJ.
+    const fullData = { ...(client.campos_personalizados || {}), ...client };
 
     const nameField = edit.editFormData.find(f => f.id === 'nombre');
     if (nameField) {
       if (nameField._nombres) fullData.nombres = nameField._nombres.trim();
       if (nameField._apellidos) fullData.apellidos = nameField._apellidos.trim();
     }
-    
+
+    // Inject datos_personalizados de cada trámite (ej. campos específicos del
+    // servicio) — solo si el dato no vino ya del cliente o de campos_personalizados.
+    if (entradas && entradas.length > 0) {
+      entradas.forEach(ent => {
+        if (ent.datos_personalizados) {
+          Object.keys(ent.datos_personalizados).forEach(key => {
+            const val = ent.datos_personalizados[key];
+            if (val && !fullData[key]) {
+              fullData[key] = val;
+            }
+          });
+        }
+      });
+    }
+
     // Inject formularios data
     if (formularios && formularios.length > 0) {
       const mappingFijos = {

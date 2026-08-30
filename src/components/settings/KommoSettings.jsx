@@ -71,6 +71,10 @@ export default function KommoSettings() {
   const [kommoPipelines, setKommoPipelines] = useState([]);
   const [stageMappings, setStageMappings] = useState([]); // [{ kommo_pipeline_id, kommo_stage_id, tramite }]
 
+  // Vincular id_kommo faltante (clientes creados sin pasar por un webhook de Kommo)
+  const [linkingIds, setLinkingIds] = useState(false);
+  const [linkResult, setLinkResult] = useState(null);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -314,6 +318,34 @@ export default function KommoSettings() {
      }
   }, [isTested]);
 
+  const handleVincularIdsFaltantes = async () => {
+    setLinkingIds(true);
+    setLinkResult(null);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/kommo-proxy`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.session?.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ action: 'vincular_ids_faltantes' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLinkResult(data);
+        if (data.vinculados > 0) toast.success(`${data.vinculados} cliente(s) vinculado(s) con su ID de Kommo`);
+        else toast('No se encontraron coincidencias nuevas para vincular', { icon: 'ℹ️' });
+      } else {
+        toast.error(data.error || 'Error al buscar los IDs en Kommo');
+      }
+    } catch (_err) {
+      toast.error('Error de red al conectar con Kommo');
+    } finally {
+      setLinkingIds(false);
+    }
+  };
+
   if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}><Loader2 className="animate-spin" /> Cargando configuración...</div>;
 
   const webhookUrl = webhookSecret
@@ -406,6 +438,37 @@ export default function KommoSettings() {
                 </code>
               ) : (
                 <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Guardá la conexión primero para que la URL del webhook quede activa.</p>
+              )}
+            </div>
+          )}
+
+          {isTested && (
+            <div style={{ marginTop: '1.5rem', background: 'var(--color-bg-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+              <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9375rem' }}>Vincular clientes sin ID de Kommo</h4>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', margin: '0 0 0.75rem 0' }}>
+                Busca en Kommo, por teléfono, el contacto de cada cliente que no tenga ID de Kommo asignado (ej. clientes creados por WhatsApp directo) y lo vincula si encuentra una única coincidencia.
+              </p>
+              <button className="btn btn-secondary" onClick={handleVincularIdsFaltantes} disabled={linkingIds} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                {linkingIds ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                {linkingIds ? ' Buscando en Kommo...' : ' Buscar y vincular IDs faltantes'}
+              </button>
+
+              {linkResult && (
+                <div style={{ marginTop: '1rem', fontSize: '0.875rem' }}>
+                  <p style={{ margin: '0 0 0.5rem 0' }}>
+                    De {linkResult.total} cliente(s) sin ID: <strong style={{ color: 'var(--color-success, #10b981)' }}>{linkResult.vinculados} vinculado(s)</strong>, {linkResult.sinCoincidencia} sin coincidencia, {linkResult.ambiguos} ambiguo(s) (más de un contacto con ese teléfono en Kommo).
+                  </p>
+                  {linkResult.detalles?.filter(d => d.estado === 'ambiguo').length > 0 && (
+                    <div style={{ background: 'var(--color-warning-bg, rgba(245,158,11,0.1))', border: '1px solid var(--color-warning, #f59e0b)', borderRadius: 'var(--radius-md)', padding: '0.75rem', marginTop: '0.5rem' }}>
+                      <p style={{ margin: '0 0 0.5rem 0', fontWeight: 600 }}><AlertTriangle size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} />Casos ambiguos — requieren revisión manual:</p>
+                      <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                        {linkResult.detalles.filter(d => d.estado === 'ambiguo').map(d => (
+                          <li key={d.cliente_id}>{d.nombre || `Cliente #${d.cliente_id}`} — posibles IDs: {d.opciones?.join(', ')}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

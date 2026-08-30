@@ -15,7 +15,14 @@ import { supabase } from '../supabaseClient';
 import { resizeImageToBase64 } from '../utils/canvasUtils';
 
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL_TEXT = 'llama-3.3-70b-versatile';   // Texto / razonamiento general
+// La cuenta/API key de Groq en uso devuelve "model does not exist or you do
+// not have access to it" para llama-3.3-70b-versatile pese a figurar como
+// modelo de producción vigente en la documentación de Groq — probablemente
+// una restricción de plan/verificación de la cuenta, no del código. Se usa
+// llama-3.1-8b-instant porque es el modelo de texto más ampliamente
+// disponible (sin gating conocido) mientras se resuelve el acceso en
+// console.groq.com.
+const MODEL_TEXT = 'llama-3.1-8b-instant';   // Texto / razonamiento general
 const MODEL_VISION = 'qwen/qwen3.6-27b'; // Visión + OCR
 
 // La API Key ya no se expone aquí. Ahora usamos Supabase Edge Functions.

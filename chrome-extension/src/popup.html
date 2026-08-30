@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Auto-Fill</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #38bdf8;
+      --primary-hover: #0ea5e9;
+      --bg: #0f172a;
+      --panel-bg: rgba(30, 41, 59, 0.7);
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    body { 
+      font-family: 'Inter', system-ui, sans-serif; 
+      width: 340px; 
+      padding: 20px; 
+      background: var(--bg); 
+      color: var(--text); 
+      margin: 0; 
+      box-sizing: border-box;
+      background-image: radial-gradient(circle at top right, rgba(56, 189, 248, 0.1), transparent 40%);
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 { 
+      font-size: 16px; 
+      margin: 0; 
+      background: linear-gradient(to right, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: flex; 
+      align-items: center; 
+      gap: 8px; 
+    }
+
+    input { 
+      width: 100%; 
+      padding: 10px 12px; 
+      margin-bottom: 14px; 
+      border-radius: 8px; 
+      border: 1px solid var(--border); 
+      background: rgba(15, 23, 42, 0.6); 
+      color: white; 
+      box-sizing: border-box;
+      font-family: inherit;
+      font-size: 13px;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(4px);
+    }
+
+    input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+    }
+
+    button { 
+      width: 100%; 
+      padding: 10px; 
+      background: var(--primary); 
+      color: var(--bg); 
+      border: none; 
+      border-radius: 8px; 
+      font-weight: 600; 
+      cursor: pointer; 
+      transition: all 0.2s ease;
+      font-size: 13px;
+      font-family: inherit;
+    }
+
+    button:hover { 
+      background: var(--primary-hover); 
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .client-item { 
+      padding: 12px; 
+      background: var(--panel-bg); 
+      border-radius: 8px; 
+      margin-bottom: 8px; 
+      cursor: pointer; 
+      border: 1px solid var(--border); 
+      transition: all 0.2s ease;
+      backdrop-filter: blur(8px);
+    }
+
+    .client-item:hover { 
+      border-color: var(--primary); 
+      background: rgba(56, 189, 248, 0.1);
+      transform: translateX(4px);
+    }
+
+    .client-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .client-cpf { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+    
+    #configSection { 
+      display: none; 
+      margin-bottom: 16px; 
+      padding: 16px; 
+      background: var(--panel-bg);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .settings-btn { 
+      background: transparent; 
+      color: var(--text-muted); 
+      width: auto; 
+      padding: 6px; 
+      border-radius: 6px;
+    }
+
+    .settings-btn:hover { 
+      background: rgba(255,255,255,0.1); 
+      color: white; 
+    }
+
+    .settings-btn svg { width: 16px; height: 16px; }
+
+    #activeClientSection { 
+      display: none; 
+      background: linear-gradient(145deg, rgba(56, 189, 248, 0.15), rgba(15, 23, 42, 0));
+      border: 1px solid rgba(56, 189, 248, 0.4); 
+      padding: 16px; 
+      border-radius: 10px; 
+      margin-bottom: 20px; 
+    }
+
+    .badge {
+      font-size: 10px; 
+      color: var(--primary); 
+      text-transform: uppercase; 
+      font-weight: 700; 
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .badge::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+    }
+
+    #loading {
+      display: none;
+      text-align: center;
+      padding: 20px 0;
+      color: var(--primary);
+    }
+    
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(56, 189, 248, 0.3);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 8px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .search-container { position: relative; }
+    .search-icon {
+      position: absolute;
+      left: 12px;
+      top: 10px;
+      color: var(--text-muted);
+    }
+    .search-container input { padding-left: 36px; }
+    
+    label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      CBR Auto-Fill
+    </h1>
+    <button id="toggleConfig" class="settings-btn" title="Configuración">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </button>
+  </header>
+
+  <div id="configSection">
+    <label>Supabase URL</label>
+    <input type="text" id="supaUrl" placeholder="https://xxx.supabase.co">
+    <label>Supabase Key</label>
+    <input type="password" id="supaKey" placeholder="eyJhbGciOiJIUzI1NiIsInR5c...">
+    <label>Groq API Key (Opcional, para IA)</label>
+    <input type="password" id="groqKey" placeholder="gsk_...">
+    <label>Dashboard URL (Opcional, seguridad)</label>
+    <input type="text" id="dashboardUrl" placeholder="https://tu-dominio.com">
+    <div style="font-size: 11px; color: var(--text-muted); margin-top: -8px; margin-bottom: 14px; line-height: 1.4;">
+      Restringe qué origen puede sincronizar el cliente activo hacia esta extensión. Sin esto, cualquier sitio abierto podría hacerlo (solo localhost queda protegido por defecto).
+    </div>
+    <button id="saveConfig">Guardar y Conectar</button>
+  </div>
+
+  <div id="activeClientSection">
+    <div class="badge">Cliente Sincronizado</div>
+    <div id="activeClientName" style="font-weight: 600; font-size: 15px; margin-bottom: 12px; line-height: 1.3;"></div>
+    <button id="btnAutoFillActive" style="margin-bottom: 8px;">Rellenar en esta página</button>
+    <div id="activeClientRelatives" style="margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px; display: none;">
+      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">O cambiar a un familiar:</div>
+      <div id="relativesList" style="display: flex; flex-direction: column; gap: 6px;"></div>
+    </div>
+  </div>
+
+  <div id="searchSection">
+    <div class="search-container">
+      <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input type="text" id="searchInput" placeholder="Buscar por nombre, pasaporte o CPF..." autocomplete="off">
+    </div>
+    
+    <div id="loading">
+      <div class="spinner"></div>
+      <div style="font-size: 11px;">Buscando...</div>
+    </div>
+    
+    <div id="resultsList" style="max-height: 250px; overflow-y: auto;"></div>
+  </div>
+
+  <script type="module" src="./popup.js"></script>
+</body>
+</html>

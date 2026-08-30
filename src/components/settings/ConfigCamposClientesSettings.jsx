@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { LoadingSpinner } from '../LoadingSpinner';
-import { Plus, Trash2, Pencil, ArrowUp, ArrowDown, Check, X } from 'lucide-react';
+import { Plus, Trash2, Pencil, ArrowUp, ArrowDown, Check, X, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CATEGORIAS = [
@@ -81,7 +81,7 @@ export default function ConfigCamposClientesSettings() {
 
       if (error) {
         if (error.code === '23505') {
-          toast.error('Ya existe un campo con este identificador');
+          toast.error('Ya existe un campo con este identificador. Si lo borraste antes, buscalo más abajo (aparece marcado "Eliminado") y restauralo en vez de crear uno nuevo — así no perdés los datos ya cargados.', { duration: 6000 });
         } else {
           throw error;
         }
@@ -175,17 +175,33 @@ export default function ConfigCamposClientesSettings() {
     }
   };
 
+  // Soft-delete (activo=false): la fila y su identificador se conservan, así
+  // que "Restaurar" siempre reconecta el campo exacto con sus datos viejos y
+  // con cualquier otra parte del sistema (IA, extensión, plantillas...) que
+  // lea ese identificador por clave literal — sin riesgo de typos al recrearlo.
   const handleDelete = async (id, nombre) => {
-    if (!window.confirm(`¿Estás seguro de eliminar el campo "${nombre}"? Los datos guardados de los clientes en este campo dejarán de verse en la interfaz, pero seguirán en la base de datos.`)) return;
+    if (!window.confirm(`¿Eliminar el campo "${nombre}"? Dejará de verse en la ficha del cliente. El dato y el campo no se borran: podés restaurarlo después desde esta misma pantalla.`)) return;
 
     try {
-      const { error } = await supabase.from('config_campos_clientes').delete().eq('id', id);
+      const { error } = await supabase.from('config_campos_clientes').update({ activo: false }).eq('id', id);
       if (error) throw error;
       toast.success('Campo eliminado');
       loadCampos();
     } catch (err) {
       console.error(err);
       toast.error('Error al eliminar');
+    }
+  };
+
+  const handleRestore = async (id, nombre) => {
+    try {
+      const { error } = await supabase.from('config_campos_clientes').update({ activo: true }).eq('id', id);
+      if (error) throw error;
+      toast.success(`Campo "${nombre}" restaurado`);
+      loadCampos();
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al restaurar');
     }
   };
 
@@ -317,24 +333,39 @@ export default function ConfigCamposClientesSettings() {
                           </td>
                         </tr>
                       ) : (
-                        <tr key={c.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                          <td style={{ ...tdStyle, fontWeight: 500 }}>{c.nombre_campo}</td>
+                        <tr key={c.id} style={{ borderBottom: '1px solid var(--color-border)', opacity: c.activo === false ? 0.55 : 1 }}>
+                          <td style={{ ...tdStyle, fontWeight: 500 }}>
+                            {c.nombre_campo}
+                            {c.activo === false && (
+                              <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-danger)', border: '1px solid var(--color-danger)', borderRadius: '999px', padding: '0.05rem 0.5rem' }}>
+                                Eliminado
+                              </span>
+                            )}
+                          </td>
                           <td style={{ ...tdStyle, fontFamily: 'monospace', color: 'var(--color-primary)' }}>{c.identificador}</td>
                           <td style={tdStyle}>{TIPO_LABELS[c.tipo] || c.tipo}</td>
                           <td style={tdStyle}>{c.requerido ? 'Sí' : 'No'}</td>
                           <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                            <button onClick={() => handleMove(c, 'up')} disabled={idx === 0} className="btn btn-ghost" style={{ padding: '0.25rem', opacity: idx === 0 ? 0.3 : 1 }} title="Subir">
-                              <ArrowUp size={15} />
-                            </button>
-                            <button onClick={() => handleMove(c, 'down')} disabled={idx === grupo.length - 1} className="btn btn-ghost" style={{ padding: '0.25rem', opacity: idx === grupo.length - 1 ? 0.3 : 1 }} title="Bajar">
-                              <ArrowDown size={15} />
-                            </button>
-                            <button onClick={() => startEdit(c)} className="btn btn-ghost" style={{ padding: '0.25rem' }} title="Editar campo">
-                              <Pencil size={15} />
-                            </button>
-                            <button onClick={() => handleDelete(c.id, c.nombre_campo)} className="btn btn-ghost" style={{ padding: '0.25rem', color: 'var(--color-danger)' }} title="Eliminar campo">
-                              <Trash2 size={15} />
-                            </button>
+                            {c.activo === false ? (
+                              <button onClick={() => handleRestore(c.id, c.nombre_campo)} className="btn btn-ghost" style={{ padding: '0.25rem', color: 'var(--color-success)' }} title="Restaurar campo (recupera el identificador y los datos originales)">
+                                <RotateCcw size={15} />
+                              </button>
+                            ) : (
+                              <>
+                                <button onClick={() => handleMove(c, 'up')} disabled={idx === 0} className="btn btn-ghost" style={{ padding: '0.25rem', opacity: idx === 0 ? 0.3 : 1 }} title="Subir">
+                                  <ArrowUp size={15} />
+                                </button>
+                                <button onClick={() => handleMove(c, 'down')} disabled={idx === grupo.length - 1} className="btn btn-ghost" style={{ padding: '0.25rem', opacity: idx === grupo.length - 1 ? 0.3 : 1 }} title="Bajar">
+                                  <ArrowDown size={15} />
+                                </button>
+                                <button onClick={() => startEdit(c)} className="btn btn-ghost" style={{ padding: '0.25rem' }} title="Editar campo">
+                                  <Pencil size={15} />
+                                </button>
+                                <button onClick={() => handleDelete(c.id, c.nombre_campo)} className="btn btn-ghost" style={{ padding: '0.25rem', color: 'var(--color-danger)' }} title="Eliminar campo">
+                                  <Trash2 size={15} />
+                                </button>
+                              </>
+                            )}
                           </td>
                         </tr>
                       )

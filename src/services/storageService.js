@@ -89,22 +89,29 @@ export async function uploadDocument(file, clientId, customName = null, customTy
 
 /**
  * Elimina un documento del Storage y de la base de datos.
+ * Los documentos que llegaron por Kommo/WhatsApp (id uuid, tabla
+ * documentos_pendientes) viven en el bucket whatsapp_media, no en el bucket
+ * de documentos subidos a mano — hay que borrar del bucket/tabla correctos.
  */
 export async function deleteDocument(doc) {
   try {
+    const isPendiente = typeof doc.id === 'string' && doc.id.includes('-');
+    const bucket = isPendiente ? 'whatsapp_media' : BUCKET;
+    const table = isPendiente ? 'documentos_pendientes' : 'documentos_operacionales';
+
     let storagePath = doc.url_archivo;
     if (storagePath?.startsWith('http')) {
-        const urlParts = storagePath.split(`/${BUCKET}/`);
-        if (urlParts?.length === 2) storagePath = urlParts[1];
+        const urlParts = storagePath.split(`/${bucket}/`);
+        storagePath = urlParts?.length === 2 ? urlParts[1].split('?')[0] : null;
     }
-    
+
     if (storagePath) {
-      const { error: storageErr } = await supabase.storage.from(BUCKET).remove([storagePath]);
+      const { error: storageErr } = await supabase.storage.from(bucket).remove([storagePath]);
       if (storageErr) console.warn('[storageService] Storage remove warning:', storageErr.message);
     }
 
     // Eliminar el registro de la DB
-    const { error: dbError } = await supabase.from('documentos_operacionales').delete().eq('id', doc.id);
+    const { error: dbError } = await supabase.from(table).delete().eq('id', doc.id);
     if (dbError) throw dbError;
 
     return { success: true, error: null };
@@ -116,15 +123,39 @@ export async function deleteDocument(doc) {
 
 /**
  * Obtiene todos los documentos de un cliente ordenados por fecha descendente.
+ * Combina documentos_operacionales (subidos a mano desde el dashboard) con
+ * documentos_pendientes (archivos que un cliente mandó por WhatsApp/Kommo,
+ * pendientes de que el equipo los revise/verifique) en una sola lista.
  */
 export async function getDocuments(clientId) {
-  const { data, error } = await supabase
-    .from('documentos_operacionales')
-    .select('*')
-    .eq('id_cliente', clientId)
-    .order('creado_en', { ascending: false });
-  if (error) throw error;
-  return data || [];
+  const [operacionales, pendientes] = await Promise.all([
+    supabase
+      .from('documentos_operacionales')
+      .select('*')
+      .eq('id_cliente', clientId)
+      .order('creado_en', { ascending: false }),
+    supabase
+      .from('documentos_pendientes')
+      .select('*')
+      .eq('cliente_id', clientId)
+      .order('fecha_recepcion', { ascending: false }),
+  ]);
+
+  if (operacionales.error) throw operacionales.error;
+  if (pendientes.error) throw pendientes.error;
+
+  const normalizedPendientes = (pendientes.data || []).map((doc) => ({
+    ...doc,
+    id_cliente: doc.cliente_id,
+    creado_en: doc.fecha_recepcion,
+    tipo_documento: 'DOCUMENTO DE WHATSAPP',
+    subido_por: 'Kommo',
+    estado: doc.verificado ? 'verificado' : 'pendiente',
+  }));
+
+  return [...(operacionales.data || []), ...normalizedPendientes].sort(
+    (a, b) => new Date(b.creado_en) - new Date(a.creado_en)
+  );
 }
 
 /**

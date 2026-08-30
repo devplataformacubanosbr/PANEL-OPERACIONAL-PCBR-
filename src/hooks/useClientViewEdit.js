@@ -10,13 +10,15 @@ import { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { handleError } from '../utils/errorHandler';
-import { FIXED_FIELDS_CATALOG, DEFAULT_CLIENT_CATEGORIES } from '../components/clientView.constants';
+import { FIXED_FIELDS_CATALOG, DEFAULT_CLIENT_CATEGORIES, SYSTEM_LINKED_FIELD_IDS } from '../components/clientView.constants';
 
 export default function useClientViewEdit({ clientId, client, customFieldsConfig = [], fetchClientData }) {
-  // Los 13 campos migratorios de FIXED_FIELDS_CATALOG son columnas fijas de
-  // `clientes`. Los campos dinámicos nuevos (config_campos_clientes) se
-  // mergean acá y se marcan is_custom_json para leer/escribir en
-  // clientes.campos_personalizados en vez de una columna real.
+  // FIXED_FIELDS_CATALOG solo trae los campos que SÍ son columnas reales de
+  // `clientes` (nombre, cpf, email, etc.). Los 13 campos migratorios (rnm,
+  // numero_pasaporte, nombre_madre, nombre_padre, etc.) y cualquier otro
+  // campo dinámico viven en config_campos_clientes y se mergean acá,
+  // marcados is_custom_json para leer/escribir en clientes.campos_personalizados
+  // (JSONB) usando cf.identificador como clave — ver clientView.constants.js.
   const mergedFields = [
     ...FIXED_FIELDS_CATALOG,
     ...customFieldsConfig.map(cf => ({
@@ -227,13 +229,16 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
   };
 
   // ── Delete an entire dynamic category (todas sus filas en config_campos_clientes) ──
+  // Soft-delete (activo=false) en vez de DELETE: la fila (y su identificador
+  // exacto) se conserva, así que se puede restaurar sin riesgo de typos desde
+  // Configuración > Campos Base. Ver handleDeleteField para el porqué.
   const handleDeleteCategory = async (categoria) => {
     const count = customFieldsConfig.filter(cf => cf.categoria === categoria).length;
-    if (!window.confirm(`¿Eliminar la categoría "${categoria}" y sus ${count} campo(s)? Los datos guardados de los clientes en estos campos dejarán de verse en la interfaz, pero seguirán en la base de datos.`)) {
+    if (!window.confirm(`¿Eliminar la categoría "${categoria}" y sus ${count} campo(s)? Dejarán de verse en la ficha del cliente. Los datos y los campos en sí no se borran: se pueden restaurar desde Configuración > Campos Base.`)) {
       return false;
     }
     try {
-      const { error } = await supabase.from('config_campos_clientes').delete().eq('categoria', categoria);
+      const { error } = await supabase.from('config_campos_clientes').update({ activo: false }).eq('categoria', categoria);
       if (error) throw error;
       toast.success(`Categoría "${categoria}" eliminada`);
       await fetchClientData();
@@ -245,12 +250,25 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
   };
 
   // ── Delete a single dynamic field definition (config_campos_clientes) ───────
+  // Soft-delete (activo=false) en vez de DELETE. Antes esto borraba la fila
+  // de verdad: los datos de los clientes quedaban huérfanos en
+  // clientes.campos_personalizados y, si alguien recreaba el campo más tarde
+  // escribiendo el nombre de nuevo, el identificador generado podía salir
+  // levemente distinto (typo, palabra de más) — quedando desconectado tanto
+  // de esos datos viejos como de cualquier código que lea ese campo por
+  // clave literal (IA, extensión, fusión de duplicados, plantillas, importación
+  // CSV — ver SYSTEM_LINKED_FIELD_IDS). Pasó exactamente eso con nombre_padre.
+  // Con soft-delete, restaurar el campo desde Configuración > Campos Base
+  // reactiva la MISMA fila con el MISMO identificador: cero riesgo de typo.
   const handleDeleteField = async (identificador, nombre) => {
-    if (!window.confirm(`¿Eliminar el campo "${nombre}"? Los datos guardados de los clientes en este campo dejarán de verse en la interfaz, pero seguirán en la base de datos.`)) {
+    const warning = SYSTEM_LINKED_FIELD_IDS.has(identificador)
+      ? `¿Eliminar el campo "${nombre}"?\n\nOJO: este campo lo usan directamente la extracción por IA, la extensión de Chrome y otras partes del sistema (identificador "${identificador}"). Dejará de verse en la ficha del cliente, pero el dato y el campo no se pierden: se pueden restaurar desde Configuración > Campos Base. Si en vez de eso creás un campo nuevo escribiendo el nombre de nuevo, el identificador puede salir distinto y esas otras partes van a dejar de encontrar el dato — restaurar es siempre más seguro que recrear.`
+      : `¿Eliminar el campo "${nombre}"? Dejará de verse en la ficha del cliente. El dato y el campo no se borran: se pueden restaurar desde Configuración > Campos Base.`;
+    if (!window.confirm(warning)) {
       return false;
     }
     try {
-      const { error } = await supabase.from('config_campos_clientes').delete().eq('identificador', identificador);
+      const { error } = await supabase.from('config_campos_clientes').update({ activo: false }).eq('identificador', identificador);
       if (error) throw error;
       toast.success(`Campo "${nombre}" eliminado`);
       await fetchClientData();
@@ -334,7 +352,7 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
 
       if (error) {
         if (error.code === '23505') {
-          toast.error('Ya existe un campo con este identificador');
+          toast.error('Ya existe un campo con este identificador. Si lo borraste antes, restauralo desde Configuración > Campos Base en vez de crear uno nuevo — así no perdés los datos ya cargados.', { duration: 6000 });
         } else {
           throw error;
         }

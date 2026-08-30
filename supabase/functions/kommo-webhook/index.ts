@@ -99,7 +99,71 @@ serve(async (req) => {
     const statusChangeStatusId = payload['leads[status][0][status_id]'];
     const statusChangePipelineId = payload['leads[status][0][pipeline_id]'];
 
-    // Trae y guarda (sin duplicar) las notas de texto de un lead de Kommo en notas_tramite.
+    // Baja un adjunto de un mensaje de chat de Kommo (message[add][N][attachment][link],
+    // confirmado con un payload real — vive en amojo.kommo.com, no en /api/v4) y lo sube
+    // a Supabase Storage (bucket whatsapp_media), devolviendo una URL firmada de larga
+    // duración. El link de amojo a veces ya viene autenticado/firmado y a veces no —
+    // se prueba primero sin credenciales y, si falla, con el Bearer token de la cuenta.
+    const downloadKommoChatAttachment = async (link: string, fileNameHint: string | null): Promise<{ url: string | null, type: string | null, name: string | null }> => {
+        const empty = { url: null, type: null, name: null };
+        if (!link) return empty;
+
+        try {
+            let fileRes = await fetch(link);
+            if (!fileRes.ok) {
+                fileRes = await fetch(link, { headers: { 'Authorization': kommoHeaders.Authorization } });
+            }
+            if (!fileRes.ok) {
+                console.error(`No se pudo descargar adjunto de Kommo (${fileRes.status}): ${link}`);
+                return empty;
+            }
+
+            const blob = await fileRes.blob();
+            const mimeType = fileRes.headers.get('content-type') || blob.type || 'application/octet-stream';
+            const hasExt = !!fileNameHint && /\.[a-zA-Z0-9]{2,5}$/.test(fileNameHint);
+            const ext = hasExt ? '' : `.${(mimeType.split('/')[1] || 'bin').split(';')[0]}`;
+            const finalName = `${fileNameHint || `kommo_${Date.now()}`}${ext}`;
+
+            const { error: upErr } = await supabaseClient.storage
+                .from('whatsapp_media')
+                .upload(finalName, blob, { contentType: mimeType, upsert: true });
+            if (upErr) {
+                console.error('Error subiendo adjunto de Kommo a Storage:', upErr);
+                return empty;
+            }
+
+            const { data: signed } = await supabaseClient.storage
+                .from('whatsapp_media')
+                .createSignedUrl(finalName, 315360000); // ~10 años
+
+            return { url: signed?.signedUrl || null, type: mimeType, name: finalName };
+        } catch (err) {
+            console.error('Error descargando adjunto de Kommo:', err);
+            return empty;
+        }
+    };
+
+    // Un mismo teléfono puede estar repetido en varios `clientes` (familiares
+    // que comparten WhatsApp/celular, o el mismo trámite vinculado a varias
+    // personas). El teléfono es el identificador que decide a quién le llega
+    // la conversación/documento: si hay más de un cliente con ese teléfono,
+    // se usa el "usuario principal" (por convención, el que se registró
+    // primero — id más chico), no necesariamente el titular del trámite.
+    const resolvePrincipalClientByPhone = async (telefono: string | null, fallbackClientId: number | null): Promise<number | null> => {
+        if (!telefono) return fallbackClientId;
+        const { data: matches } = await supabaseClient.from('clientes')
+            .select('id')
+            .eq('telefono', telefono)
+            .order('id', { ascending: true })
+            .limit(1);
+        return matches?.[0]?.id ?? fallbackClientId;
+    };
+
+    // Trae y guarda (sin duplicar) las notas de texto de un lead de Kommo en
+    // notas_tramite. Esto es SOLO para notas internas del CRM clásico (ej. un
+    // operador escribe una nota a mano en el lead) — los mensajes de chat de
+    // WhatsApp NO llegan por acá, llegan como evento `message[add]` (ver más
+    // abajo, bloque 4), confirmado con un payload real.
     const syncKommoNotes = async (tramiteId: number, kommoLeadId: string | number) => {
         const resNotes = await fetch(`${baseUrl}/leads/${kommoLeadId}/notes`, { headers: kommoHeaders });
         if (!resNotes.ok) return;
@@ -447,6 +511,122 @@ serve(async (req) => {
             }
         }
     }
+
+    // ==========================================
+    // 4. MENSAJE DE CHAT (WhatsApp) -> mensajes + documentos_pendientes
+    // ==========================================
+    // Confirmado con payloads reales de producción: los mensajes ENTRANTES
+    // (del cliente) llegan como message[add][N][...], y los SALIENTES
+    // (mandados por un agente desde la propia interfaz de Kommo) llegan por
+    // separado como outgoing_message[add][N][...] — son dos eventos de
+    // webhook distintos, ninguno es leads[note][add] (ese es de notas
+    // internas del CRM clásico, ver syncKommoNotes arriba). Ambos formatos
+    // traen contact_id directo y el adjunto ya resuelto en
+    // [...][attachment][link] — no hace falta llamar a ninguna otra API de
+    // Kommo para esto.
+    const processKommoChatEvents = async (rootKey: 'message' | 'outgoing_message') => {
+        let i = 0;
+        while (payload[`${rootKey}[add][${i}][id]`] !== undefined) {
+            const prefix = `${rootKey}[add][${i}]`;
+            i++;
+
+            const kommoMessageId = payload[`${prefix}[id]`];
+            const contactId = payload[`${prefix}[contact_id]`];
+            const elementId = payload[`${prefix}[element_id]`];
+            const entityType = payload[`${prefix}[entity_type]`];
+            const text = payload[`${prefix}[text]`] || '';
+            const messageType = payload[`${prefix}[message_type]`] || 'text';
+            const msgDirection = payload[`${prefix}[type]`]; // 'incoming' | 'outgoing'
+            const createdAt = payload[`${prefix}[created_at]`];
+            const attachmentLink = payload[`${prefix}[attachment][link]`];
+            const attachmentFileName = payload[`${prefix}[attachment][file_name]`];
+            const authorName = payload[`${prefix}[author][name]`];
+
+            if (!kommoMessageId) continue;
+
+            // Resolver cliente: primero por contact_id (directo, confiable), y si
+            // no se encuentra, por el lead vinculado (mismo fallback que ya usaba
+            // el resto del archivo).
+            let msgClientId: number | null = null;
+            let msgTelefono: string | null = null;
+
+            if (contactId) {
+                const { data: byContact } = await supabaseClient.from('clientes')
+                    .select('id, telefono')
+                    .eq('id_kommo', contactId.toString())
+                    .maybeSingle();
+                if (byContact) {
+                    msgClientId = byContact.id;
+                    msgTelefono = byContact.telefono;
+                }
+            }
+
+            if (!msgClientId && elementId && entityType === 'lead') {
+                const { data: viaEntrada } = await supabaseClient.from('entradas')
+                    .select('id_cliente, clientes(telefono)')
+                    .eq('id_lead', parseInt(elementId, 10))
+                    .maybeSingle();
+                if (viaEntrada?.id_cliente) {
+                    msgClientId = viaEntrada.id_cliente;
+                    msgTelefono = (viaEntrada as any).clientes?.telefono || null;
+                }
+            }
+
+            if (!msgClientId) continue; // todavía no hay cliente/trámite a quién asignárselo
+
+            const principalClientId = await resolvePrincipalClientByPhone(msgTelefono, msgClientId);
+            if (!principalClientId) continue;
+
+            // Dedupe por id de mensaje de Kommo (uuid) — Kommo puede reintentar el
+            // mismo webhook si la respuesta tarda.
+            const { data: existingMsg } = await supabaseClient.from('mensajes')
+                .select('id')
+                .eq('kommo_message_id', kommoMessageId)
+                .maybeSingle();
+            if (existingMsg) continue;
+
+            const mediaInfo = attachmentLink
+                ? await downloadKommoChatAttachment(attachmentLink, attachmentFileName)
+                : { url: null, type: null, name: null };
+
+            const texto = text || (mediaInfo.name ? `[Archivo] ${mediaInfo.name}` : `[${messageType}]`);
+            const isOutgoing = msgDirection === 'outgoing' || rootKey === 'outgoing_message';
+
+            await supabaseClient.from('mensajes').insert({
+                cliente_id: principalClientId,
+                texto,
+                tipo: isOutgoing ? 'saliente' : 'entrante',
+                proveedor: 'kommo',
+                leido: false,
+                remitente: isOutgoing ? 'outgoing' : 'incoming',
+                telefono: msgTelefono,
+                operario: isOutgoing ? (authorName || null) : null,
+                media_url: mediaInfo.url,
+                media_type: mediaInfo.type,
+                media_name: mediaInfo.name,
+                kommo_message_id: kommoMessageId,
+                fecha_recepcion: createdAt ? new Date(parseInt(createdAt, 10) * 1000).toISOString() : new Date().toISOString()
+            });
+
+            // Si trajo un archivo, además de quedar en el historial de
+            // conversación se registra como documento pendiente de revisión —
+            // así aparece en la pestaña "Documentos" del cliente en el panel.
+            if (attachmentLink && mediaInfo.url) {
+                await supabaseClient.from('documentos_pendientes').insert({
+                    cliente_id: principalClientId,
+                    telefono: msgTelefono,
+                    url_archivo: mediaInfo.url,
+                    nombre_archivo: mediaInfo.name || attachmentFileName || 'Documento de WhatsApp',
+                    tipo_contenido: mediaInfo.type,
+                    origen: 'kommo',
+                    verificado: false
+                });
+            }
+        }
+    };
+
+    await processKommoChatEvents('message');
+    await processKommoChatEvents('outgoing_message');
 
     return new Response('OK', { status: 200 })
 
