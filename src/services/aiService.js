@@ -15,14 +15,7 @@ import { supabase } from '../supabaseClient';
 import { resizeImageToBase64 } from '../utils/canvasUtils';
 
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
-// La cuenta/API key de Groq en uso devuelve "model does not exist or you do
-// not have access to it" para llama-3.3-70b-versatile pese a figurar como
-// modelo de producción vigente en la documentación de Groq — probablemente
-// una restricción de plan/verificación de la cuenta, no del código. Se usa
-// llama-3.1-8b-instant porque es el modelo de texto más ampliamente
-// disponible (sin gating conocido) mientras se resuelve el acceso en
-// console.groq.com.
-const MODEL_TEXT = 'llama-3.1-8b-instant';   // Texto / razonamiento general
+const MODEL_TEXT = 'openai/gpt-oss-120b';   // Texto / razonamiento general
 const MODEL_VISION = 'qwen/qwen3.6-27b'; // Visión + OCR
 
 // La API Key ya no se expone aquí. Ahora usamos Supabase Edge Functions.
@@ -130,7 +123,7 @@ export async function analyzeDocumentImage(fileOrBase64, knownCustomFields = [])
   const base64 = await resizeImageToBase64(fileOrBase64, 900, 0.8);
 
   const knownCustomFieldsBlock = knownCustomFields.length > 0
-    ? `\n10.5. CAMPOS PERSONALIZADOS QUE YA EXISTEN EN EL SISTEMA (creados antes, a mano o por otra extracción IA). Si dentro de CAMPOS_ADICIONALES vas a agregar un dato que coincide conceptualmente con alguno de estos, usá EXACTAMENTE esta clave (tal cual está escrita, en mayúsculas) — NO inventes una clave distinta para el mismo dato:\n${knownCustomFields.map(f => `   - ${f.identificador.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n   Solo si el dato no coincide con NINGUNO de estos ni con los campos fijos de abajo, agregalo con una clave nueva.\n`
+    ? `\n10.5. CAMPOS PERSONALIZADOS QUE YA EXISTEN EN EL SISTEMA (creados antes, a mano o por otra extracción IA). El nombre de cada uno puede terminar con el tipo de documento del que salió originalmente, entre paréntesis (ej. "Número de Licencia (CNH)"):\n${knownCustomFields.map(f => `   - ${f.identificador.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n   REGLA DE REUSO — MUY IMPORTANTE, no mezclar datos entre documentos distintos:\n   - Si un campo de la lista termina en "(TIPO DE DOCUMENTO)" y ese tipo NO coincide con el "TIPO_DOCUMENTO" que vos identificaste en la imagen actual, NO lo reutilices aunque el dato se parezca conceptualmente — es de otro documento. Agregá el dato como un campo nuevo en su lugar.\n   - Si un campo de la lista coincide en tipo de documento (o no tiene tipo especificado) Y el dato coincide conceptualmente, ahí sí usá EXACTAMENTE esa clave (tal cual está escrita, en mayúsculas) — no inventes una clave distinta para el mismo dato.\n   - Solo si el dato no coincide con NINGUNO de estos ni con los campos fijos de abajo, agregalo con una clave nueva.\n`
     : '';
 
 const prompt = `Eres un asistente especializado en leer documentos de identidad e inmigración \
@@ -184,15 +177,23 @@ REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
    - Si la letra es difícil de leer, transcribe tu mejor interpretación de todos
      modos (no la descartes) y marca "ILEGIBLE" en true para que se revise a mano.
 10. DATOS ADICIONALES (MUY IMPORTANTE): No te limites a los campos fijos de abajo.
-   Si en el documento ves CUALQUIER OTRO dato personal identificable que no encaje
-   en ninguno de esos campos (ej. número de licencia de conducir, categoría de
-   licencia, profesión, estado civil impreso, dirección impresa, número de seguro,
-   código de registro, restricciones, altura, tipo de sangre, fecha de expedición
-   de otro documento, etc.), agrégalo dentro del objeto "CAMPOS_ADICIONALES" al
-   final del JSON, usando como clave un nombre corto en MAYUSCULAS_CON_GUION_BAJO
-   que describa el dato (ej. "NUMERO_LICENCIA", "CATEGORIA_LICENCIA", "PROFESION").
-   No repitas ahí un dato que ya pusiste en un campo fijo de arriba. Si no hay
-   ningún dato adicional, deja "CAMPOS_ADICIONALES" como un objeto vacío {}.
+   Si en el documento ves CUALQUIER OTRO dato personal identificable, ESTABLE y
+   reutilizable que no encaje en ninguno de esos campos (ej. número de licencia
+   de conducir, categoría de licencia, profesión, estado civil impreso, dirección
+   impresa, número de seguro, código de registro, restricciones, altura, tipo de
+   sangre, fecha de expedición de otro documento, etc.), agrégalo dentro del
+   objeto "CAMPOS_ADICIONALES" al final del JSON, usando como clave un nombre
+   corto en MAYUSCULAS_CON_GUION_BAJO que describa el dato (ej. "NUMERO_LICENCIA",
+   "CATEGORIA_LICENCIA", "PROFESION"). No repitas ahí un dato que ya pusiste en un
+   campo fijo de arriba, ni el nombre/tipo del archivo o documento (eso ya se
+   gestiona aparte, no es un dato del cliente).
+   SÉ CONSERVADOR: cada clave nueva que agregues acá crea un campo permanente en
+   el sistema, así que evitá basura. NO agregues nada que sea: un código de barras,
+   número de folio/página interno, watermark, texto de relleno o instrucciones
+   impresas en el documento, o cualquier cosa que no puedas leer con confianza
+   razonable (si dudás de si es un dato real o ruido de la imagen, mejor omitilo).
+   Si no hay ningún dato adicional genuino, deja "CAMPOS_ADICIONALES" como un
+   objeto vacío {}.
 ${knownCustomFieldsBlock}
 Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra, SIN bloques <think> de razonamiento) con estos campos:
 {

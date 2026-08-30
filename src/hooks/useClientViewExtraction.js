@@ -47,8 +47,16 @@ const AI_DATE_KEYS = new Set([
   'FECHA_VENCIMIENTO_REFUGIO',
 ]);
 
-/** Claves que son metadata de control, no datos del cliente — nunca se guardan. */
-const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO']);
+/**
+ * Claves que son metadata de control, no datos del cliente — nunca se guardan
+ * como campo. NOMBRE_ARCHIVO no lo pone la IA: se lo agrega este mismo código
+ * (ver handleCopyDocumentToClient acá, y los lugares equivalentes en
+ * useClientViewDocuments.js y ClientView.jsx) para sugerir el nombre del
+ * archivo — el nombre del documento ya se guarda en documentos_operacionales
+ * / documentos_pendientes, así que no tiene sentido duplicarlo como campo
+ * personalizado del cliente.
+ */
+const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO', 'NOMBRE_ARCHIVO']);
 
 /** "NUMERO_LICENCIA" → "Numero Licencia" (label legible para el campo nuevo) */
 const humanizeAiKey = (key) => key.toLowerCase().split('_').filter(Boolean)
@@ -116,6 +124,13 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
       const existingCustomFieldsById = new Map(
         (customFieldsConfig || []).map(cf => [toIdentificador(cf.identificador), cf.identificador])
       );
+      // Tipo de documento de ESTA extracción (ej. "CNH", "CERTIFICADO DE
+      // NACIMIENTO") — se etiqueta en el nombre de cualquier campo nuevo que
+      // se cree acá abajo, para que quede claro de qué documento salió y la
+      // IA no lo termine reusando en un documento de otro tipo la próxima vez
+      // (ver el bloque 10.5 del prompt en aiService.js).
+      const tipoDocumentoEntry = Object.entries(extractedData).find(([k]) => k.toUpperCase() === 'TIPO_DOCUMENTO');
+      const tipoDocumento = tipoDocumentoEntry ? String(tipoDocumentoEntry[1]).trim().toUpperCase() : '';
 
       for (const [key, value] of Object.entries(extractedData)) {
         if (!value) continue;
@@ -155,7 +170,8 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
           customJsonUpdates[identificador] = String(value).toUpperCase();
           hasCustomJsonUpdates = true;
           if (!existingCustomFieldsById.has(generatedId)) {
-            newCustomFieldDefs.push({ identificador, nombreCampo: humanizeAiKey(key) });
+            const label = tipoDocumento ? `${humanizeAiKey(key)} (${tipoDocumento})` : humanizeAiKey(key);
+            newCustomFieldDefs.push({ identificador, nombreCampo: label });
           }
         }
       }

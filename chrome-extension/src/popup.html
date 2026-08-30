@@ -199,8 +199,107 @@
       color: var(--text-muted);
     }
     .search-container input { padding-left: 36px; }
-    
+
     label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: block; }
+
+    .mode-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 14px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px;
+    }
+    .mode-tab {
+      flex: 1;
+      width: auto;
+      padding: 7px 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: transparent;
+      border-radius: 6px;
+    }
+    .mode-tab:hover { transform: none; background: rgba(255,255,255,0.06); }
+    .mode-tab.active { background: var(--primary); color: var(--bg); }
+    .mode-tab.active:hover { background: var(--primary); }
+
+    .policia-item {
+      padding: 12px;
+      background: var(--panel-bg);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    .policia-city-badge {
+      display: inline-block;
+      font-size: 10px;
+      color: var(--primary);
+      background: rgba(56, 189, 248, 0.12);
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin: 0 4px 6px 0;
+    }
+    .policia-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+    .policia-field {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .policia-field svg { flex-shrink: 0; margin-top: 2px; }
+    .policia-punto {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--border);
+    }
+
+    #loginSection {
+      display: none;
+      margin-bottom: 16px;
+      padding: 16px;
+      background: var(--panel-bg);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    #loginError {
+      display: none;
+      font-size: 11px;
+      color: #ef4444;
+      margin: -8px 0 14px;
+      line-height: 1.4;
+    }
+    #sessionBar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    #sessionEmail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #btnLogout {
+      width: auto;
+      flex-shrink: 0;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 2px 8px;
+      font-size: 11px;
+      border: 1px solid var(--border);
+    }
+    #btnLogout:hover { color: white; border-color: var(--text-muted); }
+
+    #searchSection { display: none; }
   </style>
 </head>
 <body>
@@ -217,8 +316,11 @@
   <div id="configSection">
     <label>Supabase URL</label>
     <input type="text" id="supaUrl" placeholder="https://xxx.supabase.co">
-    <label>Supabase Key</label>
+    <label>Supabase Anon Key</label>
     <input type="password" id="supaKey" placeholder="eyJhbGciOiJIUzI1NiIsInR5c...">
+    <div style="font-size: 11px; color: var(--text-muted); margin-top: -8px; margin-bottom: 14px; line-height: 1.4;">
+      La key pública (anon), la misma que usa el Dashboard en el navegador — NO la service_role. Con esta sola no alcanza para ver clientes: además tenés que iniciar sesión abajo.
+    </div>
     <label>Groq API Key (Opcional, para IA)</label>
     <input type="password" id="groqKey" placeholder="gsk_...">
     <label>Dashboard URL (Opcional, seguridad)</label>
@@ -226,7 +328,24 @@
     <div style="font-size: 11px; color: var(--text-muted); margin-top: -8px; margin-bottom: 14px; line-height: 1.4;">
       Restringe qué origen puede sincronizar el cliente activo hacia esta extensión. Sin esto, cualquier sitio abierto podría hacerlo (solo localhost queda protegido por defecto).
     </div>
-    <button id="saveConfig">Guardar y Conectar</button>
+    <button id="saveConfig">Guardar</button>
+  </div>
+
+  <div id="loginSection">
+    <label>Email</label>
+    <input type="text" id="loginEmail" placeholder="tu@email.com" autocomplete="username">
+    <label>Contraseña</label>
+    <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+    <div id="loginError"></div>
+    <button id="btnLogin">Iniciar Sesión</button>
+    <div style="font-size: 11px; color: var(--text-muted); margin-top: 10px; line-height: 1.4; text-align: center;">
+      Usá el mismo usuario y contraseña con los que entrás al Dashboard.
+    </div>
+  </div>
+
+  <div id="sessionBar">
+    <span id="sessionEmail"></span>
+    <button id="btnLogout">Cerrar sesión</button>
   </div>
 
   <div id="activeClientSection">
@@ -240,6 +359,11 @@
   </div>
 
   <div id="searchSection">
+    <div class="mode-tabs">
+      <button type="button" class="mode-tab active" id="tabClientes">Clientes</button>
+      <button type="button" class="mode-tab" id="tabPolicia">Policía</button>
+    </div>
+
     <div class="search-container">
       <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
       <input type="text" id="searchInput" placeholder="Buscar por nombre, pasaporte o CPF..." autocomplete="off">

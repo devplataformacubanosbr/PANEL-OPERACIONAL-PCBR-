@@ -111,32 +111,49 @@ export const getExtendedClientFields = async () => {
   if (cachedExtendedFields) return cachedExtendedFields;
 
   try {
-    const { data, error } = await supabase
-      .from('tramites_catalogo')
-      .select('nombre, campos_config')
-      .eq('activo', true);
-      
-    if (error) throw error;
-    
-    let extraFields = [];
-    let seenIds = new Set();
-    if (data) {
-      data.forEach(cat => {
-        if (cat.campos_config && Array.isArray(cat.campos_config)) {
-          cat.campos_config.forEach(campo => {
-            const fieldId = `custom:${campo.id}`;
-            if (!seenIds.has(fieldId)) {
-              seenIds.add(fieldId);
-              extraFields.push({
-                id: fieldId,
-                label: `[${cat.nombre}] ${campo.label}`
-              });
-            }
-          });
-        }
-      });
-    }
-    
+    const [tramitesRes, camposRes] = await Promise.all([
+      supabase.from('tramites_catalogo').select('nombre, campos_config').eq('activo', true),
+      // Campos dinámicos del cliente (Configuración > Campos Base, incluye los
+      // 13 migratorios y cualquier campo nuevo creado a mano o por la IA de
+      // extracción de documentos) — antes esta función no los conocía, así que
+      // tenían dato guardado pero no aparecían para mapear en las plantillas.
+      supabase.from('config_campos_clientes').select('identificador, nombre_campo, categoria').eq('activo', true),
+    ]);
+    if (tramitesRes.error) throw tramitesRes.error;
+    if (camposRes.error) throw camposRes.error;
+
+    const extraFields = [];
+    // AVAILABLE_CLIENT_FIELDS ya trae los 13 migratorios hardcodeados con
+    // etiquetas prolijas (ej. "Nombre Padre") — evitar listarlos dos veces.
+    const seenIds = new Set(AVAILABLE_CLIENT_FIELDS.map(f => f.id));
+
+    // clientes.campos_personalizados: getClientFieldValue ya sabe leer
+    // cualquier id sin prefijo desde ahí como fallback, así que se listan con
+    // su identificador tal cual (sin prefijo "custom:").
+    (camposRes.data || []).forEach(cf => {
+      if (!seenIds.has(cf.identificador)) {
+        seenIds.add(cf.identificador);
+        extraFields.push({ id: cf.identificador, label: `[${cf.categoria}] ${cf.nombre_campo}` });
+      }
+    });
+
+    // entradas.datos_personalizados (campos definidos por trámite en
+    // tramites_catalogo) — se resuelven vía el prefijo "custom:".
+    (tramitesRes.data || []).forEach(cat => {
+      if (cat.campos_config && Array.isArray(cat.campos_config)) {
+        cat.campos_config.forEach(campo => {
+          const fieldId = `custom:${campo.id}`;
+          if (!seenIds.has(fieldId)) {
+            seenIds.add(fieldId);
+            extraFields.push({
+              id: fieldId,
+              label: `[${cat.nombre}] ${campo.label}`
+            });
+          }
+        });
+      }
+    });
+
     cachedExtendedFields = [...AVAILABLE_CLIENT_FIELDS, ...extraFields];
     return cachedExtendedFields;
   } catch (err) {
@@ -312,7 +329,12 @@ export async function analyzeTemplateWithAI(imageBase64) {
   // Redimensionar la imagen para no superar el límite TPM (8000 tokens en Groq)
   const resizedImage = await resizeImageToBase64(imageBase64, 900, 0.8);
 
-  const fieldList = AVAILABLE_CLIENT_FIELDS.map(f => `"${f.id}" (${f.label})`).join(', ');
+  // getExtendedClientFields incluye los campos fijos + TODOS los campos
+  // dinámicos del cliente (Configuración > Campos Base) — antes esto solo
+  // conocía AVAILABLE_CLIENT_FIELDS, así que la IA nunca podía sugerir un
+  // campo personalizado para una zona detectada en la plantilla.
+  const availableFields = await getExtendedClientFields();
+  const fieldList = availableFields.map(f => `"${f.id}" (${f.label})`).join(', ');
 
   const prompt = `Eres un asistente experto en análisis de documentos legales y formularios.
 Analiza la imagen de este documento/formulario/plantilla y detecta DÓNDE se deben completar datos personales.
@@ -1179,8 +1201,11 @@ export async function generateFilledDocx(templateUrl, clientData, templateName, 
 
     const data = {};
     
-    // 1. Cargar campos disponibles por defecto (por si el usuario usó los IDs exactos)
-    AVAILABLE_CLIENT_FIELDS.forEach(field => {
+    // 1. Cargar campos disponibles por defecto (por si el usuario usó los IDs
+    // exactos como tag de Word) — incluye fijos, migratorios y dinámicos
+    // (Configuración > Campos Base), no solo AVAILABLE_CLIENT_FIELDS.
+    const availableFields = await getExtendedClientFields();
+    availableFields.forEach(field => {
       data[field.id] = getClientFieldValue(clientData, field.id) || '';
     });
 
@@ -1247,7 +1272,11 @@ export async function generateFilledHtmlPdf(templateUrl, clientData, templateNam
   try {
     let htmlContent = await fetch(templateUrl).then(r => r.text());
 
-    AVAILABLE_CLIENT_FIELDS.forEach(field => {
+    // Incluye fijos, migratorios y dinámicos (Configuración > Campos Base) —
+    // antes solo se reemplazaban los tags {{...}} de AVAILABLE_CLIENT_FIELDS,
+    // así que un {{campo_personalizado}} en el HTML quedaba sin completar.
+    const availableFields = await getExtendedClientFields();
+    availableFields.forEach(field => {
       const val = getClientFieldValue(clientData, field.id) || '';
       const regex = new RegExp(`{{${field.id}}}`, 'g');
       htmlContent = htmlContent.replace(regex, val);

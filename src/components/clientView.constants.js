@@ -53,7 +53,13 @@ export const DOCUMENT_TYPE_OPTIONS = [
   { value: 'FOTO 3X4', label: 'Foto 3x4' },
   { value: 'COMPROBANTE', label: 'Comprobante' },
   { value: 'COMPROBANTE DE RESIDENCIA', label: 'Comprobante de Residencia' },
-  { value: 'DOCUMENTO IDENTIDAD', label: 'Documento de Identidad' },
+  // RNM y Carnet de Identidad son documentos físicos distintos (RNM = Registro
+  // Nacional Migratório de Brasil; Carnet = cédula/DNI del país de origen) —
+  // opciones propias en vez de meterlos los dos bajo "Documento Identidad"
+  // genérico, así quedan separados en la lista de documentos del cliente.
+  { value: 'RNM', label: 'RNM' },
+  { value: 'CARNET DE IDENTIDAD', label: 'Carnet de Identidad' },
+  { value: 'DOCUMENTO IDENTIDAD', label: 'Otro Documento de Identidad' },
   { value: 'PASAPORTE', label: 'Pasaporte' },
   { value: 'CPF', label: 'CPF' },
   { value: 'RECIBO SISCONARE', label: 'Recibo Sisconare (Solicitud de Refugio)' },

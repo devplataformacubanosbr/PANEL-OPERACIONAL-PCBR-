@@ -297,7 +297,9 @@ export default function ClientViewExtractionModal({
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem', overflowY: 'auto', flex: 1, paddingRight: '0.5rem' }}>
           {Object.entries(extractedData).map(([k, v]) => {
-            if (!v || k === 'ILEGIBLE' || k === 'TIPO_DOCUMENTO') return null;
+            // NOMBRE_ARCHIVO no es un dato del cliente: lo agrega el propio código
+            // como nombre sugerido de archivo (ver AI_IGNORED_KEYS en useClientViewExtraction.js).
+            if (!v || k === 'ILEGIBLE' || k === 'TIPO_DOCUMENTO' || k === 'NOMBRE_ARCHIVO') return null;
             const clientField = fieldMap[k];
             // Si la IA encontró un dato que no está en el mapeo fijo, se va a
             // guardar como campo dinámico nuevo (ver useClientViewExtraction) —
