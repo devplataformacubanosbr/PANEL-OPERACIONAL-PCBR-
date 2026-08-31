@@ -31,6 +31,47 @@ async function fetchDocumentBytes(urlOrPath) {
   return await res.arrayBuffer();
 }
 
+// pdf-lib solo sabe embeber PNG/JPEG reales, y los toma "tal cual" sin
+// leer el tag EXIF de orientación (a diferencia de un <img>/canvas del
+// navegador). Eso rompía dos cosas con fotos de celular: (1) un WebP/GIF
+// (o un JPEG progresivo/CMYK) hacía crashear embedJpg porque los bytes no
+// son un JPEG baseline válido, y (2) fotos con EXIF Orientation salían
+// giradas o al revés en el PDF final aunque se vieran bien en cualquier
+// visor. Decodificar vía <img>+canvas resuelve ambos: el navegador aplica
+// la orientación EXIF al dibujar, y toDataURL siempre produce un
+// PNG/JPEG baseline limpio sin importar el formato de entrada.
+async function normalizeImageForEmbed(bytes, tipoContenido) {
+  const isPng = tipoContenido === 'image/png';
+  const blob = new Blob([bytes], { type: tipoContenido || 'image/jpeg' });
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('No se pudo decodificar la imagen.'));
+      image.src = objectUrl;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    if (!isPng) {
+      // JPEG no soporta transparencia: fondo blanco para que un PNG/WebP
+      // con canal alfa no termine con áreas negras.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    ctx.drawImage(img, 0, 0);
+
+    const dataUrl = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.92);
+    const outBytes = Uint8Array.from(atob(dataUrl.split(',')[1]), c => c.charCodeAt(0));
+    return { bytes: outBytes, isPng };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 /**
  * Junta varios documentos (PDFs e imágenes) en un solo archivo PDF.
  * @param {Array} documents - Arreglo de objetos documento (deben tener url_archivo y tipo_contenido)
@@ -50,13 +91,10 @@ export async function mergeDocumentsToPdf(documents) {
         const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
         copiedPages.forEach((page) => mergedPdf.addPage(page));
       } else if (doc.tipo_contenido?.startsWith('image/')) {
-        // Insertar imagen
-        let image;
-        if (doc.tipo_contenido === 'image/png' || doc.url_archivo.toLowerCase().endsWith('.png')) {
-          image = await mergedPdf.embedPng(bytes);
-        } else {
-          image = await mergedPdf.embedJpg(bytes); // Asume JPG/WebP convertido a JPG o soportado
-        }
+        // Insertar imagen — normalizamos primero (ver normalizeImageForEmbed)
+        // para que WebP/GIF no crasheen y las fotos con EXIF no salgan giradas.
+        const { bytes: normalizedBytes, isPng } = await normalizeImageForEmbed(bytes, doc.tipo_contenido);
+        const image = isPng ? await mergedPdf.embedPng(normalizedBytes) : await mergedPdf.embedJpg(normalizedBytes);
 
         const imgDims = image.scale(1);
         

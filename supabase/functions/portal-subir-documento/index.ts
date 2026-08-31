@@ -10,6 +10,88 @@ const BUCKET = 'documentos_operacionales'
 const MAX_SIZE_MB = 10
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
 
+// Debe coincidir EXACTAMENTE con DOCUMENT_TYPE_OPTIONS en
+// src/components/clientView.constants.js -- es el vocabulario que usa el
+// checklist de "PDF Único" (tramites_requisitos.tipo_documento) para hacer
+// match automático. Si un cliente sube su CPF por el Portal y esto lo
+// etiqueta como "FOTO" genérico en vez de "CPF", el checklist nunca lo
+// reconoce y el PDF Único jamás se arma solo -- por eso el Portal necesita
+// esta clasificación (antes solo el dashboard, vía elección manual del
+// staff, dejaba el tipo bien puesto).
+const TIPOS_DOCUMENTO_VALIDOS = [
+  'FOTO', 'FOTO 3X4', 'COMPROBANTE', 'COMPROBANTE DE RESIDENCIA',
+  'RNM', 'CARNET DE IDENTIDAD', 'DOCUMENTO IDENTIDAD', 'PASAPORTE',
+  'CPF', 'RECIBO SISCONARE', 'FORMULARIO', 'OTRO',
+]
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
+
+// Clasifica el tipo de documento con IA de visión (Groq). Solo se llama para
+// imágenes -- un PDF/Word requeriría renderizar la primera página a imagen
+// primero, que hoy solo sabe hacer el navegador (pdfjs+canvas), no Deno.
+// Si algo falla (sin API key, Groq caído, respuesta rara, imagen muy pesada),
+// se traga el error y devuelve null: el caller cae al tipo genérico de
+// siempre, la subida nunca se rompe por esto.
+async function classifyDocumentType(bytes: Uint8Array, mimeType: string): Promise<string | null> {
+  try {
+    const groqApiKey = Deno.env.get('GROQ_API_KEY')
+    if (!groqApiKey) return null
+
+    const base64 = uint8ToBase64(bytes)
+    const prompt = `Eres un clasificador de documentos para una agencia de trámites migratorios en Brasil.
+Mira la imagen y decide qué tipo de documento es, usando EXACTAMENTE uno de estos valores (ni uno más):
+${TIPOS_DOCUMENTO_VALIDOS.join(', ')}
+
+Guía rápida: pasaporte -> PASAPORTE. CPF (Brasil) -> CPF. Carnet/cédula de identidad de Cuba u otro país de origen -> CARNET DE IDENTIDAD. RNM (Registro Nacional Migratório de Brasil) -> RNM. Cuenta de luz/agua/gas o contrato a nombre del cliente (comprobante de domicilio) -> COMPROBANTE DE RESIDENCIA. Recibo del sistema Sisconare (solicitud de refugio) -> RECIBO SISCONARE. Foto tipo carnet 3x4 -> FOTO 3X4. Cualquier otro comprobante/recibo -> COMPROBANTE. Formulario en blanco o completado a mano -> FORMULARIO. Selfie o foto que no encaja en nada de lo anterior -> FOTO. Si no estás seguro -> OTRO.
+
+Devuelve ÚNICAMENTE un objeto JSON puro, sin markdown: {"tipo_documento": "VALOR"}`
+
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3.6-27b',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          ],
+        }],
+        temperature: 0.1,
+        max_tokens: 200,
+        response_format: { type: 'json_object' },
+      }),
+    })
+
+    if (!res.ok) {
+      console.warn('[portal-subir-documento] Groq clasificación HTTP', res.status, await res.text().catch(() => ''))
+      return null
+    }
+
+    const data = await res.json()
+    const raw = (data.choices?.[0]?.message?.content || '').trim()
+    const cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim()
+    const parsed = JSON.parse(cleaned)
+    const tipo = String(parsed.tipo_documento || '').toUpperCase().trim()
+
+    return TIPOS_DOCUMENTO_VALIDOS.includes(tipo) ? tipo : null
+  } catch (err) {
+    console.warn('[portal-subir-documento] Clasificación IA falló, usando tipo genérico:', err.message)
+    return null
+  }
+}
+
 // Permite que un cliente del Portal (PORTALClientes-PCBR) suba sus propios
 // documentos. El portal corre siempre como rol `anon` (login propio por
 // numero_cliente/clave_acceso vía login_cliente_portal, nunca crea sesión
@@ -65,17 +147,23 @@ serve(async (req) => {
     const uniqueName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
     const storagePath = `${clienteId}/${uniqueName}`
 
+    const fileBytes = new Uint8Array(await file.arrayBuffer())
+
     const { error: uploadError } = await supabaseAdmin.storage
       .from(BUCKET)
-      .upload(storagePath, await file.arrayBuffer(), { contentType: file.type, upsert: false })
+      .upload(storagePath, fileBytes, { contentType: file.type, upsert: false })
 
     if (uploadError) throw uploadError
+
+    const tipoClasificado = file.type.startsWith('image/')
+      ? await classifyDocumentType(fileBytes, file.type)
+      : null
 
     const { data: docRecord, error: dbError } = await supabaseAdmin
       .from('documentos_operacionales')
       .insert({
         id_cliente: clienteId,
-        tipo_documento: file.type.startsWith('image/') ? 'FOTO' : 'COMPROBANTE',
+        tipo_documento: tipoClasificado || (file.type.startsWith('image/') ? 'FOTO' : 'COMPROBANTE'),
         nombre_archivo: file.name,
         url_archivo: storagePath,
         tamaño_bytes: file.size,

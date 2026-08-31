@@ -626,8 +626,21 @@ export async function getFilledPdfBlob(templateUrl, mappings, clientData, overri
   }
 }
 
-export async function uploadGeneratedDocumentToClient(blob, filename, clientData) {
+/**
+ * @param {Blob} blob
+ * @param {string} filename
+ * @param {object} clientData
+ * @param {{estado?: string, tipoDocumento?: string, subidoPor?: string, silent?: boolean}} [opts]
+ *   - estado: 'verificado' (default, ej. generación manual desde un botón "Generar" —
+ *     el click YA es la aprobación) o 'pendiente' (ej. generación automática sin
+ *     supervisión — queda como borrador hasta que un operario lo marque verificado
+ *     con el toggle que ya existe en la lista de documentos del cliente).
+ *   - silent: si true, no hace `alert()` en caso de error (la generación automática
+ *     no tiene a nadie mirando un alert bloqueante; se limita a loguear y propagar).
+ */
+export async function uploadGeneratedDocumentToClient(blob, filename, clientData, opts = {}) {
   if (!clientData || !clientData.id) return;
+  const { estado = 'verificado', tipoDocumento = 'GENERADO', subidoPor = 'Admin', silent = false } = opts;
   try {
     const ext = filename.split('.').pop().toLowerCase();
     const uniqueName = `${clientData.id}/${Date.now()}_${filename.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
@@ -645,16 +658,17 @@ export async function uploadGeneratedDocumentToClient(blob, filename, clientData
         nombre_archivo: filename,
         url_archivo: uniqueName,
         tipo_contenido: blob.type || (ext === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-        tipo_documento: 'GENERADO',
+        tipo_documento: tipoDocumento,
         tamaño_bytes: blob.size || 0,
-        subido_por: 'Admin',
-        estado: 'verificado',
+        subido_por: subidoPor,
+        estado,
       });
 
     if (dbError) throw dbError;
   } catch (err) {
     console.error('[templateService] Error uploading generated doc:', err);
-    alert('Error al guardar documento generado: ' + (err.message || JSON.stringify(err)));
+    if (!silent) alert('Error al guardar documento generado: ' + (err.message || JSON.stringify(err)));
+    else throw err;
   }
 }
 
