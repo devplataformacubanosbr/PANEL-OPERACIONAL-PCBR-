@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Building2, MapPin, Mail, Phone, Clock, AlignLeft, FileText, Plus, X, Paperclip, UploadCloud } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Building2, MapPin, Mail, Phone, Clock, AlignLeft, Plus, X, Paperclip, UploadCloud, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { validateFile } from '../../services/storageService';
 import Modal from '../ui/Modal';
@@ -70,6 +70,34 @@ function ContactoMultiple({ icon: Icon, label, placeholder, type = 'text', value
   );
 }
 
+// Textarea que crece con el contenido en vez de quedar fija con scroll
+// interno — antes, al escribir un procedimiento largo, el texto quedaba
+// apretado dentro de un cuadro de 3 filas mientras el modal se quedaba del
+// mismo tamaño; ahora la caja crece (hasta el límite de alto del propio
+// modal, que ya scrollea) a medida que se escribe.
+function AutoGrowTextarea({ value, onChange, className, placeholder, minRows = 3 }) {
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      onChange={onChange}
+      rows={minRows}
+      className={className}
+      placeholder={placeholder}
+      style={{ overflow: 'hidden', resize: 'none' }}
+    />
+  );
+}
+
 export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSave }) {
   const [formData, setFormData] = useState({
     nombre: '',
@@ -86,6 +114,10 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [viewingArchivo, setViewingArchivo] = useState(null);
+  // Procesos existentes arrancan colapsados (solo título) para ocupar el
+  // menor espacio posible cuando hay varios cargados; se expanden al hacer
+  // clic, o automáticamente al agregar uno nuevo (ver handleAddProceso).
+  const [expandedProcesos, setExpandedProcesos] = useState(new Set());
 
   useEffect(() => {
     if (policia) {
@@ -120,6 +152,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
             }))
           : (policia.proceso ? [{ titulo: '', descripcion: policia.proceso, archivos: [] }] : [])
       );
+      setExpandedProcesos(new Set());
     } else {
       setFormData({
         nombre: '',
@@ -132,6 +165,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
       setSelectedCiudades([]);
       setPuntos([]);
       setProcesos([]);
+      setExpandedProcesos(new Set());
     }
     setCiudadSearch('');
   }, [policia, isOpen]);
@@ -207,11 +241,37 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
   };
 
   const handleAddProceso = () => {
-    setProcesos(prev => [...prev, { ...PROCESO_VACIO, archivos: [] }]);
+    setProcesos(prev => {
+      const next = [...prev, { ...PROCESO_VACIO, archivos: [] }];
+      // El recién agregado arranca expandido (hay que llenarlo); los demás
+      // quedan como estaban — colapsados por defecto para ocupar el menor
+      // espacio posible cuando hay varios procesos cargados.
+      setExpandedProcesos(exp => new Set(exp).add(next.length - 1));
+      return next;
+    });
   };
 
   const handleRemoveProceso = (index) => {
+    const titulo = procesos[index]?.titulo?.trim();
+    if (!window.confirm(titulo ? `¿Eliminar el procedimiento "${titulo}"?` : '¿Eliminar este procedimiento?')) return;
     setProcesos(prev => prev.filter((_, i) => i !== index));
+    setExpandedProcesos(prev => {
+      const next = new Set();
+      prev.forEach(i => {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      });
+      return next;
+    });
+  };
+
+  const toggleProcesoExpanded = (index) => {
+    setExpandedProcesos(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
   };
 
   const handleAddProcesoArchivos = (index, fileList) => {
@@ -536,7 +596,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
         <div className="space-y-3 pt-4 border-t border-chrome-border">
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-chrome-text">Puntos de atención adicionales</label>
+              <label className="text-sm font-medium text-chrome-text">Postos</label>
               <p className="text-xs text-chrome-text-muted">
                 Para trámites que se atienden en otra dirección dentro de la misma ciudad, ej. el posto de pasaportes.
               </p>
@@ -547,7 +607,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-chrome-border bg-chrome-bg-active text-sm text-chrome-text hover:border-brand-primary/50 transition-colors flex-shrink-0"
             >
               <Plus size={14} />
-              Añadir punto
+              Añadir posto
             </button>
           </div>
 
@@ -567,7 +627,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
                       type="button"
                       onClick={() => handleRemovePunto(index)}
                       className="p-1.5 text-chrome-text-muted hover:text-danger rounded-md hover:bg-chrome-bg flex-shrink-0"
-                      title="Quitar punto"
+                      title="Quitar posto"
                     >
                       <X size={14} />
                     </button>
@@ -610,7 +670,7 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
         <div className="space-y-3 pt-4 border-t border-chrome-border">
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-chrome-text">Cómo se hace el proceso en este posto</label>
+              <label className="text-sm font-medium text-chrome-text">Procedimientos</label>
               <p className="text-xs text-chrome-text-muted">
                 Un bloque por trámite (ej. Pasaporte, Cédula). Podés adjuntar formularios o ejemplos a cada uno.
               </p>
@@ -621,93 +681,121 @@ export default function PoliciaModal({ isOpen, onClose, policia, ciudades, onSav
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-chrome-border bg-chrome-bg-active text-sm text-chrome-text hover:border-brand-primary/50 transition-colors flex-shrink-0"
             >
               <Plus size={14} />
-              Añadir proceso
+              Añadir procedimiento
             </button>
           </div>
 
           {procesos.length === 0 ? (
-            <span className="text-sm text-chrome-text-muted italic">Ningún proceso cargado todavía.</span>
+            <span className="text-sm text-chrome-text-muted italic">Ningún procedimiento cargado todavía.</span>
           ) : (
-            <div className="flex flex-col gap-3">
-              {procesos.map((proceso, index) => (
-                <div key={proceso.id || index} className="rounded-md border border-chrome-border bg-chrome-bg-active p-3 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="relative flex-1">
-                      <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-chrome-text-muted" />
-                      <input
-                        type="text"
-                        value={proceso.titulo}
-                        onChange={(e) => handleProcesoChange(index, 'titulo', e.target.value)}
-                        className="w-full rounded-md border border-chrome-border bg-chrome-bg pl-10 pr-3 py-1.5 text-sm font-medium text-chrome-text outline-none focus:border-brand-primary transition-colors"
-                        placeholder="Nombre del trámite (ej. Pasaporte)"
-                      />
-                    </div>
+            <div className="flex flex-col gap-2">
+              {procesos.map((proceso, index) => {
+                const isExpanded = expandedProcesos.has(index);
+                return (
+                <div key={proceso.id || index} className="rounded-md border border-chrome-border bg-chrome-bg-active overflow-hidden">
+                  <div className="flex items-center gap-1.5 p-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleProcesoExpanded(index)}
+                      className="p-0.5 text-chrome-text-muted hover:text-chrome-text flex-shrink-0"
+                      title={isExpanded ? 'Colapsar' : 'Expandir'}
+                    >
+                      {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    <input
+                      type="text"
+                      value={proceso.titulo}
+                      onChange={(e) => handleProcesoChange(index, 'titulo', e.target.value)}
+                      className="flex-1 min-w-0 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm font-medium text-chrome-text outline-none focus:border-brand-primary focus:bg-chrome-bg transition-colors"
+                      placeholder="Nombre del trámite (ej. Pasaporte)"
+                    />
+                    {proceso.archivos.length > 0 && (
+                      <span
+                        className="flex items-center gap-1 text-xs text-chrome-text-muted flex-shrink-0"
+                        title={`${proceso.archivos.length} archivo(s) adjunto(s)`}
+                      >
+                        <Paperclip size={11} />
+                        {proceso.archivos.length}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleRemoveProceso(index)}
-                      className="p-1.5 text-chrome-text-muted hover:text-danger rounded-md hover:bg-chrome-bg flex-shrink-0"
-                      title="Quitar proceso"
+                      className="p-1 text-danger hover:text-danger/80 rounded-md hover:bg-chrome-bg flex-shrink-0"
+                      title="Eliminar procedimiento"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleProcesoExpanded(index)}
+                      className="p-1 text-chrome-text-muted hover:text-chrome-text rounded-md hover:bg-chrome-bg flex-shrink-0"
+                      title={isExpanded ? 'Cerrar' : 'Expandir'}
                     >
                       <X size={14} />
                     </button>
                   </div>
 
-                  <textarea
-                    value={proceso.descripcion}
-                    onChange={(e) => handleProcesoChange(index, 'descripcion', e.target.value)}
-                    rows={3}
-                    className="w-full rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors resize-none"
-                    placeholder="Pasos del trámite: cómo se agenda, qué llevar, tiempos de espera, etc."
-                  />
+                  {isExpanded && (
+                    <div className="px-2 pb-2 space-y-2 border-t border-chrome-border pt-2">
+                      <AutoGrowTextarea
+                        value={proceso.descripcion}
+                        onChange={(e) => handleProcesoChange(index, 'descripcion', e.target.value)}
+                        className="w-full rounded-md border border-chrome-border bg-chrome-bg px-3 py-1.5 text-sm text-chrome-text outline-none focus:border-brand-primary transition-colors"
+                        placeholder="Pasos del trámite: cómo se agenda, qué llevar, tiempos de espera, etc."
+                      />
 
-                  {proceso.archivos.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      {proceso.archivos.map((archivo, aIndex) => {
-                        const isPending = archivo instanceof File;
-                        const nombre = isPending ? archivo.name : archivo.nombre_archivo;
-                        return (
-                          <div key={aIndex} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-chrome-bg text-xs text-chrome-text-muted">
-                            {isPending ? (
-                              <span className="flex items-center gap-1.5 truncate">
-                                <Paperclip size={12} className="flex-shrink-0" />
-                                <span className="truncate">{nombre}</span>
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setViewingArchivo(archivo)}
-                                className="flex items-center gap-1.5 truncate text-left hover:text-brand-primary transition-colors"
-                              >
-                                <Paperclip size={12} className="flex-shrink-0" />
-                                <span className="truncate">{nombre}</span>
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveProcesoArchivo(index, aIndex)}
-                              className="p-0.5 text-chrome-text-muted hover:text-danger flex-shrink-0"
-                              title="Quitar archivo"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        );
-                      })}
+                      {proceso.archivos.length > 0 && (
+                        <div className="flex flex-col gap-1">
+                          {proceso.archivos.map((archivo, aIndex) => {
+                            const isPending = archivo instanceof File;
+                            const nombre = isPending ? archivo.name : archivo.nombre_archivo;
+                            return (
+                              <div key={aIndex} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-chrome-bg text-xs text-chrome-text-muted">
+                                {isPending ? (
+                                  <span className="flex items-center gap-1.5 truncate">
+                                    <Paperclip size={12} className="flex-shrink-0" />
+                                    <span className="truncate">{nombre}</span>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingArchivo(archivo)}
+                                    className="flex items-center gap-1.5 truncate text-left hover:text-brand-primary transition-colors"
+                                  >
+                                    <Paperclip size={12} className="flex-shrink-0" />
+                                    <span className="truncate">{nombre}</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveProcesoArchivo(index, aIndex)}
+                                  className="p-0.5 text-chrome-text-muted hover:text-danger flex-shrink-0"
+                                  title="Quitar archivo"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-dashed border-chrome-border text-xs text-chrome-text-muted hover:border-brand-primary/50 hover:text-chrome-text transition-colors cursor-pointer">
+                        <input
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => { handleAddProcesoArchivos(index, e.target.files); e.target.value = ''; }}
+                        />
+                        <UploadCloud size={12} />
+                        Adjuntar archivo
+                      </label>
                     </div>
                   )}
-
-                  <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-dashed border-chrome-border text-xs text-chrome-text-muted hover:border-brand-primary/50 hover:text-chrome-text transition-colors cursor-pointer">
-                    <input
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => { handleAddProcesoArchivos(index, e.target.files); e.target.value = ''; }}
-                    />
-                    <UploadCloud size={12} />
-                    Adjuntar archivo
-                  </label>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -228,6 +228,13 @@ export default function ProcesoArchivoViewer({ archivo, onClose }) {
         flexDirection: 'column',
         overflow: 'hidden',
         userSelect: isDragging || resizeDirection ? 'none' : 'auto',
+        // El modal de edición (PoliciaModal) es un Dialog de Radix: mientras
+        // está abierto, Radix pone pointer-events: none en el resto de la
+        // página para volverlo inerte. Este visor se renderiza como
+        // hermano de ese Dialog (no dentro de su portal), así que hereda
+        // ese none y quedaba visualmente encima pero sin poder recibir
+        // scroll/clicks — el scroll caía al Dialog de atrás. Se reactiva acá.
+        pointerEvents: 'auto',
       }}
     >
       {edgeHandle('n', { top: -4, left: 8, right: 8, height: 8 })}

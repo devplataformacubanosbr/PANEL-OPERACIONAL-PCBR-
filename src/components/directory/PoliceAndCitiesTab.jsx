@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
-import { Building2, MapPin, Plus, Search, Edit2, Trash2, Paperclip } from 'lucide-react';
+import { Building2, MapPin, Plus, Search, Edit2, Trash2, Paperclip, ChevronDown, ChevronRight } from 'lucide-react';
 import PoliciaModal from './PoliciaModal';
 import ProcesoArchivoViewer from './ProcesoArchivoViewer';
 
@@ -62,6 +62,18 @@ export default function PoliceAndCitiesTab() {
   const [isEditingPolicia, setIsEditingPolicia] = useState(false);
   const [currentPolicia, setCurrentPolicia] = useState(null);
   const [viewingArchivo, setViewingArchivo] = useState(null);
+  // Procesos colapsados por defecto en las tarjetas (solo título) para que
+  // una policía con varios trámites cargados no infle la tarjeta entera.
+  const [expandedCardProcesos, setExpandedCardProcesos] = useState(new Set());
+
+  const toggleCardProceso = (key) => {
+    setExpandedCardProcesos(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetchData();
@@ -237,33 +249,58 @@ export default function PoliceAndCitiesTab() {
               </div>
 
               {policia.procesos && policia.procesos.length > 0 && (
-                <div className="border-t border-chrome-border pt-4 mb-4 space-y-3">
-                  <p className="text-xs font-medium text-chrome-text-muted uppercase tracking-wider">
-                    Cómo se hace el proceso
+                <div className="border-t border-chrome-border pt-4 mb-4 space-y-1.5">
+                  <p className="text-xs font-medium text-chrome-text-muted uppercase tracking-wider mb-1">
+                    Procedimientos
                   </p>
-                  {policia.procesos.map(proceso => (
-                    <div key={proceso.id}>
-                      {proceso.titulo && <p className="text-sm font-medium text-chrome-text">{proceso.titulo}</p>}
-                      {proceso.descripcion && (
-                        <p className="text-sm text-chrome-text whitespace-pre-line">{proceso.descripcion}</p>
-                      )}
-                      {proceso.archivos && proceso.archivos.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-1">
-                          {proceso.archivos.map(archivo => (
-                            <button
-                              key={archivo.id}
-                              type="button"
-                              onClick={() => setViewingArchivo(archivo)}
-                              className="flex items-center gap-1 px-2 py-1 rounded bg-chrome-bg-active text-xs text-chrome-text-muted hover:text-brand-primary transition-colors"
-                            >
-                              <Paperclip size={12} />
-                              {archivo.nombre_archivo}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                  {policia.procesos.map(proceso => {
+                    const key = `${policia.id}-${proceso.id}`;
+                    const isExpanded = expandedCardProcesos.has(key);
+                    return (
+                      <div key={proceso.id}>
+                        <button
+                          type="button"
+                          onClick={() => toggleCardProceso(key)}
+                          className="w-full flex items-center gap-1.5 text-left py-0.5 hover:text-brand-primary transition-colors"
+                        >
+                          {isExpanded ? (
+                            <ChevronDown size={12} className="text-chrome-text-muted flex-shrink-0" />
+                          ) : (
+                            <ChevronRight size={12} className="text-chrome-text-muted flex-shrink-0" />
+                          )}
+                          <span className="text-sm font-medium text-chrome-text truncate">{proceso.titulo || 'Proceso'}</span>
+                          {proceso.archivos && proceso.archivos.length > 0 && (
+                            <span className="flex items-center gap-0.5 text-xs text-chrome-text-muted flex-shrink-0">
+                              <Paperclip size={10} />
+                              {proceso.archivos.length}
+                            </span>
+                          )}
+                        </button>
+                        {isExpanded && (
+                          <div className="pl-4">
+                            {proceso.descripcion && (
+                              <p className="text-sm text-chrome-text whitespace-pre-line">{proceso.descripcion}</p>
+                            )}
+                            {proceso.archivos && proceso.archivos.length > 0 && (
+                              <div className="flex flex-wrap gap-2 mt-1">
+                                {proceso.archivos.map(archivo => (
+                                  <button
+                                    key={archivo.id}
+                                    type="button"
+                                    onClick={() => setViewingArchivo(archivo)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded bg-chrome-bg-active text-xs text-chrome-text-muted hover:text-brand-primary transition-colors"
+                                  >
+                                    <Paperclip size={12} />
+                                    {archivo.nombre_archivo}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -295,7 +332,7 @@ export default function PoliceAndCitiesTab() {
               {policia.puntos && policia.puntos.length > 0 && (
                 <div className="border-t border-chrome-border pt-4 mt-4">
                   <p className="text-xs font-medium text-chrome-text-muted mb-2 uppercase tracking-wider">
-                    Otros puntos de atención
+                    Postos
                   </p>
                   <div className="flex flex-col gap-2">
                     {policia.puntos.map(punto => (
