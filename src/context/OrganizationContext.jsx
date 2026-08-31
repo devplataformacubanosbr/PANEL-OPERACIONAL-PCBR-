@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
 import { useAuth } from '../features/auth/context/AuthContext';
 import { supabase } from '../shared/config/supabaseClient';
 
@@ -113,13 +113,40 @@ const applyTextPalette = (fondoHex, textoHex) => {
   TEXT_VARS.forEach(v => root.style.removeProperty(v));
 };
 
+// La marca (logo, nombre, colores) tarda un fetch entero en llegar, y hasta
+// que llega la app pinta con el tema genérico — un salto de color visible en
+// cada carga. Se cachea la última copia conocida en localStorage y se usa
+// como valor inicial de "organization" (en vez de null) para que el primer
+// render ya salga con los colores/logo correctos; el fetch de abajo solo
+// refresca esa copia en segundo plano.
+const ORG_CACHE_KEY = 'org_branding_cache_v1';
+
+const readCachedOrganization = () => {
+  try {
+    const raw = localStorage.getItem(ORG_CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedOrganization = (org) => {
+  try {
+    if (!org) return;
+    const { nombre, logo_url, color_primario, color_fondo, color_texto } = org;
+    localStorage.setItem(ORG_CACHE_KEY, JSON.stringify({ nombre, logo_url, color_primario, color_fondo, color_texto }));
+  } catch {
+    // localStorage puede fallar en modo privado; no es crítico, se recupera del fetch.
+  }
+};
+
 // Empresa única, sin multi-tenant: la marca/branding vive en una sola fila
 // de `configuracion_empresa` en vez de una fila de `organizaciones` por
 // tenant. No depende de userProfile — cualquier usuario autenticado ve la
 // misma configuración.
 export const OrganizationProvider = ({ children }) => {
   const { loading: authLoading } = useAuth();
-  const [organization, setOrganization] = useState(null);
+  const [organization, setOrganization] = useState(readCachedOrganization);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -138,9 +165,11 @@ export const OrganizationProvider = ({ children }) => {
         if (error) {
           console.error('Error fetching configuracion_empresa:', error);
           setError(error);
-          setOrganization(null);
+          // Se deja la copia cacheada (si había) en vez de limpiarla — un
+          // fetch fallido no debería tirar abajo la marca ya aplicada.
         } else {
           setOrganization(data);
+          writeCachedOrganization(data);
           setError(null);
         }
         setLoading(false);
@@ -148,12 +177,15 @@ export const OrganizationProvider = ({ children }) => {
       .catch(err => {
         console.error('Catch error fetching configuracion_empresa:', err);
         setError(err);
-        setOrganization(null);
         setLoading(false);
       });
   }, [authLoading]);
 
-  useEffect(() => {
+  // useLayoutEffect (no useEffect) para aplicar las CSS custom properties
+  // antes de que el navegador pinte el frame — con el valor cacheado ya en
+  // el estado inicial, esto corre con los colores correctos desde el primer
+  // render en vez de mostrar el tema genérico un instante y después saltar.
+  useLayoutEffect(() => {
     applyBrandColor(organization?.color_primario);
     applyBackgroundColor(organization?.color_fondo);
     applyTextPalette(organization?.color_fondo, organization?.color_texto);
@@ -166,7 +198,11 @@ export const OrganizationProvider = ({ children }) => {
 
   // Actualiza el logo/color en memoria tras guardar en MarcaSettings, sin recargar la app.
   const updateBranding = ({ logoUrl, colorPrimario, colorFondo, colorTexto }) => {
-    setOrganization(prev => prev ? { ...prev, logo_url: logoUrl, color_primario: colorPrimario, color_fondo: colorFondo, color_texto: colorTexto } : prev);
+    setOrganization(prev => {
+      const next = prev ? { ...prev, logo_url: logoUrl, color_primario: colorPrimario, color_fondo: colorFondo, color_texto: colorTexto } : prev;
+      writeCachedOrganization(next);
+      return next;
+    });
   };
 
   const value = {

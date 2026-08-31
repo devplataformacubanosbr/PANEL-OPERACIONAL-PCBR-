@@ -4,6 +4,12 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
+// DashboardView NO es lazy a propósito: es la vista con la que arranca
+// prácticamente toda sesión, así que separarla en su propio chunk solo
+// suma una descarga extra (y su spinner de Suspense) antes de mostrar algo
+// útil. Las demás vistas sí valen la pena como lazy porque una sesión
+// puede no visitarlas nunca.
+import DashboardView from '../components/dashboard/DashboardView';
 
 // Navigation
 import Sidebar from '../navigation/components/Sidebar';
@@ -28,7 +34,6 @@ import { GlobalDocumentoUnicoListener } from '../components/GlobalDocumentoUnico
 
 // Views
 
-const DashboardView = lazy(() => import('../components/dashboard/DashboardView'));
 const ClientView = lazy(() => import('../components/ClientView'));
 const ClientListView = lazy(() => import('../components/ClientListView'));
 const NewClientWizard = lazy(() => import('../components/newClientWizard/NewClientWizard'));

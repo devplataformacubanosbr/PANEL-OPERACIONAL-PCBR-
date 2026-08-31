@@ -46,24 +46,22 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
   } = useQuery({
     queryKey: ['clientesList', sortField, sortOrder, activeTab, filterNacionalidad, filterMissingDoc, filterEstadoCivil, filterSexo],
     queryFn: async () => {
-      let all = [];
-      let from = 0;
-      for (;;) {
-        // Los campos JSONB guardan fechas como texto ISO 'YYYY-MM-DD', así que el
-        // orden alfabético de texto coincide con el orden cronológico real — no
-        // hace falta castear a ::date. nullsFirst: false siempre, para que los
-        // clientes sin ese campo cargado queden al final (asc y desc por igual).
-        const orderExpr = FIXED_SORT_COLUMNS.has(sortField) ? sortField : `campos_personalizados->>${sortField}`;
+      // Los campos JSONB guardan fechas como texto ISO 'YYYY-MM-DD', así que el
+      // orden alfabético de texto coincide con el orden cronológico real — no
+      // hace falta castear a ::date. nullsFirst: false siempre, para que los
+      // clientes sin ese campo cargado queden al final (asc y desc por igual).
+      const orderExpr = FIXED_SORT_COLUMNS.has(sortField) ? sortField : `campos_personalizados->>${sortField}`;
+
+      const buildQuery = (withCount) => {
         // `id` como desempate: cientos de clientes comparten el mismo creado_en
         // exacto (migración masiva) y sin un desempate único Postgres no
         // garantiza el mismo orden entre una página y la siguiente — algunos
         // quedaban afuera del total traído.
         let query = supabase
           .from('clientes')
-          .select('*')
+          .select('*', withCount ? { count: 'exact' } : undefined)
           .order(orderExpr, { ascending: sortOrder === 'asc', nullsFirst: false })
-          .order('id', { ascending: sortOrder === 'asc' })
-          .range(from, from + FETCH_PAGE_SIZE - 1);
+          .order('id', { ascending: sortOrder === 'asc' });
 
         if (activeTab !== 'todos') {
           query = query.eq('estado_cliente', activeTab);
@@ -77,13 +75,43 @@ export default function ClientListView({ onNavigateToClient, searchQuery }) {
         if (filterSexo !== 'all') {
           query = query.ilike('sexo', `%${filterSexo}%`);
         }
+        return query;
+      };
 
-        const { data, error } = await query;
-        if (error) throw error;
-        all = all.concat(data || []);
-        if (!data || data.length < FETCH_PAGE_SIZE) break;
-        from += FETCH_PAGE_SIZE;
+      const { data: firstPage, count, error: firstError } = await buildQuery(true).range(0, FETCH_PAGE_SIZE - 1);
+      if (firstError) throw firstError;
+
+      let all = firstPage || [];
+
+      if (all.length === FETCH_PAGE_SIZE) {
+        if (typeof count === 'number') {
+          // Con el total ya conocido, se piden todas las páginas restantes en
+          // paralelo en vez de una detrás de otra — con miles de clientes esto
+          // baja varios round trips en serie a básicamente uno solo de tiempo
+          // de espera real.
+          const ranges = [];
+          for (let from = FETCH_PAGE_SIZE; from < count; from += FETCH_PAGE_SIZE) {
+            ranges.push([from, Math.min(from + FETCH_PAGE_SIZE - 1, count - 1)]);
+          }
+          const restPages = await Promise.all(ranges.map(([from, to]) => buildQuery(false).range(from, to)));
+          for (const { data, error } of restPages) {
+            if (error) throw error;
+            all = all.concat(data || []);
+          }
+        } else {
+          // No se pudo confiar en el count (raro) — se sigue paginando en serie
+          // como antes, para no arriesgar perder filas silenciosamente.
+          let from = FETCH_PAGE_SIZE;
+          for (;;) {
+            const { data, error } = await buildQuery(false).range(from, from + FETCH_PAGE_SIZE - 1);
+            if (error) throw error;
+            all = all.concat(data || []);
+            if (!data || data.length < FETCH_PAGE_SIZE) break;
+            from += FETCH_PAGE_SIZE;
+          }
+        }
       }
+
       // Los campos personalizados dinámicos (config_campos_clientes) viven en
       // clientes.campos_personalizados — se aplanan acá para que búsqueda,
       // filtros y ordenamiento los traten igual que cualquier otra columna.

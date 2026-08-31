@@ -1,25 +1,53 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
-import { Building2, MapPin, Plus, Search, Edit2, Trash2 } from 'lucide-react';
+import { Building2, MapPin, Plus, Search, Edit2, Trash2, Paperclip } from 'lucide-react';
 import PoliciaModal from './PoliciaModal';
+import ProcesoArchivoViewer from './ProcesoArchivoViewer';
 
 const PAGE_SIZE = 1000;
 
 // Supabase/PostgREST cap cada respuesta a PAGE_SIZE filas por defecto.
-// ciudades y policias_ciudades ya superan eso, así que hay que paginar
-// con .range() hasta que una página vuelva incompleta.
+// ciudades (~6200 municipios) y policias_ciudades ya superan eso. En vez de
+// pedir cada página una detrás de otra (lo que con ciudades eran 7 round
+// trips en serie), se pide la primera página junto con el count exacto y el
+// resto de las páginas se piden todas juntas en paralelo.
 async function fetchAllRows(table, select = '*', orderBy = null) {
-  const rows = [];
-  let from = 0;
-  while (true) {
-    let query = supabase.from(table).select(select).range(from, from + PAGE_SIZE - 1);
+  const buildQuery = (withCount) => {
+    let query = supabase.from(table).select(select, withCount ? { count: 'exact' } : undefined);
     if (orderBy) query = query.order(orderBy);
-    const { data, error } = await query;
-    if (error) throw error;
-    rows.push(...(data || []));
-    if (!data || data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+    return query;
+  };
+
+  const { data: firstPage, count, error: firstError } = await buildQuery(true).range(0, PAGE_SIZE - 1);
+  if (firstError) throw firstError;
+
+  let rows = firstPage || [];
+
+  if (rows.length === PAGE_SIZE) {
+    if (typeof count === 'number') {
+      const ranges = [];
+      for (let from = PAGE_SIZE; from < count; from += PAGE_SIZE) {
+        ranges.push([from, Math.min(from + PAGE_SIZE - 1, count - 1)]);
+      }
+      const restPages = await Promise.all(ranges.map(([from, to]) => buildQuery(false).range(from, to)));
+      for (const { data, error } of restPages) {
+        if (error) throw error;
+        rows = rows.concat(data || []);
+      }
+    } else {
+      // No se pudo confiar en el count (raro) — se sigue paginando en serie
+      // como antes, para no arriesgar perder filas silenciosamente.
+      let from = PAGE_SIZE;
+      for (;;) {
+        const { data, error } = await buildQuery(false).range(from, from + PAGE_SIZE - 1);
+        if (error) throw error;
+        rows = rows.concat(data || []);
+        if (!data || data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+    }
   }
+
   return rows;
 }
 
@@ -33,6 +61,7 @@ export default function PoliceAndCitiesTab() {
   // Modals state
   const [isEditingPolicia, setIsEditingPolicia] = useState(false);
   const [currentPolicia, setCurrentPolicia] = useState(null);
+  const [viewingArchivo, setViewingArchivo] = useState(null);
 
   useEffect(() => {
     fetchData();
@@ -41,15 +70,30 @@ export default function PoliceAndCitiesTab() {
   async function fetchData() {
     setLoading(true);
     try {
-      // Intentar cargar policías, ciudades y relaciones. Las tres tablas ya
-      // superan el límite por defecto de PostgREST (1000 filas/consulta),
-      // así que se paginan con fetchAllRows en vez de un .select('*') plano.
-      let policiasData, ciudadesData, relData;
+      // Las 6 tablas son independientes entre sí (el cruce entre policías,
+      // ciudades, puntos y procesos se arma en JS más abajo), así que se
+      // piden todas en paralelo en vez de en etapas una detrás de otra.
+      // policia_puntos/policia_procesos/policia_proceso_archivos son tablas
+      // opcionales/nuevas: si todavía no se corrió su migración, se
+      // resuelven a [] en vez de tirar abajo el resto del directorio.
+      const fetchOptional = async (table, select, orderBy) => {
+        try {
+          return await fetchAllRows(table, select, orderBy);
+        } catch (err) {
+          if (err.code === '42P01') return [];
+          throw err;
+        }
+      };
+
+      let policiasData, ciudadesData, relData, puntosData, procesosData, procesoArchivosData;
       try {
-        [policiasData, ciudadesData, relData] = await Promise.all([
+        [policiasData, ciudadesData, relData, puntosData, procesosData, procesoArchivosData] = await Promise.all([
           fetchAllRows('policias', '*', 'nombre'),
           fetchAllRows('ciudades', '*', 'nombre'),
           fetchAllRows('policias_ciudades', '*'),
+          fetchOptional('policia_puntos', '*'),
+          fetchOptional('policia_procesos', '*', 'orden'),
+          fetchOptional('policia_proceso_archivos', '*'),
         ]);
       } catch (err) {
         if (err.code === '42P01') {
@@ -58,21 +102,19 @@ export default function PoliceAndCitiesTab() {
         throw err;
       }
 
-      // policia_puntos es una tabla opcional/nueva: si todavía no se corrió
-      // la migración, seguir mostrando el resto del directorio igual.
-      let puntosData = [];
-      try {
-        puntosData = await fetchAllRows('policia_puntos', '*');
-      } catch (err) {
-        if (err.code !== '42P01') throw err;
-      }
-
-      // Combinar relaciones y puntos adicionales en los objetos de policía
+      // Combinar relaciones, puntos adicionales y procesos (con sus
+      // archivos) en los objetos de policía
       const policiasConCiudades = (policiasData || []).map(p => {
         const rels = (relData || []).filter(r => r.policia_id === p.id);
         const pCiudades = rels.map(r => ciudadesData.find(c => c.id === r.ciudad_id)).filter(Boolean);
         const pPuntos = puntosData.filter(punto => punto.policia_id === p.id);
-        return { ...p, ciudades: pCiudades, puntos: pPuntos };
+        const pProcesos = procesosData
+          .filter(proceso => proceso.policia_id === p.id)
+          .map(proceso => ({
+            ...proceso,
+            archivos: procesoArchivosData.filter(a => a.proceso_id === proceso.id),
+          }));
+        return { ...p, ciudades: pCiudades, puntos: pPuntos, procesos: pProcesos };
       });
 
       setPolicias(policiasConCiudades);
@@ -83,12 +125,28 @@ export default function PoliceAndCitiesTab() {
       setError(err.message);
       // Fallback a mock data para demostrar UI si no hay tablas
       setPolicias([
-        { id: 1, nombre: 'ALTAMIRA - DPF/ATM/PA', direccion: 'Rua Acesso 3, 850', email: 'nucart.atm.pa@pf.gov.br', ciudades: [{ id: 1, nombre: 'Altamira', estado: 'Pará' }] },
-        { id: 2, nombre: 'BELÉM - SR/PF/PA', direccion: 'Av. Almirante Barroso, 3251', email: 'delemig.drex.spa@pf.gov.br', ciudades: [{ id: 2, nombre: 'Belém', estado: 'Pará' }] },
+        { id: 1, nombre: 'ALTAMIRA - DPF/ATM/PA', direccion: 'Rua Acesso 3, 850', email: ['nucart.atm.pa@pf.gov.br'], ciudades: [{ id: 1, nombre: 'Altamira', estado: 'Pará' }] },
+        { id: 2, nombre: 'BELÉM - SR/PF/PA', direccion: 'Av. Almirante Barroso, 3251', email: ['delemig.drex.spa@pf.gov.br'], ciudades: [{ id: 2, nombre: 'Belém', estado: 'Pará' }] },
       ]);
     } finally {
       setLoading(false);
     }
+  }
+
+  // PoliciaModal ya guardó todo y nos devuelve la fila completa (con sus
+  // ciudades/puntos/procesos resueltos a partir de lo que la propia
+  // inserción/actualización devolvió) — alcanza con actualizar esa policía
+  // en memoria. Volver a pedir las 6 tablas del directorio entero (ciudades
+  // incluye ~6200 filas) solo para reflejar el cambio de una sola policía
+  // era el reload lento que se sentía al cerrar el modal de edición.
+  function handlePoliciaSaved(updatedPolicia) {
+    setPolicias(prev => {
+      const exists = prev.some(p => p.id === updatedPolicia.id);
+      const next = exists
+        ? prev.map(p => (p.id === updatedPolicia.id ? updatedPolicia : p))
+        : [...prev, updatedPolicia];
+      return next.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    });
   }
 
   const normalize = (s) =>
@@ -154,7 +212,7 @@ export default function PoliceAndCitiesTab() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-chrome-text">{policia.nombre}</h3>
-                    <p className="text-xs text-chrome-text-muted">{policia.email || 'Sin email'}</p>
+                    <p className="text-xs text-chrome-text-muted">{policia.email?.length > 0 ? policia.email.join(', ') : 'Sin email'}</p>
                   </div>
                 </div>
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -178,12 +236,34 @@ export default function PoliceAndCitiesTab() {
                 </div>
               </div>
 
-              {policia.proceso && (
-                <div className="border-t border-chrome-border pt-4 mb-4">
-                  <p className="text-xs font-medium text-chrome-text-muted mb-2 uppercase tracking-wider">
+              {policia.procesos && policia.procesos.length > 0 && (
+                <div className="border-t border-chrome-border pt-4 mb-4 space-y-3">
+                  <p className="text-xs font-medium text-chrome-text-muted uppercase tracking-wider">
                     Cómo se hace el proceso
                   </p>
-                  <p className="text-sm text-chrome-text whitespace-pre-line">{policia.proceso}</p>
+                  {policia.procesos.map(proceso => (
+                    <div key={proceso.id}>
+                      {proceso.titulo && <p className="text-sm font-medium text-chrome-text">{proceso.titulo}</p>}
+                      {proceso.descripcion && (
+                        <p className="text-sm text-chrome-text whitespace-pre-line">{proceso.descripcion}</p>
+                      )}
+                      {proceso.archivos && proceso.archivos.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {proceso.archivos.map(archivo => (
+                            <button
+                              key={archivo.id}
+                              type="button"
+                              onClick={() => setViewingArchivo(archivo)}
+                              className="flex items-center gap-1 px-2 py-1 rounded bg-chrome-bg-active text-xs text-chrome-text-muted hover:text-brand-primary transition-colors"
+                            >
+                              <Paperclip size={12} />
+                              {archivo.nombre_archivo}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -222,8 +302,8 @@ export default function PoliceAndCitiesTab() {
                       <div key={punto.id} className="text-xs text-chrome-text-muted">
                         {punto.sigla && <span className="font-medium text-chrome-text">{punto.sigla}: </span>}
                         {punto.direccion || 'Sin dirección'}
-                        {punto.telefono && <span> · {punto.telefono}</span>}
-                        {punto.email && <span> · {punto.email}</span>}
+                        {punto.telefono?.length > 0 && <span> · {punto.telefono.join(', ')}</span>}
+                        {punto.email?.length > 0 && <span> · {punto.email.join(', ')}</span>}
                       </div>
                     ))}
                   </div>
@@ -240,8 +320,12 @@ export default function PoliceAndCitiesTab() {
         onClose={() => setIsEditingPolicia(false)}
         policia={currentPolicia}
         ciudades={ciudades}
-        onSave={fetchData}
+        onSave={handlePoliciaSaved}
       />
+
+      {viewingArchivo && (
+        <ProcesoArchivoViewer archivo={viewingArchivo} onClose={() => setViewingArchivo(null)} />
+      )}
     </div>
   );
 }

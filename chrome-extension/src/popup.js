@@ -451,19 +451,32 @@ document.addEventListener('DOMContentLoaded', () => {
             .map(pt => `
               <div class="policia-punto">
                 ${pt.sigla ? `<strong>${escapeHtml(pt.sigla)}:</strong> ` : ''}${escapeHtml(pt.direccion || 'Sin dirección')}
-                ${pt.telefono ? ` · ${escapeHtml(pt.telefono)}` : ''}${pt.email ? ` · ${escapeHtml(pt.email)}` : ''}
+                ${pt.telefono?.length ? ` · ${escapeHtml(pt.telefono.join(', '))}` : ''}${pt.email?.length ? ` · ${escapeHtml(pt.email.join(', '))}` : ''}
               </div>
             `)
             .join('');
+
+          // procesos es la tabla nueva (varios trámites); si un posto
+          // todavía no la tiene, se cae al texto viejo de p.proceso para no
+          // dejar de mostrar lo que ya estaba cargado.
+          const procesos = (p.procesos && p.procesos.length > 0)
+            ? p.procesos
+                .map(pr => `
+                  <div class="policia-field">
+                    ${pr.titulo ? `<strong>${escapeHtml(pr.titulo)}:</strong> ` : ''}${escapeHtml(pr.descripcion || '')}
+                  </div>
+                `)
+                .join('')
+            : (p.proceso ? `<div class="policia-field">${escapeHtml(p.proceso)}</div>` : '');
 
           div.innerHTML = `
             <div>${badges}</div>
             <div class="policia-name">${escapeHtml(p.nombre)}</div>
             ${p.direccion ? `<div class="policia-field">${ICON_MAPPIN} ${escapeHtml(p.direccion)}</div>` : ''}
-            ${p.telefono ? `<div class="policia-field">${ICON_PHONE} ${escapeHtml(p.telefono)}</div>` : ''}
-            ${p.email ? `<div class="policia-field">${ICON_MAIL} ${escapeHtml(p.email)}</div>` : ''}
+            ${p.telefono?.length ? `<div class="policia-field">${ICON_PHONE} ${escapeHtml(p.telefono.join(', '))}</div>` : ''}
+            ${p.email?.length ? `<div class="policia-field">${ICON_MAIL} ${escapeHtml(p.email.join(', '))}</div>` : ''}
             ${p.horario_atencion ? `<div class="policia-field">${ICON_CLOCK} ${escapeHtml(p.horario_atencion)}</div>` : ''}
-            ${p.proceso ? `<div class="policia-field">${escapeHtml(p.proceso)}</div>` : ''}
+            ${procesos}
             ${p.notas ? `<div class="policia-field">${escapeHtml(p.notas)}</div>` : ''}
             ${puntos}
           `;

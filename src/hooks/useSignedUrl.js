@@ -5,9 +5,10 @@ import { supabase } from '../shared/config/supabaseClient';
  * Hook para obtener una Signed URL temporal de Supabase Storage.
  * @param {string} path - Ruta relativa del archivo en el bucket (ej. org_id/cliente_id/archivo.jpg)
  * @param {number} expiresIn - Segundos antes de que expire la URL (por defecto 300 = 5 mins)
+ * @param {string} bucket - Bucket de Storage (por defecto 'documentos_operacionales')
  * @returns {{ signedUrl: string|null, loading: boolean, error: string|null }}
  */
-export function useSignedUrl(path, expiresIn = 300) {
+export function useSignedUrl(path, expiresIn = 300, bucket = 'documentos_operacionales') {
   const [signedUrl, setSignedUrl] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -33,7 +34,7 @@ export function useSignedUrl(path, expiresIn = 300) {
 
       try {
         const { data, error: urlError } = await supabase.storage
-          .from('documentos_operacionales')
+          .from(bucket)
           .createSignedUrl(path, expiresIn);
 
         if (urlError) throw urlError;
@@ -57,7 +58,7 @@ export function useSignedUrl(path, expiresIn = 300) {
     return () => {
       isMounted = false;
     };
-  }, [path, expiresIn]);
+  }, [path, expiresIn, bucket]);
 
   return { signedUrl, loading, error };
 }
