@@ -44,11 +44,21 @@ serve(async (req) => {
     // No loguear el payload completo: trae PII (nombre, CPF, pasaporte, etc.)
     console.log("Kommo webhook recibido");
 
-    const { data: mappingsData } = await supabaseClient
-      .from('kommo_field_mappings')
-      .select('*');
-
-    const mappings = mappingsData || [];
+    // Lazy: la inmensa mayoría de los webhooks que llegan en producción son
+    // mensajes de WhatsApp (message[add]/outgoing_message[add]), que nunca
+    // usan kommo_field_mappings (eso es solo para contactos/leads). Antes se
+    // pedía esta tabla en TODOS los webhooks sin excepción — una consulta a
+    // Supabase completamente desperdiciada en el camino más frecuente y más
+    // sensible a latencia (la conversación de WhatsApp en vivo). Se cachea
+    // por invocación para que processContact y processLead compartan una sola
+    // lectura cuando ambas corren en el mismo request.
+    let mappingsCache: any[] | null = null;
+    const getMappings = async () => {
+      if (mappingsCache) return mappingsCache;
+      const { data } = await supabaseClient.from('kommo_field_mappings').select('*');
+      mappingsCache = data || [];
+      return mappingsCache;
+    };
 
     const baseUrl = `https://${creds.subdominio}.kommo.com/api/v4`;
     const kommoHeaders = {
@@ -104,7 +114,7 @@ serve(async (req) => {
     // a Supabase Storage (bucket whatsapp_media), devolviendo una URL firmada de larga
     // duración. El link de amojo a veces ya viene autenticado/firmado y a veces no —
     // se prueba primero sin credenciales y, si falla, con el Bearer token de la cuenta.
-    const downloadKommoChatAttachment = async (link: string, fileNameHint: string | null): Promise<{ url: string | null, type: string | null, name: string | null }> => {
+    const downloadKommoChatAttachment = async (link: string, fileNameHint: string | null, uniqueId: string | number): Promise<{ url: string | null, type: string | null, name: string | null }> => {
         const empty = { url: null, type: null, name: null };
         if (!link) return empty;
 
@@ -122,7 +132,12 @@ serve(async (req) => {
             const mimeType = fileRes.headers.get('content-type') || blob.type || 'application/octet-stream';
             const hasExt = !!fileNameHint && /\.[a-zA-Z0-9]{2,5}$/.test(fileNameHint);
             const ext = hasExt ? '' : `.${(mimeType.split('/')[1] || 'bin').split(';')[0]}`;
-            const finalName = `${fileNameHint || `kommo_${Date.now()}`}${ext}`;
+            // Kommo repite el mismo file_name (p.ej. "image.jpg", "audio.ogg") en adjuntos
+            // de mensajes distintos. Sin el prefijo del id de mensaje, dos adjuntos con el
+            // mismo nombre terminaban en el mismo path de Storage y, con upsert:true, el
+            // segundo pisaba al primero: el mensaje viejo quedaba mostrando el archivo
+            // nuevo (parecía "repetido") y el archivo original se perdía.
+            const finalName = `${uniqueId}_${fileNameHint || `kommo_${Date.now()}`}${ext}`;
 
             const { error: upErr } = await supabaseClient.storage
                 .from('whatsapp_media')
@@ -209,6 +224,7 @@ serve(async (req) => {
         let fixedUpdates: any = { id_kommo: data.id.toString() };
         let jsonUpdates: any = {};
         let identifierValue: string | null = null;
+        const mappings = await getMappings();
 
         const nameMapping = mappings.find(m => m.kommo_entity === 'contacts' && m.kommo_field_id === 'name');
         if (nameMapping) {
@@ -285,6 +301,7 @@ serve(async (req) => {
         let trDatosPersonalizados: any = {};
         let clienteUpdatesFromLead: any = {};
         let trServicio = defaultServicio;
+        const mappings = await getMappings();
 
         for (const cf of data.custom_fields) {
             const mapping = mappings.find(m => m.kommo_entity === 'leads' && m.kommo_field_id === cf.id.toString());
@@ -586,7 +603,7 @@ serve(async (req) => {
             if (existingMsg) continue;
 
             const mediaInfo = attachmentLink
-                ? await downloadKommoChatAttachment(attachmentLink, attachmentFileName)
+                ? await downloadKommoChatAttachment(attachmentLink, attachmentFileName, kommoMessageId)
                 : { url: null, type: null, name: null };
 
             const texto = text || (mediaInfo.name ? `[Archivo] ${mediaInfo.name}` : `[${messageType}]`);
@@ -611,7 +628,10 @@ serve(async (req) => {
             // Si trajo un archivo, además de quedar en el historial de
             // conversación se registra como documento pendiente de revisión —
             // así aparece en la pestaña "Documentos" del cliente en el panel.
-            if (attachmentLink && mediaInfo.url) {
+            // Los audios (notas de voz) quedan afuera a propósito: solo deben
+            // verse en la conversación, no como documento a revisar.
+            const isAudio = (mediaInfo.type || '').startsWith('audio/');
+            if (attachmentLink && mediaInfo.url && !isAudio) {
                 await supabaseClient.from('documentos_pendientes').insert({
                     cliente_id: principalClientId,
                     telefono: msgTelefono,

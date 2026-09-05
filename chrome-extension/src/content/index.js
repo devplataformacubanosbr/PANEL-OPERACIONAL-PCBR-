@@ -23,7 +23,14 @@ window.addEventListener("message", (event) => {
 
     if (!isTrustedLocal && !isTrustedConfigured) {
       if (trustedConfigured) {
+        // Antes esto se descartaba en silencio: el panel mostraba "enviado con
+        // éxito" igual (el postMessage siempre sale, sin importar si alguien lo
+        // escucha) y la extensión se quedaba pegada con el último cliente que sí
+        // había coincidido — parecía "un cliente viejo repetido" sin ningún
+        // aviso de qué estaba fallando. Ahora se responde con el motivo para
+        // que el panel pueda avisarle al usuario en vez de mentirle.
         console.warn(`Dashboard Auto-Fill: mensaje DASHBOARD_SYNC ignorado (origen no confiable: ${event.origin})`);
+        window.postMessage({ type: 'DASHBOARD_SYNC_ACK', ok: false, reason: 'origin_mismatch', configuredUrl: trustedConfigured, actualOrigin: event.origin }, '*');
         return;
       }
       console.warn(`Dashboard Auto-Fill: aceptando DASHBOARD_SYNC de un origen sin verificar (${event.origin}). Configura "Dashboard URL" en el popup de la extensión para restringirlo.`);
@@ -39,6 +46,7 @@ window.addEventListener("message", (event) => {
       activeClientRelatives: activeClientRelatives
     }, () => {
       console.log("Cliente activo guardado en la extensión:", clientData.nombre);
+      window.postMessage({ type: 'DASHBOARD_SYNC_ACK', ok: true }, '*');
     });
   });
 });

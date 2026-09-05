@@ -317,8 +317,33 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
       });
     });
 
+    // El toast ya no asume éxito: el postMessage sale siempre, aunque no haya
+    // extensión instalada o el content script rechace el origen (ver
+    // chrome-extension/src/content/index.js). Sin esta confirmación, un
+    // mismatch de "Dashboard URL" fallaba en silencio y el usuario creía que
+    // los datos se habían mandado cuando en realidad la extensión seguía
+    // con el cliente anterior.
+    let acked = false;
+    const onAck = (event) => {
+      if (event.source !== window || !event.data || event.data.type !== 'DASHBOARD_SYNC_ACK') return;
+      acked = true;
+      window.removeEventListener('message', onAck);
+      if (event.data.ok) {
+        toast.success(`Datos de ${client.nombre} enviados a la extensión.`);
+      } else if (event.data.reason === 'origin_mismatch') {
+        toast.error(`La extensión rechazó el envío: "Dashboard URL" está configurado como "${event.data.configuredUrl}" pero esta página es "${event.data.actualOrigin}". Corregilo en el popup de la extensión.`, { duration: 8000 });
+      } else {
+        toast.error('La extensión rechazó los datos del cliente.');
+      }
+    };
+    window.addEventListener('message', onAck);
     window.postMessage({ type: 'DASHBOARD_SYNC', clientData: fullData, activeClientRelatives: relatives }, '*');
-    toast.success(`Datos de ${client.nombre} enviados a la extensión.`);
+
+    setTimeout(() => {
+      if (acked) return;
+      window.removeEventListener('message', onAck);
+      toast.error('La extensión no respondió. ¿Está instalada y habilitada?', { duration: 6000 });
+    }, 1500);
   };
 
 

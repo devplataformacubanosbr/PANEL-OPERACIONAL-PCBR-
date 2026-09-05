@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { Building2, MapPin, Plus, Search, Edit2, Trash2, Paperclip } from 'lucide-react';
 import PoliciaModal from './PoliciaModal';
 import ProcesoArchivoViewer from './ProcesoArchivoViewer';
-import { linkifyText } from '../../utils/linkifyText';
+import ProcesoDetailModal from './ProcesoDetailModal';
 
 const PAGE_SIZE = 1000;
 
@@ -69,6 +69,7 @@ export default function PoliceAndCitiesTab() {
   const [isEditingPolicia, setIsEditingPolicia] = useState(false);
   const [currentPolicia, setCurrentPolicia] = useState(null);
   const [viewingArchivo, setViewingArchivo] = useState(null);
+  const [viewingProceso, setViewingProceso] = useState(null);
   const [expandedCardCiudades, setExpandedCardCiudades] = useState(new Set());
 
   const toggleCardCiudades = (policiaId) => {
@@ -259,7 +260,13 @@ export default function PoliceAndCitiesTab() {
                     Procedimientos
                   </p>
                   {policia.procesos.map(proceso => (
-                    <div key={proceso.id}>
+                    <button
+                      key={proceso.id}
+                      type="button"
+                      onClick={() => setViewingProceso(proceso)}
+                      className="w-full text-left rounded-md -mx-1.5 px-1.5 py-1 hover:bg-chrome-bg-hover transition-colors"
+                      title="Ver proceso completo"
+                    >
                       <div className="flex items-center gap-1.5">
                         <span className="text-sm font-medium text-chrome-text truncate">{proceso.titulo || 'Proceso'}</span>
                         {proceso.archivos && proceso.archivos.length > 0 && (
@@ -270,24 +277,9 @@ export default function PoliceAndCitiesTab() {
                         )}
                       </div>
                       {proceso.descripcion && (
-                        <p className="text-sm text-chrome-text whitespace-pre-line">{linkifyText(proceso.descripcion)}</p>
+                        <p className="text-xs text-chrome-text-muted truncate">{proceso.descripcion}</p>
                       )}
-                      {proceso.archivos && proceso.archivos.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-1">
-                          {proceso.archivos.map(archivo => (
-                            <button
-                              key={archivo.id}
-                              type="button"
-                              onClick={() => setViewingArchivo(archivo)}
-                              className="flex items-center gap-1 px-2 py-1 rounded bg-chrome-bg-active text-xs text-chrome-text-muted hover:text-brand-primary transition-colors"
-                            >
-                              <Paperclip size={12} />
-                              {archivo.nombre_archivo}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -391,6 +383,14 @@ export default function PoliceAndCitiesTab() {
 
       {viewingArchivo && (
         <ProcesoArchivoViewer archivo={viewingArchivo} onClose={() => setViewingArchivo(null)} />
+      )}
+
+      {viewingProceso && (
+        <ProcesoDetailModal
+          proceso={viewingProceso}
+          onClose={() => setViewingProceso(null)}
+          onViewArchivo={setViewingArchivo}
+        />
       )}
     </div>
   );
