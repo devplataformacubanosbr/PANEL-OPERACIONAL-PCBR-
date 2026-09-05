@@ -1,10 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
-import { Building2, MapPin, Plus, Search, Edit2, Trash2, Paperclip, ChevronDown, ChevronRight } from 'lucide-react';
+import { Building2, MapPin, Plus, Search, Edit2, Trash2, Paperclip } from 'lucide-react';
 import PoliciaModal from './PoliciaModal';
 import ProcesoArchivoViewer from './ProcesoArchivoViewer';
+import { linkifyText } from '../../utils/linkifyText';
 
 const PAGE_SIZE = 1000;
+
+// Un posto puede cubrir decenas/cientos de ciudades (ej. una SR/PF de
+// capital) — mostrarlas todas de entrada infla la tarjeta a pantallas
+// completas. Sin búsqueda activa se listan solo las primeras
+// CIUDADES_COLLAPSED_LIMIT, con un botón para expandir el resto.
+const CIUDADES_COLLAPSED_LIMIT = 6;
 
 // Supabase/PostgREST cap cada respuesta a PAGE_SIZE filas por defecto.
 // ciudades (~6200 municipios) y policias_ciudades ya superan eso. En vez de
@@ -62,15 +69,13 @@ export default function PoliceAndCitiesTab() {
   const [isEditingPolicia, setIsEditingPolicia] = useState(false);
   const [currentPolicia, setCurrentPolicia] = useState(null);
   const [viewingArchivo, setViewingArchivo] = useState(null);
-  // Procesos colapsados por defecto en las tarjetas (solo título) para que
-  // una policía con varios trámites cargados no infle la tarjeta entera.
-  const [expandedCardProcesos, setExpandedCardProcesos] = useState(new Set());
+  const [expandedCardCiudades, setExpandedCardCiudades] = useState(new Set());
 
-  const toggleCardProceso = (key) => {
-    setExpandedCardProcesos(prev => {
+  const toggleCardCiudades = (policiaId) => {
+    setExpandedCardCiudades(prev => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(policiaId)) next.delete(policiaId);
+      else next.add(policiaId);
       return next;
     });
   };
@@ -249,58 +254,41 @@ export default function PoliceAndCitiesTab() {
               </div>
 
               {policia.procesos && policia.procesos.length > 0 && (
-                <div className="border-t border-chrome-border pt-4 mb-4 space-y-1.5">
+                <div className="border-t border-chrome-border pt-4 mb-4 space-y-3">
                   <p className="text-xs font-medium text-chrome-text-muted uppercase tracking-wider mb-1">
                     Procedimientos
                   </p>
-                  {policia.procesos.map(proceso => {
-                    const key = `${policia.id}-${proceso.id}`;
-                    const isExpanded = expandedCardProcesos.has(key);
-                    return (
-                      <div key={proceso.id}>
-                        <button
-                          type="button"
-                          onClick={() => toggleCardProceso(key)}
-                          className="w-full flex items-center gap-1.5 text-left py-0.5 hover:text-brand-primary transition-colors"
-                        >
-                          {isExpanded ? (
-                            <ChevronDown size={12} className="text-chrome-text-muted flex-shrink-0" />
-                          ) : (
-                            <ChevronRight size={12} className="text-chrome-text-muted flex-shrink-0" />
-                          )}
-                          <span className="text-sm font-medium text-chrome-text truncate">{proceso.titulo || 'Proceso'}</span>
-                          {proceso.archivos && proceso.archivos.length > 0 && (
-                            <span className="flex items-center gap-0.5 text-xs text-chrome-text-muted flex-shrink-0">
-                              <Paperclip size={10} />
-                              {proceso.archivos.length}
-                            </span>
-                          )}
-                        </button>
-                        {isExpanded && (
-                          <div className="pl-4">
-                            {proceso.descripcion && (
-                              <p className="text-sm text-chrome-text whitespace-pre-line">{proceso.descripcion}</p>
-                            )}
-                            {proceso.archivos && proceso.archivos.length > 0 && (
-                              <div className="flex flex-wrap gap-2 mt-1">
-                                {proceso.archivos.map(archivo => (
-                                  <button
-                                    key={archivo.id}
-                                    type="button"
-                                    onClick={() => setViewingArchivo(archivo)}
-                                    className="flex items-center gap-1 px-2 py-1 rounded bg-chrome-bg-active text-xs text-chrome-text-muted hover:text-brand-primary transition-colors"
-                                  >
-                                    <Paperclip size={12} />
-                                    {archivo.nombre_archivo}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
+                  {policia.procesos.map(proceso => (
+                    <div key={proceso.id}>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium text-chrome-text truncate">{proceso.titulo || 'Proceso'}</span>
+                        {proceso.archivos && proceso.archivos.length > 0 && (
+                          <span className="flex items-center gap-0.5 text-xs text-chrome-text-muted flex-shrink-0">
+                            <Paperclip size={10} />
+                            {proceso.archivos.length}
+                          </span>
                         )}
                       </div>
-                    );
-                  })}
+                      {proceso.descripcion && (
+                        <p className="text-sm text-chrome-text whitespace-pre-line">{linkifyText(proceso.descripcion)}</p>
+                      )}
+                      {proceso.archivos && proceso.archivos.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {proceso.archivos.map(archivo => (
+                            <button
+                              key={archivo.id}
+                              type="button"
+                              onClick={() => setViewingArchivo(archivo)}
+                              className="flex items-center gap-1 px-2 py-1 rounded bg-chrome-bg-active text-xs text-chrome-text-muted hover:text-brand-primary transition-colors"
+                            >
+                              <Paperclip size={12} />
+                              {archivo.nombre_archivo}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -308,21 +296,62 @@ export default function PoliceAndCitiesTab() {
                 <p className="text-xs font-medium text-chrome-text-muted mb-2 uppercase tracking-wider">Ciudades Cubiertas</p>
                 <div className="flex flex-wrap gap-2">
                   {policia.ciudades && policia.ciudades.length > 0 ? (
-                    policia.ciudades.map(c => {
-                      const isMatch = normalizedSearch.length > 0 && normalize(c.nombre).includes(normalizedSearch);
+                    (() => {
+                      // Con búsqueda activa, se muestra solo la(s) ciudad(es)
+                      // que coinciden (igual que la extensión Chrome) en vez
+                      // de las ~decenas/cientos que puede cubrir un posto —
+                      // si la búsqueda matcheó por nombre de policía y no por
+                      // ninguna ciudad, se aplica el mismo límite colapsado
+                      // de abajo (nada que aislar).
+                      const matches = normalizedSearch.length > 0
+                        ? policia.ciudades.filter(c => normalize(c.nombre).includes(normalizedSearch))
+                        : [];
+                      if (matches.length > 0) {
+                        return matches.map(c => (
+                          <span
+                            key={c.id}
+                            className="px-2 py-1 border text-xs rounded-md bg-brand-primary/10 border-brand-primary text-brand-primary font-medium"
+                          >
+                            {c.nombre}
+                          </span>
+                        ));
+                      }
+
+                      const isExpanded = expandedCardCiudades.has(policia.id);
+                      const toShow = isExpanded ? policia.ciudades : policia.ciudades.slice(0, CIUDADES_COLLAPSED_LIMIT);
+                      const hiddenCount = policia.ciudades.length - toShow.length;
+
                       return (
-                        <span
-                          key={c.id}
-                          className={`px-2 py-1 border text-xs rounded-md transition-colors ${
-                            isMatch
-                              ? 'bg-brand-primary/10 border-brand-primary text-brand-primary font-medium'
-                              : 'bg-chrome-bg-active border-chrome-border text-chrome-text'
-                          }`}
-                        >
-                          {c.nombre}
-                        </span>
+                        <>
+                          {toShow.map(c => (
+                            <span
+                              key={c.id}
+                              className="px-2 py-1 border text-xs rounded-md bg-chrome-bg-active border-chrome-border text-chrome-text"
+                            >
+                              {c.nombre}
+                            </span>
+                          ))}
+                          {hiddenCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleCardCiudades(policia.id)}
+                              className="px-2 py-1 border border-dashed border-chrome-border text-xs rounded-md text-chrome-text-muted hover:text-brand-primary hover:border-brand-primary/50 transition-colors"
+                            >
+                              +{hiddenCount} más
+                            </button>
+                          )}
+                          {isExpanded && policia.ciudades.length > CIUDADES_COLLAPSED_LIMIT && (
+                            <button
+                              type="button"
+                              onClick={() => toggleCardCiudades(policia.id)}
+                              className="px-2 py-1 border border-dashed border-chrome-border text-xs rounded-md text-chrome-text-muted hover:text-brand-primary hover:border-brand-primary/50 transition-colors"
+                            >
+                              Ver menos
+                            </button>
+                          )}
+                        </>
                       );
-                    })
+                    })()
                   ) : (
                     <span className="text-xs text-chrome-text-muted italic">Ninguna ciudad asignada</span>
                   )}

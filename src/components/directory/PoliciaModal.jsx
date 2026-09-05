@@ -5,6 +5,7 @@ import { validateFile } from '../../services/storageService';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import ProcesoArchivoViewer from './ProcesoArchivoViewer';
+import { linkifyText, hasUrl } from '../../utils/linkifyText';
 
 const PUNTO_VACIO = { sigla: '', direccion: '', telefono: [''], email: [''] };
 const PROCESO_VACIO = { titulo: '', descripcion: '', archivos: [] };
@@ -75,21 +76,44 @@ function ContactoMultiple({ icon: Icon, label, placeholder, type = 'text', value
 // apretado dentro de un cuadro de 3 filas mientras el modal se quedaba del
 // mismo tamaño; ahora la caja crece (hasta el límite de alto del propio
 // modal, que ya scrollea) a medida que se escribe.
+//
+// Un <textarea> nativo nunca puede renderizar un link clickeable (solo
+// muestra texto plano) — por eso, cuando el texto tiene una URL y el campo
+// no está enfocado, se muestra en su lugar una vista de solo lectura con el
+// link clickeable; al hacer clic para escribir, vuelve a ser editable.
 function AutoGrowTextarea({ value, onChange, className, placeholder, minRows = 3 }) {
   const textareaRef = useRef(null);
+  const [isFocused, setIsFocused] = useState(false);
 
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-  }, [value]);
+  }, [value, isFocused]);
+
+  if (!isFocused && hasUrl(value)) {
+    return (
+      <div
+        role="textbox"
+        tabIndex={0}
+        onFocus={() => setIsFocused(true)}
+        onClick={() => setIsFocused(true)}
+        onKeyDown={(e) => { if (e.key === 'Enter') setIsFocused(true); }}
+        className={`${className} cursor-text whitespace-pre-wrap`}
+      >
+        {linkifyText(value)}
+      </div>
+    );
+  }
 
   return (
     <textarea
       ref={textareaRef}
+      autoFocus={isFocused}
       value={value}
       onChange={onChange}
+      onBlur={() => setIsFocused(false)}
       rows={minRows}
       className={className}
       placeholder={placeholder}

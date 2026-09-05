@@ -408,6 +408,21 @@ document.addEventListener('DOMContentLoaded', () => {
     return div.innerHTML;
   }
 
+  // Igual que escapeHtml, pero además vuelve clickeables las URLs sueltas
+  // que aparezcan en el texto (ej. un link al formulario online del
+  // trámite). La puntuación final pegada a la URL queda fuera del link.
+  const URL_REGEX = /(https?:\/\/[^\s]+)/g;
+  const TRAILING_PUNCT_REGEX = /[.,;:!?)\]}'"]+$/;
+
+  function linkifyHtml(str) {
+    return escapeHtml(str).replace(URL_REGEX, (match) => {
+      const trailingMatch = match.match(TRAILING_PUNCT_REGEX);
+      const trailing = trailingMatch ? trailingMatch[0] : '';
+      const url = trailing ? match.slice(0, -trailing.length) : match;
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>${trailing}`;
+    });
+  }
+
   async function searchPolicia(query) {
     if (!isSessionValid(authSession)) {
       showLoginUI();
@@ -463,11 +478,11 @@ document.addEventListener('DOMContentLoaded', () => {
             ? p.procesos
                 .map(pr => `
                   <div class="policia-field">
-                    ${pr.titulo ? `<strong>${escapeHtml(pr.titulo)}:</strong> ` : ''}${escapeHtml(pr.descripcion || '')}
+                    ${pr.titulo ? `<strong>${escapeHtml(pr.titulo)}:</strong> ` : ''}${linkifyHtml(pr.descripcion || '')}
                   </div>
                 `)
                 .join('')
-            : (p.proceso ? `<div class="policia-field">${escapeHtml(p.proceso)}</div>` : '');
+            : (p.proceso ? `<div class="policia-field">${linkifyHtml(p.proceso)}</div>` : '');
 
           div.innerHTML = `
             <div>${badges}</div>
