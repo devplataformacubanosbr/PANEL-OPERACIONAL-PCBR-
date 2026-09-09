@@ -27,11 +27,12 @@ const MODEL_VISION = 'qwen/qwen3.6-27b'; // Visión + OCR
  * @param {number} temperature
  * @returns {Promise<string>} contenido del mensaje del asistente
  */
-async function callGroq(model, messages, temperature = 0.1, responseFormat = null) {
+async function callGroq(model, messages, temperature = 0.1, responseFormat = null, reasoningEffort = null) {
   // 1. Intentar invocación por Edge Function de Supabase (ai-proxy) usando GROQ_API_KEY guardado en Supabase
   try {
     const payload = { model, messages, temperature, max_tokens: 8192 };
     if (responseFormat) payload.response_format = responseFormat;
+    if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
 
     const { data, error } = await supabase.functions.invoke('ai-proxy', {
       body: payload
@@ -57,6 +58,9 @@ async function callGroq(model, messages, temperature = 0.1, responseFormat = nul
     };
     if (responseFormat) {
       bodyData.response_format = responseFormat;
+    }
+    if (reasoningEffort) {
+      bodyData.reasoning_effort = reasoningEffort;
     }
 
     const res = await fetch(GROQ_BASE_URL, {
@@ -228,7 +232,8 @@ Usa null para los campos que no estén visibles en el documento. No inventes dat
       ],
     }],
     0.1,
-    { type: "json_object" }
+    { type: "json_object" },
+    'none'
   );
 
   try {
