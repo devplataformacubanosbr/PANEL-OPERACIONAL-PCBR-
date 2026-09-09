@@ -160,12 +160,19 @@ export async function getDocuments(clientId) {
 
 /**
  * Reasigna un documento a otro cliente.
+ * Los documentos que llegaron por Kommo/WhatsApp (id uuid) viven en
+ * documentos_pendientes y usan la columna `cliente_id`, no `id_cliente`
+ * de documentos_operacionales.
  */
 export async function reassignDocument(documentId, newClientId) {
   try {
+    const isPendiente = typeof documentId === 'string' && documentId.includes('-');
+    const table = isPendiente ? 'documentos_pendientes' : 'documentos_operacionales';
+    const column = isPendiente ? 'cliente_id' : 'id_cliente';
+
     const { error } = await supabase
-      .from('documentos_operacionales')
-      .update({ id_cliente: newClientId })
+      .from(table)
+      .update({ [column]: newClientId })
       .eq('id', documentId);
     if (error) throw error;
     return { success: true, error: null };
