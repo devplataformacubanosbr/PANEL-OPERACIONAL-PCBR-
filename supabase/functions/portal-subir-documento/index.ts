@@ -184,6 +184,86 @@ async function rellenarDatosFaltantesCliente(
   }
 }
 
+const normalizeName = (name: string) => name
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[̀-ͯ]/g, '')
+  .trim()
+
+// Heurística de "documento extraviado": ¿el nombre/CPF que la IA leyó
+// pertenece claramente a otra persona, distinta del dueño de la cuenta del
+// Portal? Misma lógica que detectPersonMismatch en
+// src/services/clientExtractionService.js (dashboard) -- no se puede
+// importar ese archivo acá porque usa el DOM del navegador en otras partes.
+function detectPersonMismatch(currentNombre: string | null, currentCpf: string | null, datos: Record<string, string>): boolean {
+  if (!datos.nombre) return false
+
+  const cpfIsDifferent = !!(datos.cpf && currentCpf && datos.cpf !== currentCpf)
+
+  const currentName = normalizeName(currentNombre || '')
+  const extractedName = normalizeName(datos.nombre)
+  if (!currentName || !extractedName) return cpfIsDifferent
+
+  const w1 = currentName.split(/\s+/).filter((w) => w.length > 2)
+  const w2 = extractedName.split(/\s+/).filter((w) => w.length > 2)
+  if (w1.length === 0 || w2.length === 0) return cpfIsDifferent
+
+  const firstNamesMatch = w1[0] === w2[0]
+  const sharedWords = w1.filter((w) => w2.includes(w)).length
+  const nameIsDifferent = sharedWords === 0 || (sharedWords === 1 && !firstNamesMatch)
+
+  return nameIsDifferent || cpfIsDifferent
+}
+
+// Cuando detectPersonMismatch da true: busca si esta persona ya es cliente
+// (por CPF exacto, si no por nombre) y si no existe la crea -- siempre
+// vinculada al cliente dueño de la cuenta del Portal vía relaciones_clientes
+// (tipo 'Familiar', misma convención que el flujo manual del dashboard). No
+// mueve el documento acá, eso lo hace el caller.
+async function resolveOrCreateRelatedClient(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  currentClienteId: number,
+  datosExtraidos: Record<string, string>
+): Promise<number> {
+  let query = supabaseAdmin.from('clientes').select('id').neq('id', currentClienteId)
+  query = datosExtraidos.cpf
+    ? query.eq('cpf', datosExtraidos.cpf)
+    : query.ilike('nombre', `%${datosExtraidos.nombre}%`)
+  const { data: matches } = await query.limit(1)
+
+  let targetClienteId: number
+  if (matches && matches.length > 0) {
+    targetClienteId = matches[0].id
+  } else {
+    const { data: nuevoCliente, error: createError } = await supabaseAdmin
+      .from('clientes')
+      .insert(datosExtraidos)
+      .select('id')
+      .single()
+    if (createError || !nuevoCliente) throw createError || new Error('No se pudo crear el cliente relacionado.')
+    targetClienteId = nuevoCliente.id
+  }
+
+  // Evitar relaciones duplicadas si ya llegó antes otro documento de esta
+  // misma persona relacionada (en cualquiera de los dos sentidos).
+  const { data: existingRelation } = await supabaseAdmin
+    .from('relaciones_clientes')
+    .select('id')
+    .or(`and(cliente_id.eq.${currentClienteId},cliente_relacionado_id.eq.${targetClienteId}),and(cliente_id.eq.${targetClienteId},cliente_relacionado_id.eq.${currentClienteId})`)
+    .limit(1)
+
+  if (!existingRelation || existingRelation.length === 0) {
+    const { error: relError } = await supabaseAdmin
+      .from('relaciones_clientes')
+      .insert({ cliente_id: currentClienteId, cliente_relacionado_id: targetClienteId, tipo_relacion: 'Familiar' })
+    if (relError && relError.code !== '23505') {
+      console.warn('[portal-subir-documento] Error creando relación automática:', relError.message)
+    }
+  }
+
+  return targetClienteId
+}
+
 // Permite que un cliente del Portal (PORTALClientes-PCBR) suba sus propios
 // documentos. El portal corre siempre como rol `anon` (login propio por
 // numero_cliente/clave_acceso vía login_cliente_portal, nunca crea sesión
@@ -268,11 +348,42 @@ serve(async (req) => {
 
     if (dbError) throw dbError
 
-    // Auto-completar la ficha del cliente con lo que la IA leyó del
-    // documento, antes de que un operacional lo revise. Solo llena campos
-    // vacíos (ver rellenarDatosFaltantesCliente) -- si esto falla, no rompe
-    // la subida, el documento ya quedó guardado.
-    await rellenarDatosFaltantesCliente(supabaseAdmin, clienteId, datosExtraidos)
+    // ¿El documento es claramente de otra persona (no del dueño de esta
+    // cuenta del Portal)? Si es así, no le llenamos la ficha al dueño de la
+    // cuenta: buscamos/creamos el cliente relacionado correcto, movemos el
+    // documento para allá y aplicamos los datos extraídos ahí -- todo
+    // automático, antes de que un operacional lo vea.
+    let clienteParaDatos = clienteId
+    if (Object.keys(datosExtraidos).length > 0) {
+      try {
+        const { data: clienteActual } = await supabaseAdmin
+          .from('clientes')
+          .select('nombre, cpf')
+          .eq('id', clienteId)
+          .single()
+
+        if (detectPersonMismatch(clienteActual?.nombre ?? null, clienteActual?.cpf ?? null, datosExtraidos)) {
+          const targetClienteId = await resolveOrCreateRelatedClient(supabaseAdmin, clienteId, datosExtraidos)
+
+          await supabaseAdmin
+            .from('documentos_operacionales')
+            .update({ id_cliente: targetClienteId })
+            .eq('id', docRecord.id)
+          docRecord.id_cliente = targetClienteId
+
+          clienteParaDatos = targetClienteId
+        }
+      } catch (mismatchErr) {
+        console.warn('[portal-subir-documento] Chequeo de persona distinta falló:', mismatchErr.message)
+      }
+    }
+
+    // Auto-completar la ficha del cliente (el dueño de la cuenta, o el
+    // relacionado recién resuelto si el documento era de otra persona) con lo
+    // que la IA leyó del documento, antes de que un operacional lo revise.
+    // Solo llena campos vacíos (ver rellenarDatosFaltantesCliente) -- si esto
+    // falla, no rompe la subida, el documento ya quedó guardado.
+    await rellenarDatosFaltantesCliente(supabaseAdmin, clienteParaDatos, datosExtraidos)
 
     return new Response(JSON.stringify({ success: true, documento: docRecord }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

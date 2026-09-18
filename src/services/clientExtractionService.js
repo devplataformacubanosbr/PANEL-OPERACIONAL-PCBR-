@@ -15,6 +15,9 @@
 import { supabase } from '../supabaseClient';
 import { normalizeDateToDDMMYYYY } from '../utils/dateFormatter';
 import { toIsoDate, FIXED_FIELDS_CATALOG } from '../components/clientView.constants';
+import { createCliente, getCliente, insertRelacion } from './clientesService';
+import { getDocuments, reassignDocument } from './storageService';
+import { analyzeDocumentImage } from './aiService';
 
 const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
 
@@ -164,4 +167,221 @@ export async function applyExtractedDataToClient({
   }
 
   return { applied };
+}
+
+const normalizeName = (name) => (name || '')
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[̀-ͯ]/g, '')
+  .trim();
+
+/**
+ * Heurística de "documento extraviado": ¿el nombre/CPF que la IA extrajo de
+ * un documento pertenece claramente a otra persona, distinta del dueño de la
+ * cuenta? Portada de ClientViewExtractionModal.isDifferent() para poder
+ * correr el mismo chequeo de forma automática (sin esperar a que un
+ * operacional abra el modal de revisión).
+ */
+export function detectPersonMismatch(currentCliente, extractedData) {
+  if (!currentCliente || !extractedData) return false;
+  const currentName = normalizeName(currentCliente.nombre);
+  const extractedName = normalizeName(extractedData.NOMBRE_COMPLETO);
+  if (!currentName || !extractedName) return false;
+
+  const w1 = currentName.split(/\s+/).filter(w => w.length > 2);
+  const w2 = extractedName.split(/\s+/).filter(w => w.length > 2);
+  if (w1.length === 0 || w2.length === 0) return false;
+
+  const firstNamesMatch = w1[0] === w2[0];
+  const sharedWords = w1.filter(w => w2.includes(w)).length;
+  const nameIsDifferent = sharedWords === 0 || (sharedWords === 1 && !firstNamesMatch);
+  const cpfIsDifferent = !!(extractedData.CPF && currentCliente.cpf && extractedData.CPF !== currentCliente.cpf);
+
+  return nameIsDifferent || cpfIsDifferent;
+}
+
+/**
+ * Cuando detectPersonMismatch da true: busca si la persona del documento ya
+ * es cliente (por CPF exacto, si no por nombre) y si no existe la crea --
+ * siempre vinculada al cliente dueño de la cuenta vía relaciones_clientes
+ * (tipo 'Familiar', misma convención que el flujo manual de
+ * ClientViewExtractionModal.handleCreateNewClient). No mueve el documento acá:
+ * eso lo hace el caller, porque el mecanismo difiere según el canal
+ * (reassignDocument en el dashboard, UPDATE directo en el Edge Function).
+ */
+export async function resolveOrCreateRelatedClient({ currentCliente, extractedData }) {
+  let query = supabase.from('clientes').select('id, nombre, cpf').neq('id', currentCliente.id);
+  query = extractedData.CPF
+    ? query.eq('cpf', extractedData.CPF)
+    : query.ilike('nombre', `%${extractedData.NOMBRE_COMPLETO}%`);
+  const { data: matches } = await query.limit(1);
+
+  let targetClient;
+  let isNewClient = false;
+  if (matches && matches.length > 0) {
+    targetClient = matches[0];
+  } else {
+    const camposPersonalizados = {};
+    if (extractedData.RNM) camposPersonalizados.rnm = extractedData.RNM;
+    if (extractedData.CARNET_IDENTIDAD) camposPersonalizados.carnet_identidad = extractedData.CARNET_IDENTIDAD;
+
+    targetClient = await createCliente({
+      nombre: extractedData.NOMBRE_COMPLETO?.toUpperCase() || 'NUEVO CLIENTE',
+      cpf: extractedData.CPF || '',
+      nacionalidad: extractedData.NACIONALIDAD?.toUpperCase() || '',
+      fecha_nacimiento: extractedData.FECHA_NACIMIENTO ? toIsoDate(normalizeDateToDDMMYYYY(extractedData.FECHA_NACIMIENTO)) : null,
+      sexo: extractedData.SEXO?.toUpperCase() || '',
+      ...(Object.keys(camposPersonalizados).length > 0 ? { campos_personalizados: camposPersonalizados } : {}),
+    });
+    isNewClient = true;
+  }
+
+  // Evitar relaciones duplicadas si ya llegó antes otro documento de esta
+  // misma persona relacionada (en cualquiera de los dos sentidos).
+  const { data: existingRelation } = await supabase
+    .from('relaciones_clientes')
+    .select('id')
+    .or(`and(cliente_id.eq.${currentCliente.id},cliente_relacionado_id.eq.${targetClient.id}),and(cliente_id.eq.${targetClient.id},cliente_relacionado_id.eq.${currentCliente.id})`)
+    .limit(1);
+
+  if (!existingRelation || existingRelation.length === 0) {
+    try {
+      await insertRelacion({ cliente_id: currentCliente.id, cliente_relacionado_id: targetClient.id, tipo_relacion: 'Familiar' });
+    } catch (err) {
+      if (err?.code !== '23505') console.error('[clientExtractionService] Error creando relación automática:', err);
+    }
+  }
+
+  return { targetClient, isNewClient };
+}
+
+/**
+ * Dado un documento ya extraído por la IA, decide a quién pertenecen sus
+ * datos -- al cliente actual, o a uno relacionado si detectPersonMismatch da
+ * true -- y los aplica (skipIfAlreadyFilled: true, nunca pisa un dato ya
+ * cargado a mano). Si es de otra persona, además mueve el documento con
+ * `moveDocument` (el mecanismo de "mover" difiere según el canal: subida
+ * individual usa reassignDocument sobre un solo id, el organizador masivo
+ * hace lo mismo por cada documento de la corrida).
+ *
+ * Comparte la misma lógica entre useClientViewDocuments.handleConfirmUpload
+ * (un documento nuevo) y organizeClientDocuments (todos los documentos ya
+ * subidos de un cliente) para que ambos flujos se comporten idéntico.
+ *
+ * @returns {Promise<{ moved: boolean, targetClient: object, isNewClient: boolean }>}
+ */
+export async function resolvePersonAndApplyData({ currentCliente, extractedData, customFieldsConfig = [], moveDocument }) {
+  if (detectPersonMismatch(currentCliente, extractedData)) {
+    const { targetClient, isNewClient } = await resolveOrCreateRelatedClient({ currentCliente, extractedData });
+    if (moveDocument) await moveDocument(targetClient.id);
+    await applyExtractedDataToClient({
+      targetClientId: targetClient.id,
+      extractedData,
+      customFieldsConfig,
+      skipIfAlreadyFilled: true,
+    });
+    return { moved: true, targetClient, isNewClient };
+  }
+
+  await applyExtractedDataToClient({
+    targetClientId: currentCliente.id,
+    extractedData,
+    customFieldsConfig,
+    skipIfAlreadyFilled: true,
+  });
+  return { moved: false, targetClient: currentCliente, isNewClient: false };
+}
+
+async function downloadDocBlob(doc) {
+  const isPendiente = typeof doc.id === 'string' && doc.id.includes('-');
+  const bucket = isPendiente ? 'whatsapp_media' : 'documentos_operacionales';
+  let path = doc.url_archivo;
+  if (path?.startsWith('http')) {
+    const parts = path.split(`/${bucket}/`);
+    path = parts.length === 2 ? decodeURIComponent(parts[1].split('?')[0]) : null;
+  }
+  if (!path) throw new Error('No se pudo resolver la ruta del archivo en el storage.');
+  const { data, error } = await supabase.storage.from(bucket).download(path);
+  if (error || !data) throw error || new Error('No se pudo descargar el archivo.');
+  return data;
+}
+
+const isAnalyzableDoc = (doc) => {
+  if (doc.tipo_contenido?.startsWith('image/')) return true;
+  if (doc.tipo_contenido === 'application/pdf') return true;
+  const name = (doc.nombre_archivo || '').toLowerCase();
+  return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
+};
+
+/**
+ * "Organizar documentos" -- botón en la lista de documentos del cliente.
+ * Recorre TODOS sus documentos analizables (imágenes/PDFs que no estén ya
+ * descartados), corre la extracción IA de cada uno y:
+ *   - Si no encuentra ningún dato legible -> lo descarta (estado 'rechazado'
+ *     en documentos_operacionales, usando la columna que ya existía en el
+ *     schema pero no se usaba desde ningún lado del código; los documentos
+ *     de WhatsApp en documentos_pendientes no tienen esa columna, así que
+ *     esos se dejan sin tocar -- se cuentan como "omitidos").
+ *   - Si detecta que es de otra persona -> crea/vincula el cliente
+ *     relacionado y le mueve el documento (resolvePersonAndApplyData).
+ *   - Si es del cliente actual -> aplica los datos extraídos (solo campos
+ *     todavía vacíos).
+ * Corre secuencial (no en paralelo) para no reventar el límite de tokens/min
+ * de Groq mandando varias imágenes a la vez.
+ *
+ * @returns {Promise<{analizados: number, movidos: number, aplicados: number, descartados: number, omitidos: number, errores: Array}>}
+ */
+export async function organizeClientDocuments({ clienteId, extraCustomFieldsForAi = [] }) {
+  const documentos = await getDocuments(clienteId);
+  const candidatos = documentos.filter(d => isAnalyzableDoc(d) && d.estado !== 'rechazado');
+
+  const resumen = { analizados: 0, movidos: 0, aplicados: 0, descartados: 0, omitidos: 0, errores: [] };
+
+  for (const doc of candidatos) {
+    try {
+      const blob = await downloadDocBlob(doc);
+      const isPdf = doc.tipo_contenido === 'application/pdf' || (doc.nombre_archivo || '').toLowerCase().endsWith('.pdf');
+
+      let fileOrBase64 = blob;
+      if (isPdf) {
+        const { convertPdfPageToImageBase64 } = await import('./pdfToImage');
+        ({ base64: fileOrBase64 } = await convertPdfPageToImageBase64(blob));
+      }
+
+      const aiData = await analyzeDocumentImage(fileOrBase64, extraCustomFieldsForAi);
+      resumen.analizados += 1;
+
+      const tieneDatos = Object.keys(aiData).filter(k => aiData[k]).length > 0;
+      if (!tieneDatos) {
+        const isPendiente = typeof doc.id === 'string' && doc.id.includes('-');
+        if (isPendiente) {
+          resumen.omitidos += 1;
+        } else {
+          await supabase.from('documentos_operacionales')
+            .update({ estado: 'rechazado', motivo_rechazo: 'Sin datos legibles (organizador IA)' })
+            .eq('id', doc.id);
+          resumen.descartados += 1;
+        }
+        continue;
+      }
+
+      // Recargar el cliente en cada vuelta: si un documento anterior en esta
+      // misma corrida ya llenó un campo suyo, skipIfAlreadyFilled tiene que
+      // verlo actualizado, no la copia que teníamos en memoria al empezar.
+      const clienteActual = await getCliente(clienteId);
+      const { moved } = await resolvePersonAndApplyData({
+        currentCliente: clienteActual,
+        extractedData: aiData,
+        customFieldsConfig: extraCustomFieldsForAi,
+        moveDocument: (targetId) => reassignDocument(doc.id, targetId),
+      });
+
+      if (moved) resumen.movidos += 1; else resumen.aplicados += 1;
+    } catch (err) {
+      console.error(`[clientExtractionService] Error organizando documento ${doc.id}:`, err);
+      resumen.errores.push({ documentoId: doc.id, nombre: doc.nombre_archivo, error: err.message });
+    }
+  }
+
+  return resumen;
 }

@@ -596,6 +596,164 @@ export async function getOverallStats() {
   }
 }
 
+// ──────────────────────────────────────────────────────────────
+// NUEVO — Agente de Acciones: el chat global ahora puede EJECUTAR las mismas
+// operaciones que haría un operario a mano en el panel (mover documentos,
+// actualizar datos de un cliente, vincular clientes, cambiar estado de un
+// trámite, generar el PDF Único), no solo consultar. Reutiliza las mismas
+// funciones de servicio que usa la UI -- nunca hace un supabase.from() de
+// escritura directo acá -- así que cualquier regla de negocio (recalcular
+// valor de trámite, historial, etc.) se aplica igual que si lo hiciera un
+// humano.
+//
+// Deliberadamente NO se exponen tools de borrado (eliminar cliente/documento/
+// relación/trámite/pago): son irreversibles y quedan reservadas a la UI, que
+// sí pide confirmación explícita antes de cada delete.
+// ──────────────────────────────────────────────────────────────
+
+// Campos de `clientes` que el agente puede tocar. Deliberadamente excluye
+// credenciales del portal (clave_acceso, numero_cliente), valores/pagos
+// (valor_total, valor_pago_inicial) y campos internos (id, creado_en, bot_activo).
+const AGENT_UPDATABLE_CLIENT_FIELDS = new Set([
+  'nombre', 'telefono', 'email', 'pais', 'ciudad', 'estado', 'estado_federal',
+  'atendente', 'tramite', 'estado_cliente', 'policia_federal',
+  'fecha_entrada_cliente', 'estado_civil', 'sexo', 'nacionalidad',
+  'numero_pasaporte', 'nombre_madre', 'nombre_padre', 'rnm',
+  'fecha_entrada_brasil', 'lugar_entrada_brasil', 'direccion',
+  'numero_refugio', 'fecha_vencimiento_refugio', 'fecha_vencimiento_pasaporte',
+  'carnet_identidad', 'fecha_emision_pasaporte', 'lugar_nacimiento',
+  'fecha_nacimiento', 'cpf', 'recurrencia', 'fecha_ultimo_contacto',
+]);
+
+/** Ficha completa de un cliente: datos, documentos, relaciones y trámites -- para que el agente confirme el contexto antes de actuar. */
+export async function agentGetClienteDetails(clienteId) {
+  const { getCliente, getRelaciones } = await import('./clientesService');
+  const { getDocuments } = await import('./storageService');
+  const { getEntradas } = await import('./tramitesService');
+  const [cliente, relaciones, documentos, entradas] = await Promise.all([
+    getCliente(clienteId),
+    getRelaciones(clienteId).catch(() => []),
+    getDocuments(clienteId).catch(() => []),
+    getEntradas(clienteId).catch(() => []),
+  ]);
+  return {
+    cliente,
+    relaciones: (relaciones || []).map(r => ({
+      id: r.id,
+      tipo_relacion: r.tipo_relacion,
+      otro: r.cliente_id === Number(clienteId) ? r.cliente_secundario : r.cliente_principal,
+    })),
+    documentos: (documentos || []).map(d => ({
+      id: d.id, nombre_archivo: d.nombre_archivo, tipo_documento: d.tipo_documento, estado: d.estado, creado_en: d.creado_en,
+    })),
+    entradas: (entradas || []).map(e => ({
+      id: e.id, servicio: e.servicio, estado_tramite: e.estado_tramite, valor: e.valor,
+    })),
+  };
+}
+
+export async function agentUpdateCliente(clienteId, updates) {
+  const { updateCliente } = await import('./clientesService');
+  const filtered = {};
+  for (const [key, value] of Object.entries(updates || {})) {
+    if (AGENT_UPDATABLE_CLIENT_FIELDS.has(key)) filtered[key] = value;
+  }
+  if (Object.keys(filtered).length === 0) {
+    return { ok: false, error: 'Ningún campo enviado es editable por el agente.' };
+  }
+  const data = await updateCliente(clienteId, filtered);
+  return { ok: true, cliente: data };
+}
+
+export async function agentMoveDocumento(documentoId, clienteDestinoId) {
+  const { reassignDocument } = await import('./storageService');
+  return reassignDocument(documentoId, clienteDestinoId);
+}
+
+export async function agentSetDocumentoEstado(documentoId, estado) {
+  const isPendiente = typeof documentoId === 'string' && documentoId.includes('-');
+  const table = isPendiente ? 'documentos_pendientes' : 'documentos_operacionales';
+  const column = isPendiente ? 'verificado' : 'estado';
+  const value = isPendiente ? estado === 'verificado' : estado;
+  const { error } = await supabase.from(table).update({ [column]: value }).eq('id', documentoId);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export async function agentVincularClientes(clienteIdA, clienteIdB, tipoRelacion) {
+  const { insertRelacion } = await import('./clientesService');
+  await insertRelacion({ cliente_id: clienteIdA, cliente_relacionado_id: clienteIdB, tipo_relacion: tipoRelacion || 'Familiar' });
+  return { ok: true };
+}
+
+export async function agentListFastopAcciones() {
+  const { getFastopAcciones } = await import('./tramitesService');
+  const acciones = await getFastopAcciones('pdf_unico');
+  return acciones.map(a => ({ id: a.id, nombre: a.nombre }));
+}
+
+export async function agentUpdateEntradaEstado(entradaId, estadoTramite) {
+  const { updateEntradaEstado } = await import('./tramitesService');
+  await updateEntradaEstado(entradaId, estadoTramite);
+  return { ok: true };
+}
+
+/** Genera el PDF Único de un cliente para una acción FastOp, igual que DocumentoUnicoModal/GlobalDocumentoUnicoListener. Queda como borrador 'pendiente' para que un operario lo apruebe. */
+export async function agentGenerarPdfUnico(clienteId, tramiteCatalogoId) {
+  const { getCliente } = await import('./clientesService');
+  const { getRequisitosTramite } = await import('./tramitesService');
+  const { getDocuments } = await import('./storageService');
+  const { mergeDocumentsToPdfWithGaps } = await import('./pdfMergerService');
+  const { uploadGeneratedDocumentToClient } = await import('./templateService');
+
+  const VALID_MERGE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  const isValidForMerge = (doc) => {
+    if (doc.estado === 'rechazado') return false; // descartado -- nunca entra a un PDF Único
+    if (doc.tipo_contenido && VALID_MERGE_TYPES.includes(doc.tipo_contenido)) return true;
+    const name = (doc.nombre_archivo || '').toLowerCase();
+    return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
+  };
+
+  const [cliente, requisitos, docs] = await Promise.all([
+    getCliente(clienteId),
+    getRequisitosTramite(tramiteCatalogoId),
+    getDocuments(clienteId),
+  ]);
+
+  if (!cliente) return { ok: false, error: 'Cliente no encontrado.' };
+  if (requisitos.length === 0) return { ok: false, error: 'Esta acción de PDF Único no tiene checklist configurado.' };
+
+  const mergeableDocs = docs.filter(isValidForMerge);
+  const bestDocFor = (tipoDocumento) =>
+    mergeableDocs.filter(d => d.tipo_documento === tipoDocumento)
+      .sort((a, b) => new Date(b.creado_en || 0) - new Date(a.creado_en || 0))[0];
+
+  const slots = requisitos.map(req => ({
+    doc: bestDocFor(req.tipo_documento) || null,
+    label: req.tipo_dato,
+    obligatorio: req.obligatorio,
+  }));
+
+  const { blob, missing } = await mergeDocumentsToPdfWithGaps(slots);
+  const filename = `PDF UNICO BORRADOR - ${(cliente.nombre || 'CLIENTE').toUpperCase()}.pdf`.replace(/[^a-zA-Z0-9.\-_ ]/g, '');
+
+  await uploadGeneratedDocumentToClient(blob, filename, cliente, {
+    estado: 'pendiente',
+    tipoDocumento: 'PDF_UNICO_BORRADOR',
+    subidoPor: 'Agente IA (Chat)',
+    silent: true,
+  });
+
+  return {
+    ok: true,
+    completo: missing.length === 0,
+    faltantes: missing,
+    mensaje: missing.length === 0
+      ? 'PDF Único generado completo, subido como borrador pendiente de aprobación en la ficha del cliente.'
+      : `PDF Único generado incompleto -- faltan: ${missing.join(', ')}. Subido como borrador pendiente de aprobación.`,
+  };
+}
+
 const tools = [
   {
     type: 'function',
@@ -652,6 +810,122 @@ const tools = [
         required: ['texto']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentGetClienteDetails',
+      description: 'Obtiene la ficha completa de un cliente: sus datos, documentos, relaciones con otros clientes y trámites. Úsala ANTES de mover/editar algo para confirmar que el cliente y sus documentos son los correctos.',
+      parameters: {
+        type: 'object',
+        properties: {
+          clienteId: { type: 'number', description: 'ID numérico del cliente' }
+        },
+        required: ['clienteId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentUpdateCliente',
+      description: 'Actualiza campos del perfil de un cliente (ej. dirección, teléfono, nacionalidad, fecha de entrada a Brasil, estado civil, etc.). No permite tocar credenciales del portal, valores/pagos ni eliminar nada.',
+      parameters: {
+        type: 'object',
+        properties: {
+          clienteId: { type: 'number' },
+          updates: {
+            type: 'object',
+            description: 'Pares campo:valor a actualizar usando los nombres de columna de la tabla clientes (ej. {"direccion": "Rua X, 123", "telefono": "+55..."})'
+          }
+        },
+        required: ['clienteId', 'updates']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentMoveDocumento',
+      description: 'Mueve (reasigna) un documento ya subido de un cliente a otro. Confirma primero con agentGetClienteDetails el ID del documento y del cliente destino.',
+      parameters: {
+        type: 'object',
+        properties: {
+          documentoId: { description: 'ID del documento (número o UUID) a mover' },
+          clienteDestinoId: { type: 'number', description: 'ID del cliente al que se debe mover el documento' }
+        },
+        required: ['documentoId', 'clienteDestinoId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentSetDocumentoEstado',
+      description: 'Marca un documento como verificado o pendiente -- el mismo toggle que usa el staff en la lista de documentos del cliente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          documentoId: { description: 'ID del documento (número o UUID)' },
+          estado: { type: 'string', enum: ['verificado', 'pendiente'] }
+        },
+        required: ['documentoId', 'estado']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentVincularClientes',
+      description: 'Crea un vínculo/relación entre dos clientes (ej. familiares, mismo grupo migratorio) en relaciones_clientes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          clienteIdA: { type: 'number' },
+          clienteIdB: { type: 'number' },
+          tipoRelacion: { type: 'string', description: 'Ej. "Familiar", "Cónyuge", "Hijo/a". Por defecto "Familiar".' }
+        },
+        required: ['clienteIdA', 'clienteIdB']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentListFastopAcciones',
+      description: 'Lista las variantes configuradas de "PDF Único" (acciones FastOp) con su ID y nombre -- necesarios para llamar a agentGenerarPdfUnico.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentGenerarPdfUnico',
+      description: 'Genera el PDF Único de un cliente para una acción FastOp específica (ver agentListFastopAcciones), juntando sus documentos según el checklist configurado. Si faltan documentos obligatorios igual genera el PDF marcando qué falta. Queda subido como borrador pendiente de aprobación en la ficha del cliente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          clienteId: { type: 'number' },
+          tramiteCatalogoId: { type: 'number', description: 'ID de la acción FastOp (de agentListFastopAcciones)' }
+        },
+        required: ['clienteId', 'tramiteCatalogoId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agentUpdateEntradaEstado',
+      description: 'Cambia el estado de un trámite (entrada) de un cliente, ej. a "procesando", "completada", "cancelada".',
+      parameters: {
+        type: 'object',
+        properties: {
+          entradaId: { type: 'number' },
+          estadoTramite: { type: 'string' }
+        },
+        required: ['entradaId', 'estadoTramite']
+      }
+    }
   }
 ];
 
@@ -681,9 +955,13 @@ export async function chatWithTools(chatHistory, organizationName) {
     orgName = 'Agencia Inicial';
   }
 
-  const systemPrompt = `Eres un asistente de IA global exclusivo para la agencia de gestión migratoria "${orgName}".
-Tienes acceso a herramientas para consultar la base de datos de clientes y trámites de Supabase.
-REGLA CRÍTICA: SOLO puedes hablar sobre los clientes, los trámites y el CRM de la empresa. Bajo NINGUNA circunstancia responderás preguntas generales, chistes, temas de cultura, programación, o cualquier cosa ajena a la empresa. Si el usuario te pregunta sobre temas ajenos, debes negarte educadamente y recordarle que tu única función es analizar los datos internos de ${orgName}.
+  const systemPrompt = `Eres un agente de IA operativo para la agencia de gestión migratoria "${orgName}". Tienes herramientas para CONSULTAR y también para EJECUTAR acciones reales en el panel, las mismas que haría un operario a mano: mover documentos entre clientes, actualizar datos de un cliente, vincular clientes entre sí, cambiar el estado de un trámite y generar el PDF Único.
+REGLA CRÍTICA: SOLO puedes hablar y actuar sobre los clientes, los trámites y el CRM de la empresa. Bajo NINGUNA circunstancia responderás preguntas generales, chistes, temas de cultura, programación, o cualquier cosa ajena a la empresa. Si el usuario te pregunta sobre temas ajenos, debes negarte educadamente y recordarle que tu única función es operar los datos internos de ${orgName}.
+REGLAS DE SEGURIDAD PARA ACCIONES:
+- Antes de mover un documento, editar un cliente o vincular dos clientes, usa searchClientsByName y/o agentGetClienteDetails para confirmar el ID correcto del cliente (y del documento, si aplica) -- nunca inventes un ID.
+- Si el pedido es ambiguo (varios clientes con nombre parecido, o no está claro qué documento mover), pregunta antes de ejecutar nada.
+- No tienes ninguna herramienta para BORRAR nada (clientes, documentos, relaciones, trámites, pagos). Si te piden eliminar algo, explica que eso debe hacerse a mano en el panel por seguridad.
+- Después de ejecutar una acción, confirma en tu respuesta qué hiciste exactamente (qué se movió/cambió y hacia dónde).
 REGLA MUY IMPORTANTE: Cuando menciones a un cliente específico, y especialmente si el usuario te pregunta por un cliente, DEBES incluir al final de tu respuesta una etiqueta especial con este formato exacto: [VIEW_CLIENT:ID_DEL_CLIENTE:NOMBRE_DEL_CLIENTE]. Por ejemplo, si hablas de Juan Pérez con ID 123, pon: [VIEW_CLIENT:123:Juan Pérez]. Esto permitirá que se genere un botón para que el usuario pueda abrir el perfil del cliente.
 Siempre responde de manera profesional y en español.`;
 
@@ -727,17 +1005,42 @@ Siempre responde de manera profesional y en español.`;
         const args = JSON.parse(toolCall.function.arguments || '{}');
         let result;
 
-        if (functionName === 'searchClientsByName') {
-          result = await searchClientsByName(args.name);
-        } else if (functionName === 'countPendingProcedures') {
-          result = await countPendingProcedures();
-        } else if (functionName === 'getOverallStats') {
-          result = await getOverallStats();
-        } else if (functionName === 'searchSimilarCases') {
-          result = await searchSimilarCases(args.texto);
-        } else {
-          // Fallback check
-          throw new Error(`Unknown tool execution requested: ${functionName}`);
+        // Cada tool corre en su propio try/catch: a diferencia de las 4 tools
+        // de solo-lectura originales, varias de las nuevas ESCRIBEN en la
+        // base de datos -- si una falla (ej. ID inválido), el agente debe
+        // enterarse del error y poder explicárselo al usuario, no que se
+        // rompa todo el chat y se pierda el resto de la conversación con
+        // tool calls (ver catch general más abajo, que descarta las tools).
+        try {
+          if (functionName === 'searchClientsByName') {
+            result = await searchClientsByName(args.name);
+          } else if (functionName === 'countPendingProcedures') {
+            result = await countPendingProcedures();
+          } else if (functionName === 'getOverallStats') {
+            result = await getOverallStats();
+          } else if (functionName === 'searchSimilarCases') {
+            result = await searchSimilarCases(args.texto);
+          } else if (functionName === 'agentGetClienteDetails') {
+            result = await agentGetClienteDetails(args.clienteId);
+          } else if (functionName === 'agentUpdateCliente') {
+            result = await agentUpdateCliente(args.clienteId, args.updates);
+          } else if (functionName === 'agentMoveDocumento') {
+            result = await agentMoveDocumento(args.documentoId, args.clienteDestinoId);
+          } else if (functionName === 'agentSetDocumentoEstado') {
+            result = await agentSetDocumentoEstado(args.documentoId, args.estado);
+          } else if (functionName === 'agentVincularClientes') {
+            result = await agentVincularClientes(args.clienteIdA, args.clienteIdB, args.tipoRelacion);
+          } else if (functionName === 'agentListFastopAcciones') {
+            result = await agentListFastopAcciones();
+          } else if (functionName === 'agentGenerarPdfUnico') {
+            result = await agentGenerarPdfUnico(args.clienteId, args.tramiteCatalogoId);
+          } else if (functionName === 'agentUpdateEntradaEstado') {
+            result = await agentUpdateEntradaEstado(args.entradaId, args.estadoTramite);
+          } else {
+            throw new Error(`Unknown tool execution requested: ${functionName}`);
+          }
+        } catch (toolErr) {
+          result = { ok: false, error: toolErr.message || String(toolErr) };
         }
 
         messages.push({

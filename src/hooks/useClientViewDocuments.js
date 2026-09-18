@@ -9,11 +9,13 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 import { useState, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { handleError } from '../utils/errorHandler';
 import { analyzeDocumentImage } from '../services/aiService';
-import { applyExtractedDataToClient } from '../services/clientExtractionService';
-import { uploadDocument, deleteDocument } from '../services/storageService';
+import { resolvePersonAndApplyData, organizeClientDocuments } from '../services/clientExtractionService';
+import { getCliente } from '../services/clientesService';
+import { uploadDocument, deleteDocument, reassignDocument } from '../services/storageService';
 
 export default function useClientViewDocuments({
   clientId,
@@ -122,26 +124,44 @@ export default function useClientViewDocuments({
               supabase.from(table).update({ nombre_archivo: newFileName }).eq('id', docRecord.id).then(() => fetchClientData());
             }
 
-            // Guardado automático en `clientes` ANTES de que un operacional lo
-            // vea -- solo llena campos que hoy están vacíos (skipIfAlreadyFilled),
-            // nunca pisa un dato ya cargado/verificado a mano. El modal de abajo
-            // sigue abriéndose para que el staff vea qué se cargó solo y pueda
-            // corregirlo (ahí sí, al confirmar, se pisa lo que edite).
+            // Guardado automático ANTES de que un operacional lo vea -- solo
+            // llena campos vacíos, nunca pisa un dato ya cargado a mano. Si la
+            // IA detecta que el documento es de otra persona, no le guarda los
+            // datos al cliente actual: crea/vincula el cliente relacionado
+            // correcto y le mueve el documento y los datos para allá (ver
+            // resolvePersonAndApplyData, compartido con el botón "Organizar
+            // documentos" de organizeClientDocuments).
+            let mismatchHandled = false;
             try {
-              await applyExtractedDataToClient({
-                targetClientId: clientId,
+              const currentCliente = await getCliente(clientId);
+              const { moved, targetClient, isNewClient } = await resolvePersonAndApplyData({
+                currentCliente,
                 extractedData: aiData,
                 customFieldsConfig: extraCustomFieldsForAi,
-                skipIfAlreadyFilled: true,
+                moveDocument: docRecord ? (targetId) => reassignDocument(docRecord.id, targetId) : null,
               });
               await fetchClientData();
+              if (moved) {
+                mismatchHandled = true;
+                toast.success(
+                  `Documento de ${aiData.NOMBRE_COMPLETO || 'otra persona'} detectado — ` +
+                  `${isNewClient ? 'se creó el cliente' : 'se vinculó al cliente existente'} ` +
+                  `"${targetClient.nombre}" y se le movieron el documento y los datos.`,
+                  { duration: 9000, icon: '🔀' }
+                );
+              }
             } catch (autoSaveErr) {
-              console.warn('[useClientViewDocuments] Auto-guardado de datos extraídos falló:', autoSaveErr.message);
+              console.warn('[useClientViewDocuments] Auto-guardado / chequeo de persona distinta falló:', autoSaveErr.message);
             }
 
-            setExtractedData(aiData);
-            if (setUploadedDocRecord) setUploadedDocRecord(docRecord);
-            setIsExtractionModalOpen(true);
+            // El modal de revisión solo se abre si el documento seguía siendo
+            // del cliente actual -- si se movió a otro cliente relacionado, ya
+            // no tiene sentido revisar acá los datos de una persona distinta.
+            if (!mismatchHandled) {
+              setExtractedData(aiData);
+              if (setUploadedDocRecord) setUploadedDocRecord(docRecord);
+              setIsExtractionModalOpen(true);
+            }
           } else {
             console.warn('[useClientViewDocuments] IA no encontró datos en el documento.');
           }
@@ -156,6 +176,49 @@ export default function useClientViewDocuments({
       setUploading(false);
     }
   }, [clientId, fetchClientData, setExtractedData, setIsExtractionModalOpen, extraCustomFieldsForAi]);
+
+  // ── Organizar documentos (botón en la lista) ────────────────────────────────
+  // Corre organizeClientDocuments sobre TODOS los documentos ya subidos del
+  // cliente (no solo el último) -- mueve los de otra persona a su cliente
+  // relacionado, completa datos vacíos y descarta los que la IA no pudo leer.
+  const [organizing, setOrganizing] = useState(false);
+
+  const handleOrganizeDocuments = useCallback(async () => {
+    if (!window.confirm(
+      'Esto analiza con IA TODOS los documentos de este cliente: puede mover documentos de otra persona a un cliente relacionado, completar datos vacíos del cliente y descartar los documentos sin datos legibles.\n\n¿Continuar?'
+    )) {
+      return;
+    }
+
+    setOrganizing(true);
+    const toastId = toast.loading('Organizando documentos con IA...');
+    try {
+      const resumen = await organizeClientDocuments({ clienteId: clientId, extraCustomFieldsForAi });
+      await fetchClientData();
+
+      if (resumen.analizados === 0) {
+        toast.success('No había documentos nuevos para analizar.', { id: toastId });
+        return;
+      }
+
+      const partes = [];
+      if (resumen.aplicados) partes.push(`${resumen.aplicados} con datos aplicados`);
+      if (resumen.movidos) partes.push(`${resumen.movidos} movidos a otro cliente`);
+      if (resumen.descartados) partes.push(`${resumen.descartados} descartados`);
+      if (resumen.omitidos) partes.push(`${resumen.omitidos} omitidos`);
+      if (resumen.errores.length) partes.push(`${resumen.errores.length} con error`);
+
+      toast.success(
+        `Organización completa (${resumen.analizados} analizados): ${partes.join(', ') || 'sin cambios'}.`,
+        { id: toastId, duration: 8000 }
+      );
+    } catch (err) {
+      console.error('[useClientViewDocuments] Error organizando documentos:', err);
+      toast.error('Error al organizar documentos: ' + err.message, { id: toastId });
+    } finally {
+      setOrganizing(false);
+    }
+  }, [clientId, fetchClientData, extraCustomFieldsForAi]);
 
   // ── Drag & Drop zone handlers ──────────────────────────────────────────────
   const handleDragOver = useCallback((e) => {
@@ -210,10 +273,12 @@ export default function useClientViewDocuments({
     setDragOverRelId,
     viewingDocument,
     setViewingDocument,
+    organizing,
     // Handlers
     handleDeleteDocument,
     handleToggleDocumentStatus,
     handleFileUpload,
+    handleOrganizeDocuments,
     handleDragOver,
     handleDragLeave,
     handleDrop,

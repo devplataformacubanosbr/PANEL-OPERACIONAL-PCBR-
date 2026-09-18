@@ -550,6 +550,8 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             stagedFile={docs.stagedFile}
             setStagedFile={docs.setStagedFile}
             handleConfirmUpload={docs.handleConfirmUpload}
+            handleOrganizeDocuments={docs.handleOrganizeDocuments}
+            organizing={docs.organizing}
             onRefresh={() => fetchClientData(true)}
           />
           <ClientRelations

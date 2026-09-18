@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { FileText, Loader2, UploadCloud, X, ChevronDown, ChevronUp, Layers, CheckSquare, Square, CheckCircle2, Circle } from 'lucide-react';
+import { FileText, Loader2, UploadCloud, X, ChevronDown, ChevronUp, Layers, CheckSquare, Square, CheckCircle2, Circle, Wand2, Archive, RotateCcw } from 'lucide-react';
 import { SignedImage } from './SignedImage';
 import EmptyState from './ui/EmptyState';
 import PreUploadDocumentModal from './PreUploadDocumentModal';
@@ -25,6 +25,8 @@ const ClientDocuments = ({
   stagedFile,
   setStagedFile,
   handleConfirmUpload,
+  handleOrganizeDocuments,
+  organizing = false,
   onRefresh // We'll assume the parent might pass this, or we can use window.location.reload as fallback or just nothing since ClientView doesn't pass it yet. We'll add it.
 }) => {
   const [isSectionExpanded, setIsSectionExpanded] = useState(defaultExpanded);
@@ -32,7 +34,23 @@ const ClientDocuments = ({
   const [selectedDocs, setSelectedDocs] = useState([]);
   const [showMergerModal, setShowMergerModal] = useState(false);
   const [resolvedUrls, setResolvedUrls] = useState({});
+  const [showDiscarded, setShowDiscarded] = useState(false);
   const inputRef = useRef(null);
+
+  const visibleDocs = documentos.filter(d => d.estado !== 'rechazado');
+  const discardedDocs = documentos.filter(d => d.estado === 'rechazado');
+
+  const restoreDocument = async (doc) => {
+    try {
+      const { error } = await supabase.from('documentos_operacionales').update({ estado: 'pendiente', motivo_rechazo: null }).eq('id', doc.id);
+      if (error) throw error;
+      toast.success('Documento restaurado');
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error('Error restoring document:', err);
+      toast.error('Error al restaurar el documento');
+    }
+  };
 
   React.useEffect(() => {
     let active = true;
@@ -106,21 +124,21 @@ const ClientDocuments = ({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.25rem', borderBottom: isSectionExpanded ? '1px solid var(--color-border)' : 'none', cursor: 'pointer' }} onClick={() => setIsSectionExpanded(!isSectionExpanded)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
           <FileText size={18} color="var(--color-info)" />
-          <h3 style={{ font: 'var(--font-section-title)', margin: 0, fontSize: '1rem' }}>Documentos ({documentos.length})</h3>
+          <h3 style={{ font: 'var(--font-section-title)', margin: 0, fontSize: '1rem' }}>Documentos ({visibleDocs.length})</h3>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           {selectionMode ? (
             <>
-              <button 
-                onClick={(e) => { e.stopPropagation(); openMerger(); }} 
-                className="btn btn-primary" 
+              <button
+                onClick={(e) => { e.stopPropagation(); openMerger(); }}
+                className="btn btn-primary"
                 style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', display: 'flex', gap: '4px', alignItems: 'center' }}
               >
                 <Layers size={14} /> Juntar ({selectedDocs.length})
               </button>
-              <button 
-                onClick={(e) => { e.stopPropagation(); setSelectionMode(false); setSelectedDocs([]); }} 
-                className="btn btn-ghost" 
+              <button
+                onClick={(e) => { e.stopPropagation(); setSelectionMode(false); setSelectedDocs([]); }}
+                className="btn btn-ghost"
                 style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
               >
                 Cancelar
@@ -128,11 +146,22 @@ const ClientDocuments = ({
             </>
           ) : (
             <>
-              {documentos.length > 1 && (
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setSelectionMode(true); setIsSectionExpanded(true); }} 
-                  className="btn btn-secondary" 
-                  style={{ padding: '0.4rem', color: 'var(--color-primary)' }} 
+              {handleOrganizeDocuments && visibleDocs.length > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleOrganizeDocuments(); }}
+                  disabled={organizing}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.4rem', color: 'var(--color-primary)' }}
+                  title="Organizar con IA: extrae datos de todos los documentos, mueve los de otra persona y descarta los que no sirven"
+                >
+                  {organizing ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />}
+                </button>
+              )}
+              {visibleDocs.length > 1 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setSelectionMode(true); setIsSectionExpanded(true); }}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.4rem', color: 'var(--color-primary)' }}
                   title="Juntar documentos"
                 >
                   <Layers size={18} />
@@ -184,12 +213,12 @@ const ClientDocuments = ({
         </span>
       </label>
 
-      {documentos.length > 0 ? (        <div style={{
+      {visibleDocs.length > 0 ? (        <div style={{
           display: 'flex',
           flexDirection: 'column',
           gap: '0.5rem'
         }}>
-          {documentos.map(doc => {
+          {visibleDocs.map(doc => {
             const selected = draggedDocument?.id === doc.id;
             const verified = doc.estado === 'verificado';
             return (
@@ -322,6 +351,52 @@ const ClientDocuments = ({
           onAction={openFilePicker}
           style={{ padding: 'var(--section-gap, 16px)' }}
         />
+      )}
+
+      {discardedDocs.length > 0 && (
+        <div style={{ marginTop: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => setShowDiscarded(v => !v)}
+            className="btn btn-ghost"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: 'var(--color-text-muted)', padding: '0.35rem 0' }}
+          >
+            <Archive size={14} /> Descartados ({discardedDocs.length}) {showDiscarded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          {showDiscarded && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+              {discardedDocs.map(doc => (
+                <div
+                  key={doc.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.6rem 1rem',
+                    background: 'var(--surface-elevated)', border: '1px dashed var(--border-default)',
+                    borderRadius: 'var(--radius-md)', opacity: 0.7,
+                  }}
+                >
+                  <FileText size={18} color="var(--color-text-muted)" style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {doc.nombre_archivo || 'Documento sin nombre'}
+                    </span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                      {doc.motivo_rechazo || 'Descartado'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => restoreDocument(doc)}
+                    className="btn btn-ghost btn-sm"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', flexShrink: 0 }}
+                    title="Restaurar documento"
+                  >
+                    <RotateCcw size={14} /> Restaurar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
       )}

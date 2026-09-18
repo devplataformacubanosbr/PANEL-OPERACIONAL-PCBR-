@@ -7,6 +7,7 @@ import { getRequisitosTramite } from '../services/tramitesService';
 
 const VALID_MERGE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 const isValidForMerge = (doc) => {
+  if (doc.estado === 'rechazado') return false; // descartado (manual o por el organizador IA) -- nunca entra a un PDF Único
   if (doc.tipo_contenido && VALID_MERGE_TYPES.includes(doc.tipo_contenido)) return true;
   const name = (doc.nombre_archivo || '').toLowerCase();
   return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
