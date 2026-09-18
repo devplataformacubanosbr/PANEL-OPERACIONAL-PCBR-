@@ -10,8 +10,8 @@ import { useState, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { analyzeDocumentImage } from '../services/aiService';
-import { normalizeDateToDDMMYYYY } from '../utils/dateFormatter';
-import { toIsoDate, FIXED_FIELDS_CATALOG } from '../components/clientView.constants';
+import { applyExtractedDataToClient, AI_FIELD_MAP } from '../services/clientExtractionService';
+import { FIXED_FIELDS_CATALOG } from '../components/clientView.constants';
 
 /**
  * Columnas reales de `clientes`. Los 13 campos migratorios (rnm, numero_pasaporte,
@@ -19,51 +19,6 @@ import { toIsoDate, FIXED_FIELDS_CATALOG } from '../components/clientView.consta
  * automáticamente, así que el mapeo de abajo los enruta solo a campos_personalizados.
  */
 const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
-
-/** Mapeo de claves IA → columnas de la tabla `clientes` */
-const AI_FIELD_MAP = {
-  'NOMBRE_COMPLETO': 'nombre',
-  'CPF': 'cpf',
-  'RNM': 'rnm',
-  'CARNET_IDENTIDAD': 'carnet_identidad',
-  'FECHA_NACIMIENTO': 'fecha_nacimiento',
-  'LUGAR_NACIMIENTO': 'lugar_nacimiento',
-  'NACIONALIDAD': 'nacionalidad',
-  'NUMERO_DOCUMENTO': 'numero_pasaporte',
-  'NUMERO_REFUGIO': 'numero_refugio',
-  'FECHA_EMISION_PASAPORTE': 'fecha_emision_pasaporte',
-  'FECHA_VENCIMIENTO_PASAPORTE': 'fecha_vencimiento_pasaporte',
-  'FECHA_VENCIMIENTO_REFUGIO': 'fecha_vencimiento_refugio',
-  'SEXO': 'sexo',
-  'NOMBRE_MADRE': 'nombre_madre',
-  'NOMBRE_PADRE': 'nombre_padre',
-};
-
-/** Claves de la IA que contienen fechas (para normalizar a DD/MM/YYYY) */
-const AI_DATE_KEYS = new Set([
-  'FECHA_NACIMIENTO',
-  'FECHA_EMISION_PASAPORTE',
-  'FECHA_VENCIMIENTO_PASAPORTE',
-  'FECHA_VENCIMIENTO_REFUGIO',
-]);
-
-/**
- * Claves que son metadata de control, no datos del cliente — nunca se guardan
- * como campo. NOMBRE_ARCHIVO no lo pone la IA: se lo agrega este mismo código
- * (ver handleCopyDocumentToClient acá, y los lugares equivalentes en
- * useClientViewDocuments.js y ClientView.jsx) para sugerir el nombre del
- * archivo — el nombre del documento ya se guarda en documentos_operacionales
- * / documentos_pendientes, así que no tiene sentido duplicarlo como campo
- * personalizado del cliente.
- */
-const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO', 'NOMBRE_ARCHIVO']);
-
-/** "NUMERO_LICENCIA" → "Numero Licencia" (label legible para el campo nuevo) */
-const humanizeAiKey = (key) => key.toLowerCase().split('_').filter(Boolean)
-  .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-
-/** Mismo formato de identificador que usa handleSaveExtractedData al generar uno nuevo. */
-const toIdentificador = (key) => key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
 /**
  * Campos personalizados dinámicos (config_campos_clientes) que la IA debería
@@ -78,23 +33,6 @@ export function getExtraCustomFieldsForAiPrompt(customFieldsConfig) {
     .map(cf => ({ identificador: cf.identificador, nombre_campo: cf.nombre_campo }));
 }
 
-/**
- * Da de alta un campo dinámico nuevo en config_campos_clientes la primera vez
- * que la IA lo extrae. Si ya existe (mismo identificador, de una extracción
- * anterior o creado a mano en Configuración > Campos Base), el insert choca
- * con la unique constraint (23505) y simplemente se ignora — no es un error.
- */
-const ensureCustomFieldDefinition = async (identificador, nombreCampo) => {
-  const { error } = await supabase.from('config_campos_clientes').insert([{
-    nombre_campo: nombreCampo,
-    identificador,
-    categoria: 'Documentos de Identidad',
-    tipo: 'text',
-    requerido: false,
-  }]);
-  if (error && error.code !== '23505') throw error;
-};
-
 export default function useClientViewExtraction({ clientId, fetchClientData, client, customFieldsConfig }) {
   // Extraction modal state
   const [extractedData, setExtractedData] = useState(null);
@@ -105,89 +43,22 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
   const [isSaving, setIsSaving] = useState(false);
 
   // ── Save extracted data to `clientes` table ────────────────────────────────
+  // Modo manual (vía modal): siempre pisa con lo último revisado/editado por
+  // el staff -- skipIfAlreadyFilled queda en false a propósito acá, ver
+  // clientExtractionService.applyExtractedDataToClient.
   const handleSaveExtractedData = async () => {
     setIsSaving(true);
     try {
-      const updates = {};
-      // Fuente de `campos_personalizados` actual del cliente destino, para no
-      // pisar otros campos JSON ya guardados al hacer el merge.
+      const targetId = extractionTargetClientId || clientId;
       const targetClientData = extractionTargetClientData || client;
-      const customJsonUpdates = { ...(targetClientData?.campos_personalizados || {}) };
-      let hasCustomJsonUpdates = false;
-      // Campos que la IA encontró pero no estaban en el mapeo fijo — se dan de
-      // alta como campos dinámicos nuevos (una vez guardados los datos abajo).
-      const newCustomFieldDefs = [];
-      // Catálogo actual de campos dinámicos, indexado por identificador
-      // normalizado — para reutilizar un campo ya existente en vez de crear
-      // un duplicado cuando la IA nombra el mismo dato distinto entre
-      // extracciones (ver getExtraCustomFieldsForAiPrompt).
-      const existingCustomFieldsById = new Map(
-        (customFieldsConfig || []).map(cf => [toIdentificador(cf.identificador), cf.identificador])
-      );
-      // Tipo de documento de ESTA extracción (ej. "CNH", "CERTIFICADO DE
-      // NACIMIENTO") — se etiqueta en el nombre de cualquier campo nuevo que
-      // se cree acá abajo, para que quede claro de qué documento salió y la
-      // IA no lo termine reusando en un documento de otro tipo la próxima vez
-      // (ver el bloque 10.5 del prompt en aiService.js).
-      const tipoDocumentoEntry = Object.entries(extractedData).find(([k]) => k.toUpperCase() === 'TIPO_DOCUMENTO');
-      const tipoDocumento = tipoDocumentoEntry ? String(tipoDocumentoEntry[1]).trim().toUpperCase() : '';
 
-      for (const [key, value] of Object.entries(extractedData)) {
-        if (!value) continue;
-        const upperKey = key.toUpperCase();
-
-        const mappedCol = AI_FIELD_MAP[upperKey];
-        if (mappedCol) {
-          // Normalize dates to YYYY-MM-DD, uppercase everything else
-          let finalValue;
-          if (AI_DATE_KEYS.has(upperKey)) {
-            const normalized = normalizeDateToDDMMYYYY(value);
-            finalValue = normalized ? toIsoDate(normalized) : String(value).toUpperCase();
-          } else {
-            finalValue = String(value).toUpperCase();
-          }
-
-          // Los campos que no son columnas fijas de `clientes` (es decir, que
-          // vienen de un campo dinámico creado en Configuración > Campos Base)
-          // se guardan en clientes.campos_personalizados en vez de una columna.
-          if (FIXED_COLUMN_IDS.has(mappedCol)) {
-            updates[mappedCol] = finalValue;
-          } else {
-            customJsonUpdates[mappedCol] = finalValue;
-            hasCustomJsonUpdates = true;
-          }
-        } else if (!AI_IGNORED_KEYS.has(upperKey)) {
-          // La IA extrajo un dato que no encaja en ningún campo conocido
-          // (CAMPOS_ADICIONALES) — se guarda como campo dinámico nuevo,
-          // igual que si un admin lo hubiera creado a mano.
-          const generatedId = toIdentificador(key);
-          if (!generatedId) continue;
-          // Si ya existe un campo personalizado equivalente (el prompt le pide
-          // a la IA reusar la clave exacta, pero esto es la red de seguridad
-          // por si no la sigue al pie de la letra), reusar su identificador en
-          // vez de crear uno nuevo.
-          const identificador = existingCustomFieldsById.get(generatedId) || generatedId;
-          customJsonUpdates[identificador] = String(value).toUpperCase();
-          hasCustomJsonUpdates = true;
-          if (!existingCustomFieldsById.has(generatedId)) {
-            const label = tipoDocumento ? `${humanizeAiKey(key)} (${tipoDocumento})` : humanizeAiKey(key);
-            newCustomFieldDefs.push({ identificador, nombreCampo: label });
-          }
-        }
-      }
-
-      for (const { identificador, nombreCampo } of newCustomFieldDefs) {
-        await ensureCustomFieldDefinition(identificador, nombreCampo);
-      }
-
-      if (hasCustomJsonUpdates) {
-        updates.campos_personalizados = customJsonUpdates;
-      }
-
-      if (Object.keys(updates).length > 0) {
-        const targetId = extractionTargetClientId || clientId;
-        await supabase.from('clientes').update(updates).eq('id', targetId);
-      }
+      await applyExtractedDataToClient({
+        targetClientId: targetId,
+        extractedData,
+        targetClientData,
+        customFieldsConfig,
+        skipIfAlreadyFilled: false,
+      });
 
       if (uploadedDocRecord && extractedData.NOMBRE_ARCHIVO) {
         const newFileName = extractedData.NOMBRE_ARCHIVO.trim().toUpperCase();

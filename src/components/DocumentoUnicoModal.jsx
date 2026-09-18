@@ -116,8 +116,16 @@ export default function DocumentoUnicoModal({ tramiteCatalogo, title, client, do
     setGenerating(true);
     const toastId = toast.loading('Generando PDF único...');
     try {
-      const { mergeDocumentsToPdf } = await import('../services/pdfMergerService');
-      const mergedBlob = await mergeDocumentsToPdf(resolvedDocs);
+      // Se manda TODOS los slots (no solo resolvedDocs): el que no tenga
+      // documento elegido sale como página de aviso en el PDF en vez de
+      // faltar en silencio -- ver mergeDocumentsToPdfWithGaps.
+      const slotsForMerge = slots.map(s => ({
+        doc: mergeableDocs.find(d => String(d.id) === s.selectedDocId) || null,
+        label: s.label,
+        obligatorio: s.obligatorio,
+      }));
+      const { mergeDocumentsToPdfWithGaps } = await import('../services/pdfMergerService');
+      const { blob: mergedBlob } = await mergeDocumentsToPdfWithGaps(slotsForMerge);
 
       const filename = `${mergedName.replace(/[^a-zA-Z0-9.\-_ ]/g, '')}.pdf`;
 

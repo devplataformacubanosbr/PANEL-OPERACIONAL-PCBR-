@@ -86,24 +86,37 @@ async function checkAndGenerateDrafts(clienteId) {
     const obligatorios = requisitos.filter(r => r.obligatorio);
     if (obligatorios.length === 0) continue; // checklist sin configurar todavía
 
+    // Antes: solo se armaba el PDF Único cuando el checklist estaba 100%
+    // completo (isComplete). Ahora se arma apenas hay AL MENOS UN documento
+    // que matchea el checklist, aunque falten otros -- los que falten salen
+    // como página de aviso (ver mergeDocumentsToPdfWithGaps) en vez de
+    // esperar en silencio a que llegue el último documento. Así el operario
+    // ya tiene un PDF Único para revisar/completar a mano en vez de nada.
+    const matchedCount = requisitos.filter(req => !!bestDocFor(req.tipo_documento)).length;
+    if (matchedCount === 0) continue;
     const isComplete = obligatorios.every(req => !!bestDocFor(req.tipo_documento));
-    if (!isComplete) continue;
 
     const cityLabel = (accion.nombre || '').replace(/^PDF Únicos?\s*/i, '').trim();
     const draftBaseName = `PDF UNICO BORRADOR${cityLabel ? ' ' + cityLabel.toUpperCase() : ''} - ${(cliente.nombre || 'CLIENTE').toUpperCase()}`;
     const filename = `${draftBaseName.replace(/[^a-zA-Z0-9.\-_ ]/g, '')}.pdf`;
 
-    // Ya hay un borrador de esta misma variante esperando aprobación: no duplicar.
+    // Ya hay un borrador de esta misma variante esperando aprobación: no duplicar
+    // (si ese borrador ya fue revisado/aprobado -- deja de estar 'pendiente' --
+    // sí se genera uno nuevo con lo que haya llegado desde entonces).
     const alreadyPending = docs.some(d =>
       d.tipo_documento === BORRADOR_TIPO && d.estado === 'pendiente' && d.nombre_archivo === filename
     );
     if (alreadyPending) continue;
 
     try {
-      const slotDocs = requisitos.map(req => bestDocFor(req.tipo_documento)).filter(Boolean);
+      const slots = requisitos.map(req => ({
+        doc: bestDocFor(req.tipo_documento) || null,
+        label: req.tipo_dato,
+        obligatorio: req.obligatorio,
+      }));
 
-      const { mergeDocumentsToPdf } = await import('../services/pdfMergerService');
-      const mergedBlob = await mergeDocumentsToPdf(slotDocs);
+      const { mergeDocumentsToPdfWithGaps } = await import('../services/pdfMergerService');
+      const { blob: mergedBlob, missing } = await mergeDocumentsToPdfWithGaps(slots);
 
       const { uploadGeneratedDocumentToClient } = await import('../services/templateService');
       await uploadGeneratedDocumentToClient(mergedBlob, filename, cliente, {
@@ -113,9 +126,10 @@ async function checkAndGenerateDrafts(clienteId) {
         silent: true,
       });
 
-      toast.success(`PDF Único (borrador) listo para revisar — ${cliente.nombre} · ${accion.nombre}`, {
-        duration: 7000,
-        icon: '🤖',
+      const estadoLabel = isComplete ? 'completo' : `incompleto — falta: ${missing.join(', ')}`;
+      toast.success(`PDF Único (borrador, ${estadoLabel}) listo para revisar — ${cliente.nombre} · ${accion.nombre}`, {
+        duration: 9000,
+        icon: isComplete ? '🤖' : '⚠️',
       });
     } catch (err) {
       console.error(`[GlobalDocumentoUnicoListener] Error generando borrador para cliente ${clienteId} / acción ${accion.id}:`, err);

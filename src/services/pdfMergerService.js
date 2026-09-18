@@ -1,5 +1,8 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { supabase } from '../supabaseClient';
+
+const A4_WIDTH = 595.28;
+const A4_HEIGHT = 841.89;
 
 const BUCKET = 'documentos_operacionales';
 
@@ -72,6 +75,48 @@ async function normalizeImageForEmbed(bytes, tipoContenido) {
   }
 }
 
+/** Embebe un único documento (PDF o imagen) como página(s) del PDF en construcción. */
+async function embedSingleDocument(mergedPdf, doc) {
+  const bytes = await fetchDocumentBytes(doc.url_archivo);
+  const isPdf = doc.tipo_contenido === 'application/pdf' || doc.nombre_archivo?.toLowerCase().endsWith('.pdf');
+
+  if (isPdf) {
+    // Cargar y copiar todas las páginas del PDF
+    const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+    copiedPages.forEach((page) => mergedPdf.addPage(page));
+  } else if (doc.tipo_contenido?.startsWith('image/')) {
+    // Insertar imagen — normalizamos primero (ver normalizeImageForEmbed)
+    // para que WebP/GIF no crasheen y las fotos con EXIF no salgan giradas.
+    const { bytes: normalizedBytes, isPng } = await normalizeImageForEmbed(bytes, doc.tipo_contenido);
+    const image = isPng ? await mergedPdf.embedPng(normalizedBytes) : await mergedPdf.embedJpg(normalizedBytes);
+
+    const imgDims = image.scale(1);
+
+    // Escalar imagen para que quepa en A4
+    let width = imgDims.width;
+    let height = imgDims.height;
+
+    if (width > A4_WIDTH || height > A4_HEIGHT) {
+      const scale = Math.min(A4_WIDTH / width, A4_HEIGHT / height);
+      width *= scale;
+      height *= scale;
+    }
+
+    const page = mergedPdf.addPage([A4_WIDTH, A4_HEIGHT]);
+
+    // Centrar la imagen
+    page.drawImage(image, {
+      x: (A4_WIDTH / 2) - (width / 2),
+      y: (A4_HEIGHT / 2) - (height / 2),
+      width,
+      height,
+    });
+  } else {
+    console.warn(`Tipo de archivo no soportado para juntar: ${doc.tipo_contenido}`);
+  }
+}
+
 /**
  * Junta varios documentos (PDFs e imágenes) en un solo archivo PDF.
  * @param {Array} documents - Arreglo de objetos documento (deben tener url_archivo y tipo_contenido)
@@ -82,50 +127,7 @@ export async function mergeDocumentsToPdf(documents) {
 
   for (const doc of documents) {
     try {
-      const bytes = await fetchDocumentBytes(doc.url_archivo);
-      const isPdf = doc.tipo_contenido === 'application/pdf' || doc.nombre_archivo?.toLowerCase().endsWith('.pdf');
-      
-      if (isPdf) {
-        // Cargar y copiar todas las páginas del PDF
-        const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
-        const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-        copiedPages.forEach((page) => mergedPdf.addPage(page));
-      } else if (doc.tipo_contenido?.startsWith('image/')) {
-        // Insertar imagen — normalizamos primero (ver normalizeImageForEmbed)
-        // para que WebP/GIF no crasheen y las fotos con EXIF no salgan giradas.
-        const { bytes: normalizedBytes, isPng } = await normalizeImageForEmbed(bytes, doc.tipo_contenido);
-        const image = isPng ? await mergedPdf.embedPng(normalizedBytes) : await mergedPdf.embedJpg(normalizedBytes);
-
-        const imgDims = image.scale(1);
-        
-        // Crear una página A4 estándar (o ajustar a la imagen si se desea, usaremos el tamaño de la imagen por simplicidad)
-        // Usar tamaño de la imagen o escalar a A4 si es muy grande.
-        // A4 es aprox 595.28 x 841.89 points
-        const A4_WIDTH = 595.28;
-        const A4_HEIGHT = 841.89;
-
-        // Escalar imagen para que quepa en A4
-        let width = imgDims.width;
-        let height = imgDims.height;
-
-        if (width > A4_WIDTH || height > A4_HEIGHT) {
-          const scale = Math.min(A4_WIDTH / width, A4_HEIGHT / height);
-          width *= scale;
-          height *= scale;
-        }
-
-        const page = mergedPdf.addPage([A4_WIDTH, A4_HEIGHT]);
-        
-        // Centrar la imagen
-        page.drawImage(image, {
-          x: (A4_WIDTH / 2) - (width / 2),
-          y: (A4_HEIGHT / 2) - (height / 2),
-          width,
-          height,
-        });
-      } else {
-        console.warn(`Tipo de archivo no soportado para juntar: ${doc.tipo_contenido}`);
-      }
+      await embedSingleDocument(mergedPdf, doc);
     } catch (err) {
       console.error(`Error al procesar el documento ${doc.nombre_archivo}:`, err);
       throw new Error(`Error procesando ${doc.nombre_archivo}: ${err.message}`);
@@ -134,4 +136,52 @@ export async function mergeDocumentsToPdf(documents) {
 
   const pdfBytes = await mergedPdf.save();
   return new Blob([pdfBytes], { type: 'application/pdf' });
+}
+
+/**
+ * Como mergeDocumentsToPdf, pero para armar un PDF Único que puede estar
+ * incompleto: en vez de un array de documentos, recibe "slots" -- uno por
+ * cada ítem del checklist (tramites_requisitos), en el orden del expediente.
+ * Si slot.doc existe, se embebe igual que siempre. Si es null (documento
+ * obligatorio u opcional que todavía no llegó), se inserta una página en
+ * blanco marcando qué falta, para que el PDF final conserve el orden
+ * correcto del expediente completo y quede clarísimo qué hay que agregar a
+ * mano antes de enviarlo -- en vez de faltar páginas en silencio.
+ * @param {Array<{doc: object|null, label: string, obligatorio?: boolean}>} slots
+ * @returns {Promise<{blob: Blob, missing: string[]}>}
+ */
+export async function mergeDocumentsToPdfWithGaps(slots) {
+  const mergedPdf = await PDFDocument.create();
+  const font = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
+  const missing = [];
+
+  for (const slot of slots) {
+    if (!slot.doc) {
+      missing.push(slot.label || 'Documento');
+      const page = mergedPdf.addPage([A4_WIDTH, A4_HEIGHT]);
+      page.drawText('FALTA ESTE DOCUMENTO', {
+        x: 50, y: A4_HEIGHT - 120, size: 24, font, color: rgb(0.75, 0.1, 0.1),
+      });
+      page.drawText(String(slot.label || 'Documento').toUpperCase(), {
+        x: 50, y: A4_HEIGHT - 160, size: 16, font, color: rgb(0, 0, 0),
+      });
+      page.drawText(
+        slot.obligatorio
+          ? 'Documento obligatorio -- agregalo manualmente antes de enviar el trámite.'
+          : 'Documento opcional -- agregalo si corresponde.',
+        { x: 50, y: A4_HEIGHT - 190, size: 12, font, color: rgb(0.3, 0.3, 0.3) }
+      );
+      continue;
+    }
+
+    try {
+      await embedSingleDocument(mergedPdf, slot.doc);
+    } catch (err) {
+      console.error(`Error al procesar el documento ${slot.doc.nombre_archivo}:`, err);
+      throw new Error(`Error procesando ${slot.doc.nombre_archivo}: ${err.message}`);
+    }
+  }
+
+  const pdfBytes = await mergedPdf.save();
+  return { blob: new Blob([pdfBytes], { type: 'application/pdf' }), missing };
 }

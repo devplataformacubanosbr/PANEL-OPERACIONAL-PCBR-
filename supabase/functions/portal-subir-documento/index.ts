@@ -24,6 +24,30 @@ const TIPOS_DOCUMENTO_VALIDOS = [
   'CPF', 'RECIBO SISCONARE', 'FORMULARIO', 'OTRO',
 ]
 
+// Claves de datos que la IA puede intentar extraer de un documento, y que
+// mapean 1:1 a columnas de `clientes`. Mantener esta lista sincronizada con
+// las columnas reales de `database/standalone/001_schema.sql` -- cualquier
+// clave que la IA devuelva fuera de esta lista se descarta sin más (ver
+// sanitizeDatosExtraidos), nunca se hace `UPDATE ... SET <col dinámica>`.
+const CAMPOS_EXTRAIBLES_CLIENTE = [
+  'nombre', 'nacionalidad', 'fecha_nacimiento', 'lugar_nacimiento',
+  'numero_pasaporte', 'fecha_emision_pasaporte', 'fecha_vencimiento_pasaporte',
+  'cpf', 'carnet_identidad', 'rnm', 'numero_refugio', 'nombre_padre',
+  'nombre_madre', 'direccion',
+]
+
+function sanitizeDatosExtraidos(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const key of CAMPOS_EXTRAIBLES_CLIENTE) {
+    const val = (raw as Record<string, unknown>)[key]
+    if (typeof val === 'string' && val.trim().length > 0) {
+      out[key] = val.trim()
+    }
+  }
+  return out
+}
+
 function uint8ToBase64(bytes: Uint8Array): string {
   let binary = ''
   const chunkSize = 0x8000
@@ -33,25 +57,47 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-// Clasifica el tipo de documento con IA de visión (Groq). Solo se llama para
-// imágenes -- un PDF/Word requeriría renderizar la primera página a imagen
-// primero, que hoy solo sabe hacer el navegador (pdfjs+canvas), no Deno.
+// Clasifica el tipo de documento Y extrae los datos del cliente que sean
+// claramente legibles en la imagen (nombre, CPF, fecha de nacimiento, etc.),
+// con IA de visión (Groq), en una sola llamada. Solo se llama para imágenes
+// -- un PDF/Word requeriría renderizar la primera página a imagen primero,
+// que hoy solo sabe hacer el navegador (pdfjs+canvas), no Deno.
 // Si algo falla (sin API key, Groq caído, respuesta rara, imagen muy pesada),
-// se traga el error y devuelve null: el caller cae al tipo genérico de
-// siempre, la subida nunca se rompe por esto.
-async function classifyDocumentType(bytes: Uint8Array, mimeType: string): Promise<string | null> {
+// se traga el error y devuelve tipo null y datos vacíos: el caller cae al
+// tipo genérico de siempre y no actualiza al cliente, la subida nunca se
+// rompe por esto.
+async function classifyAndExtract(bytes: Uint8Array, mimeType: string): Promise<{ tipo: string | null; datos: Record<string, string> }> {
   try {
     const groqApiKey = Deno.env.get('GROQ_API_KEY')
-    if (!groqApiKey) return null
+    if (!groqApiKey) return { tipo: null, datos: {} }
 
     const base64 = uint8ToBase64(bytes)
-    const prompt = `Eres un clasificador de documentos para una agencia de trámites migratorios en Brasil.
-Mira la imagen y decide qué tipo de documento es, usando EXACTAMENTE uno de estos valores (ni uno más):
+    // Reglas de dominio (orden de nombre en pasaportes, MRZ, Filiação de RNM,
+    // etc.) portadas de la extracción probada del dashboard -- ver
+    // analyzeDocumentImage en src/services/aiService.js. Mantener ambas en
+    // sync si se ajusta una: acá no se puede importar ese archivo (corre en
+    // el navegador, usa canvas/DOM que no existen en Deno).
+    const prompt = `Eres un asistente que lee documentos de identidad e inmigración para una agencia de trámites migratorios en Brasil. Vas a hacer DOS cosas con esta imagen:
+
+1) Clasifica el tipo de documento usando EXACTAMENTE uno de estos valores (ni uno más):
 ${TIPOS_DOCUMENTO_VALIDOS.join(', ')}
 
 Guía rápida: pasaporte -> PASAPORTE. CPF (Brasil) -> CPF. Carnet/cédula de identidad de Cuba u otro país de origen -> CARNET DE IDENTIDAD. RNM (Registro Nacional Migratório de Brasil) -> RNM. Cuenta de luz/agua/gas o contrato a nombre del cliente (comprobante de domicilio) -> COMPROBANTE DE RESIDENCIA. Recibo del sistema Sisconare (solicitud de refugio) -> RECIBO SISCONARE. Foto tipo carnet 3x4 -> FOTO 3X4. Cualquier otro comprobante/recibo -> COMPROBANTE. Formulario en blanco o completado a mano -> FORMULARIO. Selfie o foto que no encaja en nada de lo anterior -> FOTO. Si no estás seguro -> OTRO.
 
-Devuelve ÚNICAMENTE un objeto JSON puro, sin markdown: {"tipo_documento": "VALOR"}`
+2) Extrae los datos del cliente que estén CLARAMENTE visibles y legibles en esta imagen, usando exclusivamente estas claves cuando apliquen: ${CAMPOS_EXTRAIBLES_CLIENTE.join(', ')}.
+
+REGLAS DE EXTRACCIÓN:
+- Todas las fechas en formato ISO YYYY-MM-DD.
+- El campo cpf solo con dígitos.
+- Pasaportes: cuidado con el orden del nombre. "APELLIDOS/SURNAMES" suele ir arriba y "NOMBRES/GIVEN NAMES" debajo -- concatena siempre como "NOMBRE(S) APELLIDO(S)" (ej. Apellidos: GUIBERT GONZALEZ, Nombres: GEORGINA -> nombre: "GEORGINA GUIBERT GONZALEZ").
+- "Nº DE PASAPORTE/PASSPORT Nº" (letras+números, ej. L302474) va en numero_pasaporte. "Nº DE IDENTIDAD/ID Nº" (solo dígitos, ej. 11 dígitos) va en carnet_identidad, NUNCA en numero_pasaporte.
+- Si la parte principal del pasaporte está borrosa, usa el código MRZ (las dos líneas de letras/números abajo) para nombre, número de pasaporte y carnet de identidad.
+- RNM: el código alfanumérico bajo "RNM" (ej. F744334-H) va en rnm. Concatena "NOME"+"SOBRENOME" para nombre. Bajo "FILIAÇÃO" aparecen los padres -- asigna nombre_madre/nombre_padre por sentido común según los nombres (no asumas que el primero siempre es la madre).
+- Recibo Sisconare: el número bajo "Protocolo de Solicitação de Refúgio" va en numero_refugio; "Validade" en fecha_vencimiento_refugio.
+- NUNCA inventes, adivines ni completes un dato que no se vea con certeza en la imagen -- omite la clave por completo si no estás seguro.
+
+Devuelve ÚNICAMENTE un objeto JSON puro, sin markdown, con esta forma exacta:
+{"tipo_documento": "VALOR", "datos_extraidos": {"clave": "valor", ...}}`
 
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -69,26 +115,72 @@ Devuelve ÚNICAMENTE un objeto JSON puro, sin markdown: {"tipo_documento": "VALO
           ],
         }],
         temperature: 0.1,
-        max_tokens: 200,
+        max_tokens: 500,
         response_format: { type: 'json_object' },
       }),
     })
 
     if (!res.ok) {
       console.warn('[portal-subir-documento] Groq clasificación HTTP', res.status, await res.text().catch(() => ''))
-      return null
+      return { tipo: null, datos: {} }
     }
 
     const data = await res.json()
     const raw = (data.choices?.[0]?.message?.content || '').trim()
     const cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim()
     const parsed = JSON.parse(cleaned)
-    const tipo = String(parsed.tipo_documento || '').toUpperCase().trim()
+    const tipoRaw = String(parsed.tipo_documento || '').toUpperCase().trim()
+    const tipo = TIPOS_DOCUMENTO_VALIDOS.includes(tipoRaw) ? tipoRaw : null
+    const datos = sanitizeDatosExtraidos(parsed.datos_extraidos)
 
-    return TIPOS_DOCUMENTO_VALIDOS.includes(tipo) ? tipo : null
+    return { tipo, datos }
   } catch (err) {
-    console.warn('[portal-subir-documento] Clasificación IA falló, usando tipo genérico:', err.message)
-    return null
+    console.warn('[portal-subir-documento] Clasificación/extracción IA falló, usando tipo genérico:', err.message)
+    return { tipo: null, datos: {} }
+  }
+}
+
+// Aplica al cliente solo los campos extraídos que hoy están vacíos en su
+// ficha -- nunca pisa un valor ya cargado (a mano o por una subida anterior),
+// para que un documento borroso o mal leído jamás corrija silenciosamente un
+// dato que el staff ya revisó. Si no hay nada nuevo que llenar, no hace UPDATE.
+async function rellenarDatosFaltantesCliente(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  clienteId: number,
+  datosExtraidos: Record<string, string>
+): Promise<void> {
+  if (Object.keys(datosExtraidos).length === 0) return
+
+  const { data: clienteActual, error: fetchError } = await supabaseAdmin
+    .from('clientes')
+    .select(CAMPOS_EXTRAIBLES_CLIENTE.join(','))
+    .eq('id', clienteId)
+    .single()
+
+  if (fetchError || !clienteActual) {
+    console.warn('[portal-subir-documento] No se pudo leer cliente para rellenar datos:', fetchError?.message)
+    return
+  }
+
+  const actualizacion: Record<string, string> = {}
+  for (const [key, value] of Object.entries(datosExtraidos)) {
+    const valorActual = (clienteActual as Record<string, unknown>)[key]
+    if (valorActual === null || valorActual === undefined || String(valorActual).trim() === '') {
+      actualizacion[key] = value
+    }
+  }
+
+  if (Object.keys(actualizacion).length === 0) return
+
+  actualizacion.modificado_en = new Date().toISOString()
+
+  const { error: updateError } = await supabaseAdmin
+    .from('clientes')
+    .update(actualizacion)
+    .eq('id', clienteId)
+
+  if (updateError) {
+    console.warn('[portal-subir-documento] No se pudo actualizar cliente con datos extraídos:', updateError.message)
   }
 }
 
@@ -155,9 +247,9 @@ serve(async (req) => {
 
     if (uploadError) throw uploadError
 
-    const tipoClasificado = file.type.startsWith('image/')
-      ? await classifyDocumentType(fileBytes, file.type)
-      : null
+    const { tipo: tipoClasificado, datos: datosExtraidos } = file.type.startsWith('image/')
+      ? await classifyAndExtract(fileBytes, file.type)
+      : { tipo: null, datos: {} }
 
     const { data: docRecord, error: dbError } = await supabaseAdmin
       .from('documentos_operacionales')
@@ -175,6 +267,12 @@ serve(async (req) => {
       .single()
 
     if (dbError) throw dbError
+
+    // Auto-completar la ficha del cliente con lo que la IA leyó del
+    // documento, antes de que un operacional lo revise. Solo llena campos
+    // vacíos (ver rellenarDatosFaltantesCliente) -- si esto falla, no rompe
+    // la subida, el documento ya quedó guardado.
+    await rellenarDatosFaltantesCliente(supabaseAdmin, clienteId, datosExtraidos)
 
     return new Response(JSON.stringify({ success: true, documento: docRecord }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

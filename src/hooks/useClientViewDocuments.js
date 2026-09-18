@@ -12,6 +12,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { handleError } from '../utils/errorHandler';
 import { analyzeDocumentImage } from '../services/aiService';
+import { applyExtractedDataToClient } from '../services/clientExtractionService';
 import { uploadDocument, deleteDocument } from '../services/storageService';
 
 export default function useClientViewDocuments({
@@ -112,13 +113,30 @@ export default function useClientViewDocuments({
             const tipo = aiData.TIPO_DOCUMENTO || 'DOCUMENTO';
             const nombre = aiData.NOMBRE_COMPLETO || 'DESCONOCIDO';
             const newFileName = `${tipo} - ${nombre}`.toUpperCase();
-            
+
             aiData.NOMBRE_ARCHIVO = newFileName;
 
             if (docRecord) {
               const isUuid = typeof docRecord.id === 'string' && docRecord.id.includes('-');
               const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
               supabase.from(table).update({ nombre_archivo: newFileName }).eq('id', docRecord.id).then(() => fetchClientData());
+            }
+
+            // Guardado automático en `clientes` ANTES de que un operacional lo
+            // vea -- solo llena campos que hoy están vacíos (skipIfAlreadyFilled),
+            // nunca pisa un dato ya cargado/verificado a mano. El modal de abajo
+            // sigue abriéndose para que el staff vea qué se cargó solo y pueda
+            // corregirlo (ahí sí, al confirmar, se pisa lo que edite).
+            try {
+              await applyExtractedDataToClient({
+                targetClientId: clientId,
+                extractedData: aiData,
+                customFieldsConfig: extraCustomFieldsForAi,
+                skipIfAlreadyFilled: true,
+              });
+              await fetchClientData();
+            } catch (autoSaveErr) {
+              console.warn('[useClientViewDocuments] Auto-guardado de datos extraídos falló:', autoSaveErr.message);
             }
 
             setExtractedData(aiData);
