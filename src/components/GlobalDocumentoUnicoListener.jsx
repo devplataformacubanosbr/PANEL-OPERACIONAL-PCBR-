@@ -2,120 +2,187 @@ import { useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { getCliente } from '../services/clientesService';
-import { getDocuments } from '../services/storageService';
+import { getDocuments, deleteDocument } from '../services/storageService';
 import { getRequisitosTramite, getFastopAcciones } from '../services/tramitesService';
+import { buildSlotsForRequirements, isValidForMerge } from '../services/documentMatcherService';
 
-const VALID_MERGE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-const isValidForMerge = (doc) => {
-  if (doc.estado === 'rechazado') return false; // descartado (manual o por el organizador IA) -- nunca entra a un PDF Único
-  if (doc.tipo_contenido && VALID_MERGE_TYPES.includes(doc.tipo_contenido)) return true;
-  const name = (doc.nombre_archivo || '').toLowerCase();
-  return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
-};
-
-// Tipo/estado con el que se marca un PDF Único armado solo, sin que nadie
-// tocó el botón "Generar" — así se distingue de uno manual y sale con el
-// círculo "sin verificar" que ya existe en la lista de documentos del
-// cliente (ClientDocuments.jsx). El operario lo aprueba con el mismo toggle
-// que usa para cualquier otro documento — no hace falta UI nueva.
-const BORRADOR_TIPO = 'PDF_UNICO_BORRADOR';
+// Tipo con el que se marca un PDF Único generado automáticamente en borrador
+export const BORRADOR_TIPO = 'PDF_UNICO_BORRADOR';
 
 /**
- * Cuando un cliente sube un documento desde el Portal de Clientes, revisa si
- * ese documento completó el checklist de alguna variante de "PDF Único"
- * (tramites_catalogo.fastop_tipo = 'pdf_unico') y, si es así, arma el PDF
- * automáticamente y lo deja como borrador (estado 'pendiente') esperando
- * aprobación de un operario. No hace nada con subidas del propio dashboard
- * (esas ya tienen su botón manual "Generar PDF Único" en TemplateManager).
+ * GlobalDocumentoUnicoListener
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Automatiza por completo la creación de los "PDFs Únicos":
+ * 
+ * 1. Escucha en tiempo real la llegada o clasificación de documentos desde:
+ *    - WhatsApp / Kommo (`documentos_pendientes`).
+ *    - Portal del Cliente (`documentos_operacionales` de la app).
+ *    - Subidas manuales del operador o re-clasificación con IA (`organizeClientDocuments`).
+ * 2. Cruza los documentos del cliente contra las variantes de PDF Único configuradas
+ *    (tramites_catalogo.fastop_tipo = 'pdf_unico') usando coincidencia inteligente
+ *    por tipos, nombres estandarizados y sinónimos migratorios.
+ * 3. Si hay documentos disponibles, compila automáticamente el PDF Único:
+ *    - Si faltan documentos, inserta páginas de aviso indicando con precisión qué falta.
+ *    - Si ya existía un borrador pendiente y llegaron documentos nuevos más recientes,
+ *      reemplaza el borrador obsoleto para que el operario siempre tenga la versión más completa.
+ * 4. Guarda el resultado como `PDF_UNICO_BORRADOR` (estado 'pendiente') y emite un toast
+ *    para que el operario lo revise y apruebe con un solo clic.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export const GlobalDocumentoUnicoListener = () => {
-  // Evita procesar el mismo cliente en paralelo si el portal manda varios
-  // archivos seguidos (ej. el cliente sube 4 fotos de una).
   const inFlightRef = useRef(new Set());
 
   useEffect(() => {
-    console.log('[GlobalDocumentoUnicoListener] Iniciando escucha de subidas del Portal de Clientes...');
+    console.log('[GlobalDocumentoUnicoListener] Escuchando en tiempo real para generación automática de PDF Único...');
 
-    const channel = supabase
-      .channel('documento_unico_listener')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'documentos_operacionales' }, async (payload) => {
-        const doc = payload.new;
-        // Filtramos acá adentro (no en el `filter` de la suscripción) para no
-        // depender de cómo Realtime escapa espacios/paréntesis en el valor.
-        if (!doc || !doc.id_cliente || doc.subido_por !== 'Cliente (App)') return;
+    const processClientQueue = async (rawClientId) => {
+      const clienteId = Number(rawClientId);
+      if (!clienteId || isNaN(clienteId)) return;
 
-        const lockKey = String(doc.id_cliente);
-        if (inFlightRef.current.has(lockKey)) return;
-        inFlightRef.current.add(lockKey);
+      const lockKey = String(clienteId);
+      if (inFlightRef.current.has(lockKey)) return;
+      inFlightRef.current.add(lockKey);
 
-        try {
-          await checkAndGenerateDrafts(doc.id_cliente);
-        } catch (err) {
-          console.error('[GlobalDocumentoUnicoListener] Error evaluando checklist:', err);
-        } finally {
+      try {
+        await checkAndGenerateDrafts(clienteId);
+      } catch (err) {
+        console.error('[GlobalDocumentoUnicoListener] Error en checkAndGenerateDrafts:', err);
+      } finally {
+        // Pausa breve para evitar ráfagas si entran 3 documentos simultáneos
+        setTimeout(() => {
           inFlightRef.current.delete(lockKey);
+        }, 1500);
+      }
+    };
+
+    // 1. Suscripción a documentos_operacionales (Portal y Dashboard)
+    const channelOperacionales = supabase
+      .channel('documento_unico_listener_operacionales')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'documentos_operacionales' },
+        async (payload) => {
+          const doc = payload.new;
+          if (!doc || !doc.id_cliente) return;
+
+          // Ignorar eventos generados por el propio PDF Único para evitar bucles infinitos
+          if (doc.tipo_documento === BORRADOR_TIPO) return;
+          if ((doc.nombre_archivo || '').toUpperCase().startsWith('PDF UNICO')) return;
+          if (doc.estado === 'rechazado') return;
+
+          processClientQueue(doc.id_cliente);
         }
-      })
+      )
       .subscribe();
 
+    // 2. Suscripción a documentos_pendientes (WhatsApp / Kommo)
+    const channelPendientes = supabase
+      .channel('documento_unico_listener_pendientes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'documentos_pendientes' },
+        async (payload) => {
+          const doc = payload.new;
+          if (!doc || !doc.cliente_id) return;
+
+          const name = (doc.nombre_archivo || '').toUpperCase();
+          if (name.includes('BORROSO')) return;
+
+          processClientQueue(doc.cliente_id);
+        }
+      )
+      .subscribe();
+
+    // 3. Escuchar eventos internos del navegador (tras IA organize o WhatsApp processing)
+    const handleCheckEvent = (event) => {
+      const clientId = event.detail?.clientId || event.detail?.targetClient?.id;
+      if (clientId) {
+        processClientQueue(clientId);
+      }
+    };
+
+    window.addEventListener('generatePdfUnicoCheck', handleCheckEvent);
+    window.addEventListener('documentProcessed', handleCheckEvent);
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(channelOperacionales);
+      supabase.removeChannel(channelPendientes);
+      window.removeEventListener('generatePdfUnicoCheck', handleCheckEvent);
+      window.removeEventListener('documentProcessed', handleCheckEvent);
     };
   }, []);
 
   return null;
 };
 
-async function checkAndGenerateDrafts(clienteId) {
+/**
+ * Revisa el expediente del cliente y genera o actualiza los borradores de PDF Único.
+ * Puede ser invocada externamente tras subir o reordenar documentos.
+ * @param {number|string} clienteId 
+ */
+export async function checkAndGenerateDrafts(clienteId) {
   const [cliente, acciones, docs] = await Promise.all([
     getCliente(clienteId),
     getFastopAcciones('pdf_unico'),
     getDocuments(clienteId),
   ]);
 
-  if (!cliente || acciones.length === 0) return;
-  const mergeableDocs = docs.filter(isValidForMerge);
+  if (!cliente || !acciones || acciones.length === 0) return;
+  const mergeableDocs = (docs || []).filter(isValidForMerge);
   if (mergeableDocs.length === 0) return;
-
-  const bestDocFor = (tipoDocumento) =>
-    mergeableDocs
-      .filter(d => d.tipo_documento === tipoDocumento)
-      .sort((a, b) => new Date(b.creado_en || 0) - new Date(a.creado_en || 0))[0];
 
   for (const accion of acciones) {
     const requisitos = await getRequisitosTramite(accion.id);
-    const obligatorios = requisitos.filter(r => r.obligatorio);
-    if (obligatorios.length === 0) continue; // checklist sin configurar todavía
+    if (!requisitos || requisitos.length === 0) continue;
 
-    // Antes: solo se armaba el PDF Único cuando el checklist estaba 100%
-    // completo (isComplete). Ahora se arma apenas hay AL MENOS UN documento
-    // que matchea el checklist, aunque falten otros -- los que falten salen
-    // como página de aviso (ver mergeDocumentsToPdfWithGaps) en vez de
-    // esperar en silencio a que llegue el último documento. Así el operario
-    // ya tiene un PDF Único para revisar/completar a mano en vez de nada.
-    const matchedCount = requisitos.filter(req => !!bestDocFor(req.tipo_documento)).length;
-    if (matchedCount === 0) continue;
-    const isComplete = obligatorios.every(req => !!bestDocFor(req.tipo_documento));
+    const obligatorios = requisitos.filter(r => r.obligatorio);
+
+    // Armar slots utilizando el motor de coincidencia inteligente
+    const slots = buildSlotsForRequirements(requisitos, mergeableDocs);
+    const matchedSlots = slots.filter(s => !!s.doc);
+
+    // Si ningún documento coincide con este trámite, no generar borrador
+    if (matchedSlots.length === 0) continue;
+
+    const isComplete = obligatorios.length > 0 && obligatorios.every(req => {
+      const slot = slots.find(s => s.req.id === req.id);
+      return !!slot?.doc;
+    });
 
     const cityLabel = (accion.nombre || '').replace(/^PDF Únicos?\s*/i, '').trim();
     const draftBaseName = `PDF UNICO BORRADOR${cityLabel ? ' ' + cityLabel.toUpperCase() : ''} - ${(cliente.nombre || 'CLIENTE').toUpperCase()}`;
     const filename = `${draftBaseName.replace(/[^a-zA-Z0-9.\-_ ]/g, '')}.pdf`;
 
-    // Ya hay un borrador de esta misma variante esperando aprobación: no duplicar
-    // (si ese borrador ya fue revisado/aprobado -- deja de estar 'pendiente' --
-    // sí se genera uno nuevo con lo que haya llegado desde entonces).
-    const alreadyPending = docs.some(d =>
-      d.tipo_documento === BORRADOR_TIPO && d.estado === 'pendiente' && d.nombre_archivo === filename
+    // Buscar si ya existe un borrador de esta variante esperando aprobación
+    const existingDraft = docs.find(d =>
+      d.tipo_documento === BORRADOR_TIPO &&
+      d.estado === 'pendiente' &&
+      d.nombre_archivo === filename
     );
-    if (alreadyPending) continue;
+
+    if (existingDraft) {
+      // Verificar la fecha del documento coincidente más reciente
+      const latestMatchedDate = Math.max(
+        ...matchedSlots.map(s => new Date(s.doc?.creado_en || 0).getTime())
+      );
+      const draftDate = new Date(existingDraft.creado_en || 0).getTime();
+
+      // Si el borrador existente es más reciente o igual que los documentos que entraron,
+      // ya está actualizado: no duplicar.
+      if (draftDate >= latestMatchedDate) {
+        continue;
+      }
+
+      // Si entraron documentos nuevos después del borrador, eliminar el borrador viejo
+      // para reemplazarlo con la versión fresca y actualizada.
+      try {
+        await deleteDocument(existingDraft);
+      } catch (e) {
+        console.warn('[GlobalDocumentoUnicoListener] No se pudo borrar borrador previo:', e);
+      }
+    }
 
     try {
-      const slots = requisitos.map(req => ({
-        doc: bestDocFor(req.tipo_documento) || null,
-        label: req.tipo_dato,
-        obligatorio: req.obligatorio,
-      }));
-
       const { mergeDocumentsToPdfWithGaps } = await import('../services/pdfMergerService');
       const { blob: mergedBlob, missing } = await mergeDocumentsToPdfWithGaps(slots);
 
@@ -123,15 +190,21 @@ async function checkAndGenerateDrafts(clienteId) {
       await uploadGeneratedDocumentToClient(mergedBlob, filename, cliente, {
         estado: 'pendiente',
         tipoDocumento: BORRADOR_TIPO,
-        subidoPor: 'Automático (Portal)',
+        subidoPor: 'Automático (IA)',
         silent: true,
       });
 
       const estadoLabel = isComplete ? 'completo' : `incompleto — falta: ${missing.join(', ')}`;
-      toast.success(`PDF Único (borrador, ${estadoLabel}) listo para revisar — ${cliente.nombre} · ${accion.nombre}`, {
-        duration: 9000,
-        icon: isComplete ? '🤖' : '⚠️',
-      });
+      toast.success(
+        `PDF Único (${estadoLabel}) listo para revisar — ${cliente.nombre} · ${accion.nombre}`,
+        {
+          duration: 9000,
+          icon: isComplete ? '🤖' : '⚠️',
+        }
+      );
+
+      // Notificar a componentes en pantalla para refrescar la lista de documentos
+      window.dispatchEvent(new CustomEvent('refreshClientData', { detail: { clientId } }));
     } catch (err) {
       console.error(`[GlobalDocumentoUnicoListener] Error generando borrador para cliente ${clienteId} / acción ${accion.id}:`, err);
     }

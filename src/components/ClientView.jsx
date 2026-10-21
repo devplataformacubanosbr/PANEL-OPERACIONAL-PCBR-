@@ -119,6 +119,12 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   const [portalCredentials, setPortalCredentials] = useState(undefined);
   const [portalLoading, setPortalLoading] = useState(false);
 
+  // ── Extracción Inteligente desde el Chat (Flujo B & C) ───────────────────────
+  const [isScanningChat, setIsScanningChat] = useState(false);
+  const [chatExtractionData, setChatExtractionData] = useState(null);
+  const [isChatExtractionModalOpen, setIsChatExtractionModalOpen] = useState(false);
+  const [isApplyingChatData, setIsApplyingChatData] = useState(false);
+
   // Cargar credenciales al montar
   React.useEffect(() => {
     if (!clientId) return;
@@ -538,11 +544,6 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   };
 
   // ── Extracción Inteligente desde el Chat (Flujo B & C) ───────────────────────
-  const [isScanningChat, setIsScanningChat] = useState(false);
-  const [chatExtractionData, setChatExtractionData] = useState(null);
-  const [isChatExtractionModalOpen, setIsChatExtractionModalOpen] = useState(false);
-  const [isApplyingChatData, setIsApplyingChatData] = useState(false);
-
   const handleScanChat = async () => {
     if (!client?.id) return;
     setIsScanningChat(true);

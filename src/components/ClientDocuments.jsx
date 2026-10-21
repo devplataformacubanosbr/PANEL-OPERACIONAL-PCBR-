@@ -327,6 +327,23 @@ const ClientDocuments = ({
                         ⚠️ Borroso / Ilegible
                       </span>
                     )}
+                    {doc.tipo_documento === 'PDF_UNICO_BORRADOR' && (
+                      <span
+                        style={{
+                          fontSize: '0.65rem',
+                          padding: '1px 6px',
+                          background: doc.estado === 'pendiente' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                          color: doc.estado === 'pendiente' ? 'var(--color-primary, #6366f1)' : '#10b981',
+                          borderRadius: '4px',
+                          border: doc.estado === 'pendiente' ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(16, 185, 129, 0.35)',
+                          fontWeight: 600,
+                          flexShrink: 0
+                        }}
+                        title={doc.estado === 'pendiente' ? "Borrador de PDF Único auto-generado. Revisa y haz clic en el check para aprobarlo." : "PDF Único verificado y aprobado."}
+                      >
+                        {doc.estado === 'pendiente' ? '🤖 Borrador PDF Único' : '✅ PDF Único Aprobado'}
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
                     {doc.creado_en ? new Date(doc.creado_en).toLocaleDateString() : '—'} • {doc.tamano ? (doc.tamano / 1024).toFixed(0) + ' KB' : '—'}

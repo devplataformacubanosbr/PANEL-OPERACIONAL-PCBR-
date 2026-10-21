@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import {  UploadCloud, FileText, Loader2, Tag, Trash2, Sparkles, Plus, Search, ChevronDown, ChevronUp, AlertCircle, Files, Sliders, CheckCircle2, Settings2 } from 'lucide-react';
 import { getFastopAcciones, getRequisitosTramite } from '../services/tramitesService';
-
-const VALID_MERGE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-const isValidForMerge = (doc) => {
-  if (doc.tipo_contenido && VALID_MERGE_TYPES.includes(doc.tipo_contenido)) return true;
-  const name = (doc.nombre_archivo || '').toLowerCase();
-  return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
-};
+import { buildSlotsForRequirements, isValidForMerge } from '../services/documentMatcherService';
 
 // Cada uno arrastra sus propias dependencias pesadas (pdf-lib, docxtemplater,
 // html2pdf.js, react-quill) — lazy() para que solo se descarguen cuando el
@@ -94,12 +88,11 @@ export default function TemplateManager({ client, clienteDatos, entradas, docume
       try {
         const requisitos = await getRequisitosTramite(currentAccion.id);
         const mergeableDocs = documentos.filter(isValidForMerge);
-        const slots = requisitos.map(req => {
-          const candidatos = mergeableDocs
-            .filter(d => d.tipo_documento === req.tipo_documento)
-            .sort((a, b) => new Date(b.creado_en || 0) - new Date(a.creado_en || 0));
-          return { label: req.tipo_dato, obligatorio: !!req.obligatorio, matchedDoc: candidatos[0] || null };
-        });
+        const slots = buildSlotsForRequirements(requisitos, mergeableDocs).map(s => ({
+          label: s.label,
+          obligatorio: s.obligatorio,
+          matchedDoc: s.doc,
+        }));
         if (active) setExampleSlots(slots);
       } catch (err) {
         console.error('[TemplateManager] Error cargando ejemplo de FastOp:', err);

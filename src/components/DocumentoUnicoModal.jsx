@@ -4,14 +4,7 @@ import toast from 'react-hot-toast';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import { getRequisitosTramite } from '../services/tramitesService';
-
-const VALID_MERGE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-const isValidForMerge = (doc) => {
-  if (doc.estado === 'rechazado') return false; // descartado (manual o por el organizador IA) -- nunca entra a un PDF Único
-  if (doc.tipo_contenido && VALID_MERGE_TYPES.includes(doc.tipo_contenido)) return true;
-  const name = (doc.nombre_archivo || '').toLowerCase();
-  return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
-};
+import { documentMatchesRequirement, findBestDocForRequirement, isValidForMerge } from '../services/documentMatcherService';
 
 let slotCounter = 0;
 const nextSlotId = () => `slot-${++slotCounter}`;
@@ -38,16 +31,17 @@ export default function DocumentoUnicoModal({ tramiteCatalogo, title, client, do
       try {
         const requisitos = await getRequisitosTramite(tramiteCatalogo.id);
         if (!active) return;
+        const usedIds = new Set();
         const initialSlots = requisitos.map(req => {
-          const candidatos = mergeableDocs
-            .filter(d => d.tipo_documento === req.tipo_documento)
-            .sort((a, b) => new Date(b.creado_en || 0) - new Date(a.creado_en || 0));
+          const matchedDoc = findBestDocForRequirement(mergeableDocs, req, usedIds);
+          if (matchedDoc) usedIds.add(String(matchedDoc.id));
           return {
             id: nextSlotId(),
             label: req.tipo_dato,
             obligatorio: !!req.obligatorio,
             tipoDocumento: req.tipo_documento,
-            selectedDocId: candidatos[0] ? String(candidatos[0].id) : '',
+            req,
+            selectedDocId: matchedDoc ? String(matchedDoc.id) : '',
           };
         });
         setSlots(initialSlots);
@@ -86,9 +80,14 @@ export default function DocumentoUnicoModal({ tramiteCatalogo, title, client, do
     });
   };
 
-  // Candidatos ordenados: primero los que coinciden con el tipo esperado del slot.
+  // Candidatos ordenados: primero los que coinciden con el requisito esperado del slot.
   const optionsFor = (slot) => {
-    const withMatch = mergeableDocs.map(d => ({ doc: d, matches: slot.tipoDocumento && d.tipo_documento === slot.tipoDocumento }));
+    const withMatch = mergeableDocs.map(d => ({
+      doc: d,
+      matches: slot.req
+        ? documentMatchesRequirement(d, slot.req)
+        : (slot.tipoDocumento && documentMatchesRequirement(d, slot.tipoDocumento)),
+    }));
     withMatch.sort((a, b) => (b.matches === a.matches ? 0 : b.matches ? 1 : -1));
     return withMatch.map(w => w.doc);
   };

@@ -7,23 +7,45 @@ const A4_HEIGHT = 841.89;
 const BUCKET = 'documentos_operacionales';
 
 // Helper robusto para descargar bytes evitando expiración de URLs firmadas
-async function fetchDocumentBytes(urlOrPath) {
+// y dando soporte tanto a documentos_operacionales como a whatsapp_media.
+async function fetchDocumentBytes(docOrUrl) {
+  const isDocObj = typeof docOrUrl === 'object' && docOrUrl !== null;
+  const urlOrPath = isDocObj ? docOrUrl.url_archivo : docOrUrl;
+  if (!urlOrPath) throw new Error('No se especificó la ruta o URL del documento.');
+
+  // Detectar si el documento proviene de WhatsApp o si su URL apunta a whatsapp_media
+  const isWhatsapp = (isDocObj && typeof docOrUrl.id === 'string' && docOrUrl.id.includes('-')) ||
+                     (typeof urlOrPath === 'string' && urlOrPath.includes('whatsapp_media'));
+  const primaryBucket = isWhatsapp ? 'whatsapp_media' : BUCKET;
+  const secondaryBucket = isWhatsapp ? BUCKET : 'whatsapp_media';
+
   let path = urlOrPath;
-  if (path && path.startsWith('http')) {
-    const urlParts = path.split(`/${BUCKET}/`);
+  if (path.startsWith('http')) {
+    const urlParts = path.split(`/${primaryBucket}/`);
     if (urlParts.length === 2) {
-      path = urlParts[1].split('?')[0];
-      path = decodeURIComponent(path);
+      path = decodeURIComponent(urlParts[1].split('?')[0]);
+    } else {
+      const altParts = path.split(`/${secondaryBucket}/`);
+      if (altParts.length === 2) {
+        path = decodeURIComponent(altParts[1].split('?')[0]);
+      }
     }
   }
 
-  // Intentar descargar directo desde Supabase para usar la sesión actual
-  if (path && !path.startsWith('http')) {
-    const { data, error } = await supabase.storage.from(BUCKET).download(path);
+  // Intentar descargar directo desde el bucket primario
+  if (!path.startsWith('http')) {
+    const { data, error } = await supabase.storage.from(primaryBucket).download(path);
     if (!error && data) {
       return await data.arrayBuffer();
     }
-    console.warn('[pdfMergerService] Falló descarga directa, cayendo a fetch.', error);
+
+    // Si falló, intentar en el bucket secundario
+    const { data: secData, error: secError } = await supabase.storage.from(secondaryBucket).download(path);
+    if (!secError && secData) {
+      return await secData.arrayBuffer();
+    }
+
+    console.warn(`[pdfMergerService] Falló descarga directa (${primaryBucket} y ${secondaryBucket}), cayendo a fetch.`, error);
   }
 
   // Fallback a fetch normal (puede ser URL pública o firmada)
@@ -77,7 +99,7 @@ async function normalizeImageForEmbed(bytes, tipoContenido) {
 
 /** Embebe un único documento (PDF o imagen) como página(s) del PDF en construcción. */
 async function embedSingleDocument(mergedPdf, doc) {
-  const bytes = await fetchDocumentBytes(doc.url_archivo);
+  const bytes = await fetchDocumentBytes(doc);
   const isPdf = doc.tipo_contenido === 'application/pdf' || doc.nombre_archivo?.toLowerCase().endsWith('.pdf');
 
   if (isPdf) {

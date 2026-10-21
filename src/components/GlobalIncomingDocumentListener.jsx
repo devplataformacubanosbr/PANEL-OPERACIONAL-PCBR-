@@ -147,9 +147,11 @@ export const GlobalIncomingDocumentListener = () => {
               );
             }
 
-            // Notificar a componentes en pantalla para refrescar sin recargar
-            window.dispatchEvent(new CustomEvent('documentProcessed', { detail: { documentId: doc.id, moved, targetClient } }));
-            window.dispatchEvent(new CustomEvent('refreshClientData', { detail: { clientId: currentCliente.id } }));
+            // Notificar a componentes en pantalla para refrescar y evaluar PDF Único
+            const finalClientId = targetClient?.id || currentCliente.id;
+            window.dispatchEvent(new CustomEvent('documentProcessed', { detail: { documentId: doc.id, moved, targetClient, clientId: finalClientId } }));
+            window.dispatchEvent(new CustomEvent('generatePdfUnicoCheck', { detail: { clientId: finalClientId } }));
+            window.dispatchEvent(new CustomEvent('refreshClientData', { detail: { clientId: finalClientId } }));
 
           } catch (err) {
             console.error('[GlobalIncomingDocumentListener] Error procesando documento automático:', err);

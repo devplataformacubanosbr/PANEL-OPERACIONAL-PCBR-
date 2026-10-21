@@ -1,7 +1,22 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Sparkles, X, Check, Users, UserPlus, AlertCircle, ArrowRight, ShieldCheck, Home } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '../utils/dateFormatter';
+
+// Formateador legible de dirección
+const formatAddressObj = (dir) => {
+  if (!dir) return '';
+  if (typeof dir === 'string') return dir;
+  const parts = [];
+  if (dir.endereco) parts.push(dir.endereco);
+  if (dir.numero) parts.push(`N° ${dir.numero}`);
+  if (dir.complemento) parts.push(dir.complemento);
+  if (dir.bairro) parts.push(`Bairro ${dir.bairro}`);
+  if (dir.cidade) parts.push(dir.cidade);
+  if (dir.estado) parts.push(dir.estado);
+  if (dir.cep) parts.push(`CEP: ${dir.cep}`);
+  return parts.join(', ');
+};
 
 export default function ClientChatExtractionModal({
   isOpen,
@@ -11,23 +26,6 @@ export default function ClientChatExtractionModal({
   onApply,
   isApplying = false
 }) {
-  if (!isOpen || !extractedData) return null;
-
-  // Formateador legible de dirección
-  const formatAddressObj = (dir) => {
-    if (!dir) return '';
-    if (typeof dir === 'string') return dir;
-    const parts = [];
-    if (dir.endereco) parts.push(dir.endereco);
-    if (dir.numero) parts.push(`N° ${dir.numero}`);
-    if (dir.complemento) parts.push(dir.complemento);
-    if (dir.bairro) parts.push(`Bairro ${dir.bairro}`);
-    if (dir.cidade) parts.push(dir.cidade);
-    if (dir.estado) parts.push(dir.estado);
-    if (dir.cep) parts.push(`CEP: ${dir.cep}`);
-    return parts.join(', ');
-  };
-
   // Mapear campos detectados a su valor actual en el cliente
   const candidateFields = useMemo(() => {
     if (!client || !extractedData) return [];
@@ -175,31 +173,36 @@ export default function ClientChatExtractionModal({
     return definitions.filter(d => Boolean(d.extractedVal && String(d.extractedVal).trim().length > 0));
   }, [client, extractedData]);
 
-  // Estado de checkboxes para campos del titular
-  // Por defecto: seleccionados solo aquellos donde el cliente actual NO tiene valor (o está vacío)
-  const [selectedFields, setSelectedFields] = useState(() => {
-    const initial = {};
-    candidateFields.forEach(f => {
-      const isCurrentEmpty = !f.currentVal || String(f.currentVal).trim() === '';
-      initial[f.key] = isCurrentEmpty;
-    });
-    return initial;
-  });
-
   // Estado de selección de familiares detectados
   const familiares = useMemo(() => {
-    return Array.isArray(extractedData.FAMILIARES_MENCIONADOS)
+    return Array.isArray(extractedData?.FAMILIARES_MENCIONADOS)
       ? extractedData.FAMILIARES_MENCIONADOS.filter(f => f && f.nombre)
       : [];
   }, [extractedData]);
 
-  const [selectedRelatives, setSelectedRelatives] = useState(() => {
-    const initial = {};
-    familiares.forEach((_, idx) => {
-      initial[idx] = true; // Por defecto vincular todos los familiares detectados
+  // Estado de checkboxes para campos del titular
+  const [selectedFields, setSelectedFields] = useState({});
+
+  // Estado de selección de familiares detectados
+  const [selectedRelatives, setSelectedRelatives] = useState({});
+
+  // Sincronizar selección inicial cuando cambian los datos o se abre el modal
+  useEffect(() => {
+    if (!isOpen || !extractedData) return;
+
+    const initialFields = {};
+    candidateFields.forEach(f => {
+      const isCurrentEmpty = !f.currentVal || String(f.currentVal).trim() === '';
+      initialFields[f.key] = isCurrentEmpty;
     });
-    return initial;
-  });
+    setSelectedFields(initialFields);
+
+    const initialRelatives = {};
+    familiares.forEach((_, idx) => {
+      initialRelatives[idx] = true; // Por defecto vincular todos los familiares detectados
+    });
+    setSelectedRelatives(initialRelatives);
+  }, [isOpen, extractedData, candidateFields, familiares]);
 
   const toggleField = (key) => {
     setSelectedFields(prev => ({ ...prev, [key]: !prev[key] }));
@@ -240,6 +243,8 @@ export default function ClientChatExtractionModal({
 
   const selectedCount = Object.values(selectedFields).filter(Boolean).length;
   const selectedRelativesCount = Object.values(selectedRelatives).filter(Boolean).length;
+
+  if (!isOpen || !extractedData) return null;
 
   return (
     <div style={{

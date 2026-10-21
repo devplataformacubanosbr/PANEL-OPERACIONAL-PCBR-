@@ -144,14 +144,21 @@ export async function getDocuments(clientId) {
   if (operacionales.error) throw operacionales.error;
   if (pendientes.error) throw pendientes.error;
 
-  const normalizedPendientes = (pendientes.data || []).map((doc) => ({
-    ...doc,
-    id_cliente: doc.cliente_id,
-    creado_en: doc.fecha_recepcion,
-    tipo_documento: 'DOCUMENTO DE WHATSAPP',
-    subido_por: 'Kommo',
-    estado: doc.verificado ? 'verificado' : 'pendiente',
-  }));
+  const normalizedPendientes = (pendientes.data || []).map((doc) => {
+    let extractedType = 'DOCUMENTO DE WHATSAPP';
+    const match = (doc.nombre_archivo || '').match(/^([A-Z0-9_\s]{2,30})\s*-\s*/i);
+    if (match) {
+      extractedType = match[1].trim().toUpperCase();
+    }
+    return {
+      ...doc,
+      id_cliente: doc.cliente_id,
+      creado_en: doc.fecha_recepcion,
+      tipo_documento: extractedType,
+      subido_por: 'Kommo',
+      estado: doc.verificado ? 'verificado' : 'pendiente',
+    };
+  });
 
   return [...(operacionales.data || []), ...normalizedPendientes].sort(
     (a, b) => new Date(b.creado_en) - new Date(a.creado_en)

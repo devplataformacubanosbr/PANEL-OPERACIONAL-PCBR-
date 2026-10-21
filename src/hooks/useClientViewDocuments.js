@@ -208,6 +208,7 @@ export default function useClientViewDocuments({
     try {
       const resumen = await organizeClientDocuments({ clienteId: clientId, extraCustomFieldsForAi });
       await fetchClientData();
+      window.dispatchEvent(new CustomEvent('generatePdfUnicoCheck', { detail: { clientId } }));
 
       if (resumen.analizados === 0) {
         toast.success('No había documentos nuevos para analizar.', { id: toastId });
