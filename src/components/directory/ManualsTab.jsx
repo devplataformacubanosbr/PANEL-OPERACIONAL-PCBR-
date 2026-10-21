@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
-import { Book, Plus, Search, FileText, Download, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Search, FileText, Download, Edit2, Trash2 } from 'lucide-react';
 import ManualModal from './ManualModal';
 import ViewManualModal from './ViewManualModal';
 

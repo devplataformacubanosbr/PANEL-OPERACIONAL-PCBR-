@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronLeft, FileSpreadsheet, MessageCircle, Share2, Mail } from 'lucide-react';
+import { ChevronLeft, FileSpreadsheet, Share2 } from 'lucide-react';
 import IntegracionesSettings from './IntegracionesSettings';
 import KommoSettings from './KommoSettings';
 

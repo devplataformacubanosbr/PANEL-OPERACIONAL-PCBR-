@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, FileText, Link as LinkIcon, AlignLeft, Bot, Upload, Loader2, Plus, X } from 'lucide-react';
+import { FileText, Link as LinkIcon, AlignLeft, Bot, Upload, Loader2, Plus, X } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { chat } from '../../services/aiService';
 import { extractPdfText } from '../../services/pdfToImage';

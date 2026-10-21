@@ -17,7 +17,7 @@
  *   - clientView.constants.js   → FIXED_FIELDS_CATALOG, TRAMITE_COLORS, etc.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import React, { useState, useCallback, useMemo, lazy, Suspense, useRef } from 'react';
+import React, { useState, useCallback, useMemo, lazy, Suspense } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { analyzeDocumentImage } from '../services/aiService';
