@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Download, Loader2, RefreshCw, ChevronDown, FileText, PenTool, MousePointer2, Printer, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Download, Loader2, RefreshCw, ChevronDown, FileText, PenTool, Printer, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getFilledPdfBlob, getExtendedClientFields, getClientFieldValue, printDocumentBlob } from '../services/templateService';
 import { getDocuments, getSignedUrl } from '../services/storageService';
 import { convertPdfPageToImageBase64 } from '../services/pdfToImage';

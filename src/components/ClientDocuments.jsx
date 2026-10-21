@@ -244,7 +244,7 @@ const ClientDocuments = ({
                   if (!fileName.includes('.')) fileName += isPdf ? '.pdf' : '';
                   const safeFileName = fileName.replace(/\s+/g, '_');
                   event.dataTransfer.setData('DownloadURL', `${mimeType}:${safeFileName}:${dragUrl}`);
-                  try { event.dataTransfer.setData('text/uri-list', dragUrl); } catch (_err) { }
+                  try { event.dataTransfer.setData('text/uri-list', dragUrl); } catch { }
                   event.dataTransfer.effectAllowed = 'copyLink';
                 }}
                 onDragEnd={() => { setDraggedDocument(null); setDragOverRelId(null); }}

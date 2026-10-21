@@ -51,7 +51,7 @@ export default function DocumentoUnicoModal({ tramiteCatalogo, title, client, do
           };
         });
         setSlots(initialSlots);
-      } catch (_err) {
+      } catch {
         toast.error('Error al cargar el checklist de documentos de esta operación');
       } finally {
         if (active) setLoading(false);

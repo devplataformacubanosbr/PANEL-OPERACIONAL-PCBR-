@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getPerfiles, createTeamMember, updateUserRole } from '../services/equipoService';
-import { Shield, UserPlus, Mail, Lock, User, Plus, ShieldAlert, Loader2 } from 'lucide-react';
+import { getPerfiles, updateUserRole } from '../services/equipoService';
+import { Shield, UserPlus, Mail, User, ShieldAlert, Loader2 } from 'lucide-react';
 import { LoadingSpinner } from './LoadingSpinner';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';

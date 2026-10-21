@@ -126,7 +126,7 @@ export default function ImageCropperModal({ isOpen, imageUrl, initialDocName, cl
         setLoadingPdf(false);
       }
     })();
-  }, [isOpen, isPdf, imageUrl]);
+  }, [isOpen, isPdf, imageUrl, loadPdfPage]);
 
   const handlePageChange = async (newPageIdx) => {
     if (newPageIdx < 0 || newPageIdx >= totalPages) return;

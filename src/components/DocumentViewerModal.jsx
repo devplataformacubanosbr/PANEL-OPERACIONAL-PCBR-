@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Download, X, FileText, Image as ImageIcon, Loader2, Maximize2, Minus, Plus, RotateCw, Edit2, Check, Sparkles, Crop, Printer } from 'lucide-react';
+import { Download, X, FileText, Image as ImageIcon, Loader2, Minus, Plus, RotateCw, Edit2, Sparkles, Crop, Printer } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import ImageCropperModal from './ImageCropperModal';
 import { useSignedUrl } from '../hooks/useSignedUrl';

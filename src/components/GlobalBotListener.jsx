@@ -40,6 +40,11 @@ const fillTemplate = (template, values) => {
 
 export const GlobalBotListener = () => {
   const { organizationName } = useOrganization();
+  const orgNameRef = useRef(organizationName);
+  useEffect(() => {
+    orgNameRef.current = organizationName;
+  }, [organizationName]);
+
   // Use a ref to prevent double-processing of the same message
   const processedMessageIds = useRef(new Set());
   const timeouts = useRef({});
@@ -184,7 +189,7 @@ export const GlobalBotListener = () => {
                 .reverse()
                 .join(' | ');
 
-              const prompt = `Eres un asistente de servicio al cliente de ${organizationName}. El cliente acaba de enviar estos mensajes cortos seguidos: "${recentTexts}".
+              const prompt = `Eres un asistente de servicio al cliente de ${orgNameRef.current || 'la empresa'}. El cliente acaba de enviar estos mensajes cortos seguidos: "${recentTexts}".
 Haz un resumen MUY BREVE de 1 o 2 oraciones de lo que el cliente quiere para alertar al equipo de soporte.`;
 
               const aiResponse = await chat([{ role: 'user', content: prompt }], 0.5);
@@ -224,13 +229,13 @@ Haz un resumen MUY BREVE de 1 o 2 oraciones de lo que el cliente quiere para ale
                   content: m.texto,
                 })).filter(m => m.content);
                 const aiReply = await chat([{ role: 'system', content: config.prompt_ai }, ...mensajesFormateados], 0.7);
-                autoReplyText = (aiReply && aiReply.trim()) || fillTemplate(config.template_respuesta || DEFAULT_CONFIG.template_respuesta, { nombre: cliente.nombre, org: organizationName });
+                autoReplyText = (aiReply && aiReply.trim()) || fillTemplate(config.template_respuesta || DEFAULT_CONFIG.template_respuesta, { nombre: cliente.nombre, org: orgNameRef.current });
               } catch (aiErr) {
                 console.error('[GlobalBotListener] Error generando respuesta con IA, uso plantilla:', aiErr);
-                autoReplyText = fillTemplate(config.template_respuesta || DEFAULT_CONFIG.template_respuesta, { nombre: cliente.nombre, org: organizationName });
+                autoReplyText = fillTemplate(config.template_respuesta || DEFAULT_CONFIG.template_respuesta, { nombre: cliente.nombre, org: orgNameRef.current });
               }
             } else {
-              autoReplyText = fillTemplate(config.template_respuesta || DEFAULT_CONFIG.template_respuesta, { nombre: cliente.nombre, org: organizationName });
+              autoReplyText = fillTemplate(config.template_respuesta || DEFAULT_CONFIG.template_respuesta, { nombre: cliente.nombre, org: orgNameRef.current });
             }
 
             console.log(`[GlobalBotListener] Auto-respuesta activada para ${cliente.nombre} (Bot ON, ${offHours ? 'fuera de horario' : 'en horario'})`);

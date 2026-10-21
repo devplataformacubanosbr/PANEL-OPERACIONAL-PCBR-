@@ -9,43 +9,43 @@ export default function ClientHistory({ clientId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (clientId) {
-      loadHistory();
+    if (!clientId) return;
 
-      // Suscribirse a nuevos cambios en tiempo real
-      const channel = supabase
-        .channel(`public:historial_clientes:cliente_id=eq.${clientId}`)
-        .on(
-          'postgres_changes',
-          { 
-            event: 'INSERT', 
-            schema: 'public', 
-            table: 'historial_clientes',
-            filter: `cliente_id=eq.${clientId}`
-          },
-          (payload) => {
-            fetchUserAndAppend(payload.new);
-          }
-        )
-        .subscribe();
+    const loadHistory = async () => {
+      try {
+        setLoading(true);
+        const data = await getHistorialCliente(clientId);
+        setHistorial(data);
+      } catch (error) {
+        console.error('Error cargando historial:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
+    loadHistory();
+
+    // Suscribirse a nuevos cambios en tiempo real
+    const channel = supabase
+      .channel(`public:historial_clientes:cliente_id=eq.${clientId}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'historial_clientes',
+          filter: `cliente_id=eq.${clientId}`
+        },
+        (payload) => {
+          fetchUserAndAppend(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [clientId]);
-
-  const loadHistory = async () => {
-    try {
-      setLoading(true);
-      const data = await getHistorialCliente(clientId);
-      setHistorial(data);
-    } catch (error) {
-      console.error('Error cargando historial:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchUserAndAppend = async (newRow) => {
     const { data: profile } = await supabase

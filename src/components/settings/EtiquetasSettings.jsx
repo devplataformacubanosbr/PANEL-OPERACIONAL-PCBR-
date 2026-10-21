@@ -36,7 +36,7 @@ export default function EtiquetasSettings() {
     try {
       const data = await getEtiquetas();
       setEtiquetas(data);
-    } catch (_error) {
+    } catch {
       toast.error('Error al cargar etiquetas');
     } finally {
       setLoading(false);
@@ -60,7 +60,7 @@ export default function EtiquetasSettings() {
       toast.success('Etiqueta actualizada');
       setEditingId(null);
       loadEtiquetas();
-    } catch (_error) {
+    } catch {
       toast.error('Error al actualizar');
     } finally {
       setSaving(false);
@@ -73,7 +73,7 @@ export default function EtiquetasSettings() {
       await deleteEtiqueta(id);
       toast.success('Etiqueta eliminada');
       loadEtiquetas();
-    } catch (_error) {
+    } catch {
       toast.error('Error al eliminar etiqueta');
     }
   };
@@ -88,7 +88,7 @@ export default function EtiquetasSettings() {
       setIsAdding(false);
       setNewForm({ nombre: '', color: COLORS[0].value });
       loadEtiquetas();
-    } catch (_error) {
+    } catch {
       toast.error('Error al crear etiqueta');
     } finally {
       setSaving(false);

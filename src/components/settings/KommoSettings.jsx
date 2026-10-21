@@ -150,7 +150,7 @@ export default function KommoSettings() {
         toast.error(data.error || 'Error al conectar');
         setIsTested(false);
       }
-    } catch (_err) {
+    } catch {
       toast.error('Error de red al conectar con proxy');
       setIsTested(false);
     } finally {
@@ -339,7 +339,7 @@ export default function KommoSettings() {
       } else {
         toast.error(data.error || 'Error al buscar los IDs en Kommo');
       }
-    } catch (_err) {
+    } catch {
       toast.error('Error de red al conectar con Kommo');
     } finally {
       setLinkingIds(false);

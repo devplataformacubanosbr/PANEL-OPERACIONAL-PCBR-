@@ -22,7 +22,7 @@ export default function OperariosSettings() {
     try {
       const data = await getAllOperarios();
       setOperarios(data);
-    } catch (_error) {
+    } catch {
       toast.error('Error al cargar operarios');
     } finally {
       setLoading(false);
@@ -45,7 +45,7 @@ export default function OperariosSettings() {
       toast.success('Operario actualizado');
       setEditingId(null);
       loadOperarios();
-    } catch (_error) {
+    } catch {
       toast.error('Error al actualizar');
     } finally {
       setSaving(false);
@@ -61,7 +61,7 @@ export default function OperariosSettings() {
       setIsAdding(false);
       setNewForm({ nombre: '', iniciales: '' });
       loadOperarios();
-    } catch (_error) {
+    } catch {
       toast.error('Error al crear operario');
     } finally {
       setSaving(false);

@@ -3,6 +3,17 @@ import Modal from './ui/Modal';
 import Button from './ui/Button';
 import { RefreshCw, MapPin, Phone, Mail, Globe, Map, PlaneLanding, Calendar } from 'lucide-react';
 
+// Define what fields can be synchronized
+const SYNCABLE_FIELDS = [
+  { id: 'direccion', label: 'Dirección Completa', icon: <MapPin size={16} /> },
+  { id: 'telefono', label: 'Teléfono', icon: <Phone size={16} /> },
+  { id: 'email', label: 'Email', icon: <Mail size={16} /> },
+  { id: 'nacionalidad', label: 'Nacionalidad', icon: <Globe size={16} /> },
+  { id: 'pais', label: 'País de Origen', icon: <Map size={16} /> },
+  { id: 'lugar_entrada_brasil', label: 'Lugar de Entrada', icon: <PlaneLanding size={16} /> },
+  { id: 'fecha_entrada_brasil', label: 'Fecha de Entrada', icon: <Calendar size={16} /> },
+];
+
 const SyncDataModal = ({
   isOpen,
   onClose,
@@ -11,17 +22,6 @@ const SyncDataModal = ({
   onSync,
   isSyncing
 }) => {
-  // Define what fields can be synchronized
-  const SYNCABLE_FIELDS = [
-    { id: 'direccion', label: 'Dirección Completa', icon: <MapPin size={16} /> },
-    { id: 'telefono', label: 'Teléfono', icon: <Phone size={16} /> },
-    { id: 'email', label: 'Email', icon: <Mail size={16} /> },
-    { id: 'nacionalidad', label: 'Nacionalidad', icon: <Globe size={16} /> },
-    { id: 'pais', label: 'País de Origen', icon: <Map size={16} /> },
-    { id: 'lugar_entrada_brasil', label: 'Lugar de Entrada', icon: <PlaneLanding size={16} /> },
-    { id: 'fecha_entrada_brasil', label: 'Fecha de Entrada', icon: <Calendar size={16} /> },
-  ];
-
   const [selectedFields, setSelectedFields] = useState({});
 
   useEffect(() => {
@@ -73,7 +73,7 @@ const SyncDataModal = ({
            const { endereco, numero, bairro, cidade, estado } = parsed;
            return [endereco, numero, bairro, cidade, estado].filter(Boolean).join(', ');
         }
-      } catch (_e) {}
+      } catch {}
     }
     if (fieldId === 'fecha_entrada_brasil' && val) {
       const parts = val.split('-');

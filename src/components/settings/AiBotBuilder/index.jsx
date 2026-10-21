@@ -99,7 +99,7 @@ export default function AiBotBuilder() {
       await deleteAiWorkflow(id);
       setWorkflows(prev => prev.filter(w => w.id !== id));
       toast.success('Bot eliminado');
-    } catch (_err) {
+    } catch {
       toast.error('No se pudo eliminar');
     }
   };

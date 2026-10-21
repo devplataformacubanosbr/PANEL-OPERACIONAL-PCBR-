@@ -113,7 +113,7 @@ export default function ClientMediaLibrary({ defaultExpanded = false }) {
       if (!fileName.includes('.')) fileName += isPdf ? '.pdf' : '';
       const safeFileName = fileName.replace(/\s+/g, '_');
       e.dataTransfer.setData('DownloadURL', `${mimeType}:${safeFileName}:${url}`);
-      try { e.dataTransfer.setData('text/uri-list', url); } catch (_err) { }
+      try { e.dataTransfer.setData('text/uri-list', url); } catch { }
     }
     
     e.dataTransfer.effectAllowed = 'copy';

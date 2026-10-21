@@ -175,7 +175,7 @@ export default function useClientViewDocuments({
     } finally {
       setUploading(false);
     }
-  }, [clientId, fetchClientData, setExtractedData, setIsExtractionModalOpen, extraCustomFieldsForAi]);
+  }, [clientId, fetchClientData, setExtractedData, setIsExtractionModalOpen, extraCustomFieldsForAi, setUploadedDocRecord]);
 
   // ── Organizar documentos (botón en la lista) ────────────────────────────────
   // Corre organizeClientDocuments sobre TODOS los documentos ya subidos del
@@ -256,7 +256,7 @@ export default function useClientViewDocuments({
           return;
         }
       }
-    } catch (_err) {
+    } catch {
       // Si falla el parseo, continuamos con la lógica normal de arrastrar archivos nativos
     }
 

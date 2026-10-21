@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Loader2, Link as LinkIcon, FileText, AlertCircle, RefreshCw, Search } from 'lucide-react';
+import { Save, Loader2, Link as LinkIcon, FileText, AlertCircle, RefreshCw, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function TemplateEditorModal({ template, client, onClose, onSaved }) {

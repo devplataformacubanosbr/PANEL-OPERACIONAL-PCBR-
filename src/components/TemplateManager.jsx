@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import {  UploadCloud, FileText, Loader2, Tag, Eye, Trash2, Sparkles, Plus, Search, ChevronDown, ChevronUp, AlertCircle, Files, Sliders, CheckCircle2, Settings2 } from 'lucide-react';
+import {  UploadCloud, FileText, Loader2, Tag, Trash2, Sparkles, Plus, Search, ChevronDown, ChevronUp, AlertCircle, Files, Sliders, CheckCircle2, Settings2 } from 'lucide-react';
 import { getFastopAcciones, getRequisitosTramite } from '../services/tramitesService';
 
 const VALID_MERGE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];

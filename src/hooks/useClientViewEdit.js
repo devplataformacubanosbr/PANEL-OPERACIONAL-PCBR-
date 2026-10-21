@@ -147,7 +147,7 @@ export default function useClientViewEdit({ clientId, client, customFieldsConfig
           } else if (client.direccion) {
             dirData._endereco = client.direccion;
           }
-        } catch (_e) { }
+        } catch { }
         extraArgs._cep = dirData.cep || '';
         extraArgs._endereco = dirData.endereco || dirData._endereco || '';
         extraArgs._numero = dirData.numero || '';

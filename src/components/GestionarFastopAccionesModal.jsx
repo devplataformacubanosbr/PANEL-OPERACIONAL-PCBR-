@@ -23,7 +23,7 @@ export default function GestionarFastopAccionesModal({ tipo, tipoLabel, onClose,
     try {
       const data = await getFastopAcciones(tipo);
       setAcciones(data);
-    } catch (_err) {
+    } catch {
       toast.error('Error al cargar las variantes');
     } finally {
       setLoading(false);

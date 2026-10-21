@@ -450,7 +450,7 @@ const ClientPersonalData = ({
       if (typeof dirDato === 'string' && dirDato.startsWith('{')) dirObj = JSON.parse(dirDato);
       else if (typeof dirDato === 'object' && dirDato !== null) dirObj = dirDato;
       else dirObj.endereco = dirDato;
-    } catch (_e) {
+    } catch {
       dirObj.endereco = dirDato;
     }
 

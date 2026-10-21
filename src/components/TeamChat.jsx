@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useId } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { getChatMensajes, enviarMensajeChat, getPerfiles, uploadTeamMedia, getChatPrivado, enviarMensajePrivado } from '../services/equipoService';
 import { useSession } from '../hooks/useSession';
@@ -63,10 +63,31 @@ export default function TeamChat({ isFullView = false }) {
     }).catch(console.error);
   }, []);
 
+  const loadActiveChat = useCallback(async () => {
+    setLoading(true);
+    setMessages([]); // Clear messages before loading the new chat
+    try {
+      if (activeChat === 'global') {
+        const data = await getChatMensajes();
+        setMessages(data);
+      } else {
+        const data = await getChatPrivado(activeChat);
+        setMessages(data);
+      }
+    } catch (error) {
+      console.error('Error cargando chat:', error);
+      setToastNotification({ type: 'error', message: `Error cargando chat: ${error.message || 'Desconocido'}` });
+      setMessages([]); // Ensure messages are cleared on error
+    } finally {
+      setLoading(false);
+      setTimeout(() => scrollToBottom(false), 100);
+    }
+  }, [activeChat]);
+
   // Load messages when activeChat changes
   useEffect(() => {
     loadActiveChat();
-  }, [activeChat]);
+  }, [loadActiveChat]);
 
   // Subscribe to real-time channels ONCE on mount (not on every activeChat change)
   // Using unique channel names per instance to avoid collisions with other TeamChat instances
@@ -117,26 +138,6 @@ export default function TeamChat({ isFullView = false }) {
     };
   }, [session]);
 
-  const loadActiveChat = async () => {
-    setLoading(true);
-    setMessages([]); // Clear messages before loading the new chat
-    try {
-      if (activeChat === 'global') {
-        const data = await getChatMensajes();
-        setMessages(data);
-      } else {
-        const data = await getChatPrivado(activeChat);
-        setMessages(data);
-      }
-    } catch (error) {
-      console.error('Error cargando chat:', error);
-      setToastNotification({ type: 'error', message: `Error cargando chat: ${error.message || 'Desconocido'}` });
-      setMessages([]); // Ensure messages are cleared on error
-    } finally {
-      setLoading(false);
-      setTimeout(() => scrollToBottom(false), 100);
-    }
-  };
 
   const fetchUserAndAppend = async (newMessageRow, type) => {
     setMessages(prev => {

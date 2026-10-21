@@ -85,7 +85,7 @@ const PagosSection = ({ entrada, catalogoTramites, onCostoUpdated }) => {
     setSavingCosto(true);
     try {
       await updateEntradaValor(entrada.id, nuevoValor);
-      onCostoUpdated && onCostoUpdated(entrada.id, nuevoValor);
+      onCostoUpdated?.(entrada.id, nuevoValor);
       setEditingCosto(false);
       toast.success('Costo actualizado');
     } catch (err) {
@@ -264,7 +264,7 @@ const VinculadosSection = ({ entrada, onPersonasChanged }) => {
       setResults([]);
       setShowSearch(false);
       load();
-      onPersonasChanged && onPersonasChanged();
+      onPersonasChanged?.();
     } catch (err) {
       console.error('[VinculadosSection] Error linking:', err);
       toast.error('No se pudo vincular');
@@ -279,7 +279,7 @@ const VinculadosSection = ({ entrada, onPersonasChanged }) => {
       await desvincularClienteDeTramite(entrada.id, clienteId);
       setVinculados((prev) => (prev || []).filter((v) => v.cliente_id !== clienteId));
       toast.success('Persona desvinculada — costo actualizado');
-      onPersonasChanged && onPersonasChanged();
+      onPersonasChanged?.();
     } catch (err) {
       console.error('[VinculadosSection] Error unlinking:', err);
       toast.error('No se pudo desvincular');

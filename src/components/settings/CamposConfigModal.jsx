@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, Trash2, Save, GripVertical } from 'lucide-react';
+import { X, Plus, Trash2, Save } from 'lucide-react';
 import { updateCatalogoTramite } from '../../services/tramitesService';
 import toast from 'react-hot-toast';
 
@@ -35,7 +35,7 @@ export default function CamposConfigModal({ tramite, onClose, onSaved }) {
       toast.success('Campos actualizados correctamente');
       onSaved();
       onClose();
-    } catch (_err) {
+    } catch {
       toast.error('Error al guardar configuración');
     } finally {
       setSaving(false);

@@ -187,7 +187,7 @@ export default function useClientViewExtraction({ clientId, fetchClientData, cli
       console.error('[useClientViewExtraction] Error copying document:', err);
       alert('Error al copiar el documento. Verifica la consola.');
     }
-  }, [clientId, customFieldsConfig]);
+  }, [clientId, customFieldsConfig, fetchClientData]);
 
   // ── Close / reset extraction modal ─────────────────────────────────────────
   const closeExtractionModal = useCallback((shouldRefresh = false) => {
