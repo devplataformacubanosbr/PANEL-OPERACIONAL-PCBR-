@@ -31,6 +31,7 @@ import { GlobalAiChat } from '../components/GlobalAiChat';
 import { GlobalBotListener } from '../components/GlobalBotListener';
 import { GlobalAgendamientoListener } from '../components/GlobalAgendamientoListener';
 import { GlobalDocumentoUnicoListener } from '../components/GlobalDocumentoUnicoListener';
+import { GlobalIncomingDocumentListener } from '../components/GlobalIncomingDocumentListener';
 
 // Views
 
@@ -261,6 +262,7 @@ export default function AppLayout() {
         <GlobalBotListener />
         <GlobalAgendamientoListener />
         <GlobalDocumentoUnicoListener />
+        <GlobalIncomingDocumentListener />
         <GlobalAiChat isVisible={currentView !== 'client'} currentView={currentView} onNavigateToClient={navigateToClientTracked} />
       </div>
     </GlobalAiChatProvider>

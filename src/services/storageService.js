@@ -164,15 +164,18 @@ export async function getDocuments(clientId) {
  * documentos_pendientes y usan la columna `cliente_id`, no `id_cliente`
  * de documentos_operacionales.
  */
-export async function reassignDocument(documentId, newClientId) {
+export async function reassignDocument(documentId, newClientId, newFileName = null) {
   try {
     const isPendiente = typeof documentId === 'string' && documentId.includes('-');
     const table = isPendiente ? 'documentos_pendientes' : 'documentos_operacionales';
     const column = isPendiente ? 'cliente_id' : 'id_cliente';
 
+    const updates = { [column]: newClientId };
+    if (newFileName) updates.nombre_archivo = newFileName;
+
     const { error } = await supabase
       .from(table)
-      .update({ [column]: newClientId })
+      .update(updates)
       .eq('id', documentId);
     if (error) throw error;
     return { success: true, error: null };

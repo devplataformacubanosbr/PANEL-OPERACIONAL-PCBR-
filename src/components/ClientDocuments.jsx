@@ -305,10 +305,29 @@ const ClientDocuments = ({
                   )}
                 </div>
 
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {doc.nombre_archivo || 'Documento sin nombre'}
-                  </span>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {doc.nombre_archivo || 'Documento sin nombre'}
+                    </span>
+                    {(doc.nombre_archivo?.includes('BORROSO') || doc.motivo_rechazo?.toLowerCase().includes('borroso')) && (
+                      <span
+                        style={{
+                          fontSize: '0.65rem',
+                          padding: '1px 6px',
+                          background: 'rgba(245, 158, 11, 0.15)',
+                          color: '#f59e0b',
+                          borderRadius: '4px',
+                          border: '1px solid rgba(245, 158, 11, 0.35)',
+                          fontWeight: 600,
+                          flexShrink: 0
+                        }}
+                        title="La imagen está borrosa o ilegible. Solicitar nueva foto al cliente."
+                      >
+                        ⚠️ Borroso / Ilegible
+                      </span>
+                    )}
+                  </div>
                   <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
                     {doc.creado_en ? new Date(doc.creado_en).toLocaleDateString() : '—'} • {doc.tamano ? (doc.tamano / 1024).toFixed(0) + ' KB' : '—'}
                   </span>

@@ -69,7 +69,9 @@ export default function ClientViewExtractionModal({
     if (!uploadedDocRecord || !targetClient) return;
     setMismatchState(prev => ({ ...prev, isProcessing: true }));
     try {
-      const { success, error } = await reassignDocument(uploadedDocRecord.id, targetClient.id);
+      const tipo = extractedData.TIPO_DOCUMENTO || 'DOCUMENTO';
+      const newDocName = `${tipo.toUpperCase()} - ${targetClient.nombre.toUpperCase()}`;
+      const { success, error } = await reassignDocument(uploadedDocRecord.id, targetClient.id, newDocName);
       if (success) {
         // Asegurar relación familiar
         if (cliente && cliente.id) {
@@ -88,7 +90,7 @@ export default function ClientViewExtractionModal({
           extractedData,
           skipIfAlreadyFilled: true
         });
-        toast.success(`Documento movido a ${targetClient.nombre} y datos completados.`);
+        toast.success(`Documento transferido a ${targetClient.nombre} y datos autocompletados ✨`);
         onClose(true);
       } else {
         toast.error('Error al mover documento: ' + error);
@@ -112,8 +114,15 @@ export default function ClientViewExtractionModal({
     const currentName = normalize(cliente.nombre);
     const extractedName = normalize(extractedData.NOMBRE_COMPLETO);
 
-    // Heuristic: different if they share NO words, or if they only share 1 word and their first names don't match.
+    const cleanExtractedCpf = (extractedData.CPF || '').replace(/\D/g, '');
+    const cleanCurrentCpf = (cliente.cpf || '').replace(/\D/g, '');
+
+    // Heurística de diferencia de persona
     const isDifferent = () => {
+      if (cleanExtractedCpf.length === 11 && cleanCurrentCpf.length === 11) {
+        if (cleanExtractedCpf === cleanCurrentCpf) return false;
+        return true;
+      }
       if (!currentName || !extractedName) return false;
       const w1 = currentName.split(/\s+/).filter(w => w.length > 2);
       const w2 = extractedName.split(/\s+/).filter(w => w.length > 2);
@@ -125,16 +134,15 @@ export default function ClientViewExtractionModal({
       return sharedWords === 0 || (sharedWords === 1 && !firstNamesMatch);
     };
 
-    if (isDifferent() || (extractedData.CPF && cliente.cpf && extractedData.CPF !== cliente.cpf)) {
-      // It's vastly different! Let's search if this person exists.
+    if (isDifferent()) {
+      // Es una persona distinta: buscar si ya existe en la base de datos
       const checkExists = async () => {
         try {
           let query = supabase.from('clientes').select('id, nombre').neq('id', cliente.id);
           
-          if (extractedData.CPF) {
-            query = query.eq('cpf', extractedData.CPF);
+          if (cleanExtractedCpf.length === 11) {
+            query = query.or(`cpf.eq.${cleanExtractedCpf},cpf.eq.${extractedData.CPF}`);
           } else {
-            // Very naive exact or ilike match. For better matching, could use text search.
             query = query.ilike('nombre', `%${extractedData.NOMBRE_COMPLETO}%`);
           }
 
@@ -158,7 +166,9 @@ export default function ClientViewExtractionModal({
     if (!uploadedDocRecord || !mismatchState.matchedClient) return;
     setMismatchState(prev => ({ ...prev, isProcessing: true }));
     try {
-      const { success, error } = await reassignDocument(uploadedDocRecord.id, mismatchState.matchedClient.id);
+      const tipo = extractedData.TIPO_DOCUMENTO || 'DOCUMENTO';
+      const newDocName = `${tipo.toUpperCase()} - ${mismatchState.matchedClient.nombre.toUpperCase()}`;
+      const { success, error } = await reassignDocument(uploadedDocRecord.id, mismatchState.matchedClient.id, newDocName);
       if (success) {
         // Asegurar relación familiar
         if (cliente && cliente.id) {
@@ -177,7 +187,7 @@ export default function ClientViewExtractionModal({
           extractedData,
           skipIfAlreadyFilled: true
         });
-        toast.success(`Documento movido a ${mismatchState.matchedClient.nombre} exitosamente.`);
+        toast.success(`Documento transferido a ${mismatchState.matchedClient.nombre} y datos autocompletados ✨`);
         onClose(true);
       } else {
         toast.error('Error al mover documento: ' + error);
@@ -197,6 +207,10 @@ export default function ClientViewExtractionModal({
       const camposPersonalizados = {};
       if (extractedData.RNM) camposPersonalizados.rnm = extractedData.RNM;
       if (extractedData.CARNET_IDENTIDAD) camposPersonalizados.carnet_identidad = extractedData.CARNET_IDENTIDAD;
+      if (extractedData.NUMERO_DOCUMENTO) camposPersonalizados.numero_pasaporte = extractedData.NUMERO_DOCUMENTO;
+      if (extractedData.NUMERO_REFUGIO) camposPersonalizados.numero_refugio = extractedData.NUMERO_REFUGIO;
+      if (extractedData.NOMBRE_MADRE) camposPersonalizados.nombre_madre = extractedData.NOMBRE_MADRE;
+      if (extractedData.NOMBRE_PADRE) camposPersonalizados.nombre_padre = extractedData.NOMBRE_PADRE;
 
       const newClientData = {
         nombre: extractedData.NOMBRE_COMPLETO?.toUpperCase() || 'NUEVO CLIENTE',
@@ -230,9 +244,11 @@ export default function ClientViewExtractionModal({
         skipIfAlreadyFilled: false
       });
       
-      const { success, error } = await reassignDocument(uploadedDocRecord.id, newClient.id);
+      const tipo = extractedData.TIPO_DOCUMENTO || 'DOCUMENTO';
+      const newDocName = `${tipo.toUpperCase()} - ${newClient.nombre.toUpperCase()}`;
+      const { success, error } = await reassignDocument(uploadedDocRecord.id, newClient.id, newDocName);
       if (success) {
-        toast.success(`Cliente familiar "${newClient.nombre}" creado, vinculado y documento reasignado.`);
+        toast.success(`Familiar "${newClient.nombre}" creado, vinculado, documento transferido y datos completados ✨`);
         onClose(true);
       } else {
         toast.error('Cliente creado pero hubo un error al reasignar el documento: ' + error);

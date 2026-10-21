@@ -52,7 +52,15 @@ const AI_DATE_KEYS = new Set([
   'FECHA_VENCIMIENTO_REFUGIO',
 ]);
 
-const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO', 'NOMBRE_ARCHIVO', 'FAMILIARES_MENCIONADOS', 'CAMPOS_ADICIONALES']);
+const AI_IGNORED_KEYS = new Set([
+  'ILEGIBLE',
+  'DOCUMENTO_BORROSO',
+  'MOTIVO_ILEGIBLE',
+  'TIPO_DOCUMENTO',
+  'NOMBRE_ARCHIVO',
+  'FAMILIARES_MENCIONADOS',
+  'CAMPOS_ADICIONALES'
+]);
 
 const humanizeAiKey = (key) => key.toLowerCase().split('_').filter(Boolean)
   .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -229,6 +237,17 @@ const normalizeName = (name) => (name || '')
  */
 export function detectPersonMismatch(currentCliente, extractedData) {
   if (!currentCliente || !extractedData) return false;
+
+  // Si ambos tienen CPF de 11 dígitos, el CPF es la fuente de verdad definitiva
+  const cleanExtractedCpf = (extractedData.CPF || '').replace(/\D/g, '');
+  const cleanCurrentCpf = (currentCliente.cpf || '').replace(/\D/g, '');
+
+  if (cleanExtractedCpf.length === 11 && cleanCurrentCpf.length === 11) {
+    if (cleanExtractedCpf === cleanCurrentCpf) return false; // Misma persona
+    return true; // CPFs distintos -> claramente otra persona
+  }
+
+  // Si no se puede comparar por CPF completo, comparar por nombres
   const currentName = normalizeName(currentCliente.nombre);
   const extractedName = normalizeName(extractedData.NOMBRE_COMPLETO);
   if (!currentName || !extractedName) return false;
@@ -240,9 +259,8 @@ export function detectPersonMismatch(currentCliente, extractedData) {
   const firstNamesMatch = w1[0] === w2[0];
   const sharedWords = w1.filter(w => w2.includes(w)).length;
   const nameIsDifferent = sharedWords === 0 || (sharedWords === 1 && !firstNamesMatch);
-  const cpfIsDifferent = !!(extractedData.CPF && currentCliente.cpf && extractedData.CPF !== currentCliente.cpf);
 
-  return nameIsDifferent || cpfIsDifferent;
+  return nameIsDifferent;
 }
 
 /**
@@ -255,34 +273,62 @@ export function detectPersonMismatch(currentCliente, extractedData) {
  * (reassignDocument en el dashboard, UPDATE directo en el Edge Function).
  */
 export async function resolveOrCreateRelatedClient({ currentCliente, extractedData }) {
-  let query = supabase.from('clientes').select('id, nombre, cpf').neq('id', currentCliente.id);
-  query = extractedData.CPF
-    ? query.eq('cpf', extractedData.CPF)
-    : query.ilike('nombre', `%${extractedData.NOMBRE_COMPLETO}%`);
-  const { data: matches } = await query.limit(1);
+  const cleanCpf = (extractedData.CPF || '').replace(/\D/g, '');
+  const rawCpf = extractedData.CPF || '';
 
-  let targetClient;
+  let targetClient = null;
   let isNewClient = false;
-  if (matches && matches.length > 0) {
-    targetClient = matches[0];
-  } else {
+
+  // 1. Buscar si la persona ya existe por CPF (tanto limpio como con formato)
+  if (cleanCpf.length === 11) {
+    const { data: matchesByCpf } = await supabase
+      .from('clientes')
+      .select('id, nombre, cpf')
+      .neq('id', currentCliente.id)
+      .or(`cpf.eq.${cleanCpf},cpf.eq.${rawCpf}`)
+      .limit(1);
+    if (matchesByCpf && matchesByCpf.length > 0) {
+      targetClient = matchesByCpf[0];
+    }
+  }
+
+  // 2. Si no se encontró por CPF, buscar por nombre
+  if (!targetClient && extractedData.NOMBRE_COMPLETO?.trim()) {
+    const { data: matchesByName } = await supabase
+      .from('clientes')
+      .select('id, nombre, cpf')
+      .neq('id', currentCliente.id)
+      .ilike('nombre', `%${extractedData.NOMBRE_COMPLETO.trim()}%`)
+      .limit(1);
+    if (matchesByName && matchesByName.length > 0) {
+      targetClient = matchesByName[0];
+    }
+  }
+
+  // 3. Si no existe, crear la nueva ficha del familiar
+  if (!targetClient) {
     const camposPersonalizados = {};
     if (extractedData.RNM) camposPersonalizados.rnm = extractedData.RNM;
     if (extractedData.CARNET_IDENTIDAD) camposPersonalizados.carnet_identidad = extractedData.CARNET_IDENTIDAD;
+    if (extractedData.NUMERO_DOCUMENTO) camposPersonalizados.numero_pasaporte = extractedData.NUMERO_DOCUMENTO;
+    if (extractedData.NUMERO_REFUGIO) camposPersonalizados.numero_refugio = extractedData.NUMERO_REFUGIO;
+    if (extractedData.NOMBRE_MADRE) camposPersonalizados.nombre_madre = extractedData.NOMBRE_MADRE;
+    if (extractedData.NOMBRE_PADRE) camposPersonalizados.nombre_padre = extractedData.NOMBRE_PADRE;
 
     targetClient = await createCliente({
-      nombre: extractedData.NOMBRE_COMPLETO?.toUpperCase() || 'NUEVO CLIENTE',
-      cpf: extractedData.CPF || '',
+      nombre: extractedData.NOMBRE_COMPLETO?.toUpperCase() || 'NUEVO FAMILIAR',
+      cpf: rawCpf,
       nacionalidad: extractedData.NACIONALIDAD?.toUpperCase() || '',
       fecha_nacimiento: extractedData.FECHA_NACIMIENTO ? toIsoDate(normalizeDateToDDMMYYYY(extractedData.FECHA_NACIMIENTO)) : null,
       sexo: extractedData.SEXO?.toUpperCase() || '',
+      estado_cliente: 'nuevo',
+      canal_adquisicion: 'Familiar Vinculado',
       ...(Object.keys(camposPersonalizados).length > 0 ? { campos_personalizados: camposPersonalizados } : {}),
     });
     isNewClient = true;
   }
 
-  // Evitar relaciones duplicadas si ya llegó antes otro documento de esta
-  // misma persona relacionada (en cualquiera de los dos sentidos).
+  // 4. Crear relación en relaciones_clientes (bidireccional/única)
   const { data: existingRelation } = await supabase
     .from('relaciones_clientes')
     .select('id')
@@ -291,7 +337,12 @@ export async function resolveOrCreateRelatedClient({ currentCliente, extractedDa
 
   if (!existingRelation || existingRelation.length === 0) {
     try {
-      await insertRelacion({ cliente_id: currentCliente.id, cliente_relacionado_id: targetClient.id, tipo_relacion: 'Familiar' });
+      await insertRelacion({
+        cliente_id: currentCliente.id,
+        cliente_relacionado_id: targetClient.id,
+        tipo_relacion: 'Familiar',
+        descripcion: 'Familiar vinculado automáticamente por análisis de documento'
+      });
     } catch (err) {
       if (err?.code !== '23505') console.error('[clientExtractionService] Error creando relación automática:', err);
     }
@@ -375,16 +426,33 @@ export async function createAndLinkRelative({ currentCliente, relativeData }) {
  * @returns {Promise<{ moved: boolean, targetClient: object, isNewClient: boolean }>}
  */
 export async function resolvePersonAndApplyData({ currentCliente, extractedData, customFieldsConfig = [], moveDocument }) {
+  // Si la imagen está borrosa o ilegible, NO inventar datos ni autocompletar la ficha
+  if (extractedData.DOCUMENTO_BORROSO === true || extractedData.ILEGIBLE === true) {
+    return {
+      moved: false,
+      targetClient: currentCliente,
+      isNewClient: false,
+      isBlurry: true,
+      motivoIlegible: extractedData.MOTIVO_ILEGIBLE || 'Imagen borrosa o de baja resolución'
+    };
+  }
+
   if (detectPersonMismatch(currentCliente, extractedData)) {
     const { targetClient, isNewClient } = await resolveOrCreateRelatedClient({ currentCliente, extractedData });
-    if (moveDocument) await moveDocument(targetClient.id);
+
+    const tipoDoc = extractedData.TIPO_DOCUMENTO || 'DOCUMENTO';
+    const personaNombre = targetClient.nombre || extractedData.NOMBRE_COMPLETO || '';
+    const suggestedFileName = personaNombre ? `${tipoDoc.toUpperCase()} - ${personaNombre.toUpperCase()}` : null;
+
+    if (moveDocument) await moveDocument(targetClient.id, suggestedFileName);
+
     await applyExtractedDataToClient({
       targetClientId: targetClient.id,
       extractedData,
       customFieldsConfig,
       skipIfAlreadyFilled: true,
     });
-    return { moved: true, targetClient, isNewClient };
+    return { moved: true, targetClient, isNewClient, suggestedFileName, isBlurry: false };
   }
 
   await applyExtractedDataToClient({
@@ -393,7 +461,7 @@ export async function resolvePersonAndApplyData({ currentCliente, extractedData,
     customFieldsConfig,
     skipIfAlreadyFilled: true,
   });
-  return { moved: false, targetClient: currentCliente, isNewClient: false };
+  return { moved: false, targetClient: currentCliente, isNewClient: false, isBlurry: false };
 }
 
 async function downloadDocBlob(doc) {
@@ -455,7 +523,30 @@ export async function organizeClientDocuments({ clienteId, extraCustomFieldsForA
       const aiData = await analyzeDocumentImage(fileOrBase64, extraCustomFieldsForAi);
       resumen.analizados += 1;
 
-      const tieneDatos = Object.keys(aiData).filter(k => aiData[k]).length > 0;
+      // Si la imagen está borrosa o ilegible, marcar claramente y no inventar datos
+      if (aiData.DOCUMENTO_BORROSO === true || aiData.ILEGIBLE === true) {
+        const motivo = aiData.MOTIVO_ILEGIBLE || 'Imagen borrosa o de baja calidad';
+        const isPendiente = typeof doc.id === 'string' && doc.id.includes('-');
+        const table = isPendiente ? 'documentos_pendientes' : 'documentos_operacionales';
+
+        const originalName = doc.nombre_archivo || 'Documento';
+        const flaggedName = originalName.startsWith('⚠️ BORROSO - ') ? originalName : `⚠️ BORROSO - ${originalName}`;
+
+        await supabase.from(table).update({
+          nombre_archivo: flaggedName,
+          ...(isPendiente ? {} : { motivo_rechazo: motivo })
+        }).eq('id', doc.id);
+
+        resumen.errores.push({
+          documentoId: doc.id,
+          nombre: doc.nombre_archivo,
+          error: `Documento borroso (${motivo}). La IA no inventó datos; se requiere foto nítida.`
+        });
+        resumen.descartados += 1;
+        continue;
+      }
+
+      const tieneDatos = Object.keys(aiData).filter(k => aiData[k] && !['DOCUMENTO_BORROSO', 'ILEGIBLE', 'MOTIVO_ILEGIBLE'].includes(k)).length > 0;
       if (!tieneDatos) {
         const isPendiente = typeof doc.id === 'string' && doc.id.includes('-');
         if (isPendiente) {
@@ -477,10 +568,23 @@ export async function organizeClientDocuments({ clienteId, extraCustomFieldsForA
         currentCliente: clienteActual,
         extractedData: aiData,
         customFieldsConfig: extraCustomFieldsForAi,
-        moveDocument: (targetId) => reassignDocument(doc.id, targetId),
+        moveDocument: (targetId, newName) => reassignDocument(doc.id, targetId, newName),
       });
 
-      if (moved) resumen.movidos += 1; else resumen.aplicados += 1;
+      if (moved) {
+        resumen.movidos += 1;
+      } else {
+        resumen.aplicados += 1;
+        // Auto-renombrar también el documento del titular para que quede limpio y uniforme
+        const tipoDoc = aiData.TIPO_DOCUMENTO || 'DOCUMENTO';
+        const personaNombre = clienteActual.nombre || aiData.NOMBRE_COMPLETO || '';
+        if (personaNombre) {
+          const formattedName = `${tipoDoc.toUpperCase()} - ${personaNombre.toUpperCase()}`;
+          const isUuid = typeof doc.id === 'string' && doc.id.includes('-');
+          const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
+          supabase.from(table).update({ nombre_archivo: formattedName }).eq('id', doc.id);
+        }
+      }
     } catch (err) {
       console.error(`[clientExtractionService] Error organizando documento ${doc.id}:`, err);
       resumen.errores.push({ documentoId: doc.id, nombre: doc.nombre_archivo, error: err.message });

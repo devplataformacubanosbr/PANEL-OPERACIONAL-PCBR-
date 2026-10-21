@@ -134,19 +134,32 @@ export default function useClientViewDocuments({
             let mismatchHandled = false;
             try {
               const currentCliente = await getCliente(clientId);
-              const { moved, targetClient, isNewClient } = await resolvePersonAndApplyData({
+              const { moved, targetClient, isNewClient, isBlurry, motivoIlegible } = await resolvePersonAndApplyData({
                 currentCliente,
                 extractedData: aiData,
                 customFieldsConfig: extraCustomFieldsForAi,
-                moveDocument: docRecord ? (targetId) => reassignDocument(docRecord.id, targetId) : null,
+                moveDocument: docRecord ? (targetId, newName) => reassignDocument(docRecord.id, targetId, newName || newFileName) : null,
               });
               await fetchClientData();
-              if (moved) {
+              if (isBlurry) {
+                mismatchHandled = true;
+                const flaggedName = newFileName.startsWith('⚠️ BORROSO - ') ? newFileName : `⚠️ BORROSO - ${newFileName}`;
+                if (docRecord) {
+                  const isUuid = typeof docRecord.id === 'string' && docRecord.id.includes('-');
+                  const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
+                  await supabase.from(table).update({ nombre_archivo: flaggedName }).eq('id', docRecord.id);
+                  await fetchClientData();
+                }
+                toast.error(
+                  `⚠️ Imagen borrosa o ilegible detectada (${motivoIlegible || 'falta nitidez'}). La IA NO inventó datos. Solicita una foto clara al cliente.`,
+                  { duration: 9000, icon: '🔍' }
+                );
+              } else if (moved) {
                 mismatchHandled = true;
                 toast.success(
-                  `Documento de ${aiData.NOMBRE_COMPLETO || 'otra persona'} detectado — ` +
-                  `${isNewClient ? 'se creó el cliente' : 'se vinculó al cliente existente'} ` +
-                  `"${targetClient.nombre}" y se le movieron el documento y los datos.`,
+                  `Documento de ${aiData.NOMBRE_COMPLETO || 'familiar'} detectado — ` +
+                  `${isNewClient ? 'se creó la ficha de' : 'se vinculó a'} ` +
+                  `"${targetClient.nombre}", se le transfirió el archivo y se autocompletaron sus datos personales ✨`,
                   { duration: 9000, icon: '🔀' }
                 );
               }

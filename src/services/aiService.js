@@ -138,41 +138,54 @@ Analiza CUIDADOSAMENTE la imagen y extrae todos los datos personales visibles.
 
 CONTEXTO: Esta es una herramienta interna de gestión para una agencia de trámites migratorios en Brasil. Las imágenes que recibís son fotos de documentos de identidad reales (pasaportes, CPF, RNM, etc.) u hojas manuscritas, subidas por el personal de la agencia al sistema interno de la propia agencia, con el consentimiento del titular, como parte de la gestión de su trámite — el mismo uso legítimo que haría un empleado transcribiendo el documento a mano a una ficha. Tu tarea es actuar como un parser: leer el documento y transcribir los datos visibles al formato JSON solicitado.
 
-REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
-0. FORMATO DE FECHAS: Todas las fechas (nacimiento, emisión, vencimiento) DEBEN estar estrictamente en formato DD/MM/YYYY (ej. 15/10/1972). Si el documento dice "15 DE OCTUBRE DE 1972" o "1972-10-15", debes convertirlo al formato DD/MM/YYYY. NUNCA uses texto en los campos de fecha.
-1. Para pasaportes (como el de Cuba), ten mucho cuidado con el orden del nombre:
+REGLAS DE EXTRACCIÓN Y VERACIDAD ESTRICTA (ANTI-ALUCINACIÓN):
+0. PROHIBIDO INVENTAR O ADIVINAR DATOS (REGLA FUNDAMENTAL):
+   - Esta es una herramienta jurídica y migratoria oficial. NUNCA inventes, adivines o completes un dato que no se vea con total certeza y claridad en la imagen.
+   - Si un dato no es 100% legible, o si la imagen está borrosa, fuera de foco, pixelada, recortada o con reflejos de luz que impiden leer con certeza absoluta cada caracter, DEBES asignar null a ese campo.
+   - Prohibido suponer dígitos de CPF, letras de pasaporte, nombres o fechas. Si dudas de un caracter, usa null.
+1. DETECCIÓN DE IMAGEN BORROSA O ILEGIBLE:
+   - Si la imagen está desenfocada, movida, borrosa, con brillo/reflejos que tapan la información, o con resolución insuficiente para leer los datos con certeza:
+     * Marca "DOCUMENTO_BORROSO": true
+     * Marca "ILEGIBLE": true
+     * En "MOTIVO_ILEGIBLE" describe claramente el problema (ej: "Foto desenfocada y con reflejo de flash que oculta el texto", "Baja resolución, los números de documento no se distinguen").
+   - Si la imagen es nítida y perfectamente legible:
+     * "DOCUMENTO_BORROSO": false
+     * "ILEGIBLE": false
+     * "MOTIVO_ILEGIBLE": null
+2. FORMATO DE FECHAS: Todas las fechas (nacimiento, emisión, vencimiento) DEBEN estar estrictamente en formato DD/MM/YYYY (ej. 15/10/1972). Si el documento dice "15 DE OCTUBRE DE 1972" o "1972-10-15", debes convertirlo al formato DD/MM/YYYY. NUNCA uses texto en los campos de fecha.
+3. Para pasaportes (como el de Cuba), ten mucho cuidado con el orden del nombre:
    - "APELLIDOS / SURNAMES" suele aparecer ARRIBA.
    - "NOMBRES / GIVEN NAMES" suele aparecer DEBAJO.
    - Tú debes concatenarlos siempre en el orden correcto: "NOMBRE(S) APELLIDO(S)". Ejemplo: Si dice Apellidos: GUIBERT GONZALEZ y Nombres: GEORGINA, el NOMBRE_COMPLETO debe ser "GEORGINA GUIBERT GONZALEZ".
-2. Números en Pasaportes:
+4. Números en Pasaportes:
    - "Nº DE PASAPORTE / PASSPORT Nº" (ej. letras y números como L302474) corresponde al campo "NUMERO_DOCUMENTO".
    - "Nº DE IDENTIDAD / ID Nº" (ej. 11 dígitos numéricos como 74021012519) corresponde al campo "CARNET_IDENTIDAD". NO lo coloques en NUMERO_DOCUMENTO.
-3. Fechas en Pasaportes:
+5. Fechas en Pasaportes:
    - "FECHA DE EMISION / DATE OF ISSUE" corresponde al campo "FECHA_EMISION_PASAPORTE".
    - "FECHA DE VENCIMIENTO / DATE OF EXPIRY" corresponde al campo "FECHA_VENCIMIENTO_PASAPORTE".
-4. Nacimiento, Nacionalidad y Sexo:
+6. Nacimiento, Nacionalidad y Sexo:
    - "NACIONALIDAD / NATIONALITY" corresponde al campo "NACIONALIDAD".
    - "FECHA DE NACIMIENTO / DATE OF BIRTH" corresponde al campo "FECHA_NACIMIENTO".
    - "LUGAR DE NACIMIENTO / PLACE OF BIRTH" corresponde al campo "LUGAR_NACIMIENTO".
    - "SEXO / SEX": Si el documento dice "F", debes escribir "Feminino". Si dice "M", debes escribir "Masculino". Nunca escribas solo la letra.
-5. Documentos Ilegibles y Código MRZ:
-   - Si la parte principal del documento está borrosa o ilegible, busca los datos en el código MRZ (las dos líneas de letras y números en la parte inferior).
+7. Documentos Ilegibles y Código MRZ:
+   - Si la parte principal del documento está borrosa o difícil de leer, busca los datos en el código MRZ (las dos líneas de letras y números en la parte inferior).
    - En el MRZ puedes encontrar el Nombre, Apellidos, Número de Pasaporte y Carnet de Identidad.
    - Si tuviste dificultad para leer la parte principal y usaste el MRZ, pon el campo "ILEGIBLE" en true. Si se lee bien, ponlo en false.
-6. Protocolos de Solicitação de Refúgio:
+8. Protocolos de Solicitação de Refúgio:
    - El número justo debajo del título "Protocolo de Solicitação de Refúgio" (ej. 08018.../...) corresponde al campo "NUMERO_REFUGIO".
    - "Validade" corresponde al campo "FECHA_VENCIMIENTO_REFUGIO".
    - "Filiação 1" y "Filiação 2" son los padres. Normalmente Filiação 1 es la madre ("NOMBRE_MADRE") y Filiação 2 el padre ("NOMBRE_PADRE"), pero usa el sentido común analizando los nombres si están al revés (ej. un nombre masculino en Filiação 1 sería el padre).
-7. RNM (Registro Nacional Migratório de Brasil):
+9. RNM (Registro Nacional Migratório de Brasil):
    - El número alfanumérico destacado bajo "RNM" (ej. F744334-H) corresponde al campo "RNM".
    - Concatena "NOME" y "SOBRENOME" para formar el "NOMBRE_COMPLETO" (ej. "ROXANA CASTILLO MANZANO").
    - "DATA DE NASCIMENTO" es "FECHA_NACIMIENTO".
    - "NACIONALIDADE" es "NACIONALIDAD".
    - Bajo "FILIAÇÃO" aparecen los padres. Asigna uno a "NOMBRE_MADRE" y otro a "NOMBRE_PADRE" por lógica de nombres.
 
-8. TIPO DE DOCUMENTO:
+10. TIPO DE DOCUMENTO:
    - Identifica qué documento es y colócalo en "TIPO_DOCUMENTO". Usa valores como: "PASAPORTE", "CPF", "RNM", "CARNET DE IDENTIDAD", "PROTOCOLO DE REFUGIO", "CNH", "CERTIFICADO DE NACIMIENTO", "DOCUMENTO", "HOJA MANUSCRITA", etc.
-9. HOJAS MANUSCRITAS:
+11. HOJAS MANUSCRITAS:
    - Si la imagen NO es un documento oficial sino una hoja escrita a mano (letra
      manuscrita, formulario en blanco completado a mano, lista de datos, notas,
      etc.), igual analízala: interpreta la letra lo mejor que puedas y extrae cada
@@ -180,7 +193,7 @@ REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
      NOMBRE_COMPLETO, teléfono, dirección, etc. si aparecen).
    - Si la letra es difícil de leer, transcribe tu mejor interpretación de todos
      modos (no la descartes) y marca "ILEGIBLE" en true para que se revise a mano.
-10. DATOS ADICIONALES (MUY IMPORTANTE): No te limites a los campos fijos de abajo.
+12. DATOS ADICIONALES (MUY IMPORTANTE): No te limites a los campos fijos de abajo.
    Si en el documento ves CUALQUIER OTRO dato personal identificable, ESTABLE y
    reutilizable que no encaje en ninguno de esos campos (ej. número de licencia
    de conducir, categoría de licencia, profesión, estado civil impreso, dirección
@@ -217,10 +230,12 @@ Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra, SIN blo
   "FECHA_VENCIMIENTO_PASAPORTE": null,
   "FECHA_VENCIMIENTO_REFUGIO": null,
   "SEXO": null,
+  "DOCUMENTO_BORROSO": false,
   "ILEGIBLE": false,
+  "MOTIVO_ILEGIBLE": null,
   "CAMPOS_ADICIONALES": {}
 }
-Usa null para los campos que no estén visibles en el documento. No inventes datos.`;
+Usa null para los campos que no estén visibles o no se lean con claridad en el documento. NO inventes datos.`;
 
   const raw = await callGroq(
     MODEL_VISION,
@@ -247,10 +262,21 @@ Usa null para los campos que no estén visibles en el documento. No inventes dat
       : {};
     delete parsed.CAMPOS_ADICIONALES;
     const merged = { ...parsed, ...adicionales };
+
+    const esBorroso = parsed.DOCUMENTO_BORROSO === true || parsed.ILEGIBLE === true;
+    if (esBorroso) {
+      merged.DOCUMENTO_BORROSO = true;
+      merged.ILEGIBLE = true;
+      merged.MOTIVO_ILEGIBLE = parsed.MOTIVO_ILEGIBLE || 'Imagen borrosa o de baja calidad';
+    }
+
     // Filtrar campos null/vacíos/objetos raros para que el UI solo muestre
     // datos con valor (y nunca intente renderizar un objeto como texto).
     return Object.fromEntries(
-      Object.entries(merged).filter(([, v]) => v !== null && v !== '' && typeof v !== 'object')
+      Object.entries(merged).filter(([k, v]) => {
+        if (k === 'DOCUMENTO_BORROSO' || k === 'ILEGIBLE') return true;
+        return v !== null && v !== '' && typeof v !== 'object';
+      })
     );
   } catch {
     console.warn('[aiService] No se pudo parsear JSON del análisis de imagen. Respuesta cruda:', raw);

@@ -21,7 +21,9 @@ import React, { useState, useCallback, useMemo, lazy, Suspense } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
 import { analyzeDocumentImage, extractClientDataFromChatText } from '../services/aiService';
-import { applyExtractedDataToClient, createAndLinkRelative } from '../services/clientExtractionService';
+import { applyExtractedDataToClient, createAndLinkRelative, resolvePersonAndApplyData } from '../services/clientExtractionService';
+import { getCliente } from '../services/clientesService';
+import { reassignDocument } from '../services/storageService';
 import useClientAiChat from '../hooks/useClientAiChat';
 import { useOrganization } from '../context/OrganizationContext';
 
@@ -87,6 +89,24 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
       return data || [];
     }
   });
+
+  // Reaccionar inmediatamente a eventos de documentos procesados en segundo plano
+  React.useEffect(() => {
+    const handleRefresh = (e) => {
+      const targetId = e.detail?.clientId || e.detail?.targetClient?.id;
+      if (!targetId || String(targetId) === String(clientId)) {
+        queryClient.invalidateQueries({ queryKey: ['client', clientId] });
+        queryClient.invalidateQueries({ queryKey: ['documents', clientId] });
+        queryClient.invalidateQueries({ queryKey: ['relations', clientId] });
+      }
+    };
+    window.addEventListener('refreshClientData', handleRefresh);
+    window.addEventListener('documentProcessed', handleRefresh);
+    return () => {
+      window.removeEventListener('refreshClientData', handleRefresh);
+      window.removeEventListener('documentProcessed', handleRefresh);
+    };
+  }, [clientId, queryClient]);
 
   // ── Local UI state ─────────────────────────────────────────────────────────
   const [copiedId, setCopiedId] = useState(null);
@@ -446,7 +466,23 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         toast.dismiss(toastId);
         docs.setViewingDocument(null);
 
-        // Auto-renombrar inmediatamente y añadir al estado
+        if (aiData.DOCUMENTO_BORROSO || aiData.ILEGIBLE) {
+          toast.dismiss(toastId);
+          docs.setViewingDocument(null);
+          const motivo = aiData.MOTIVO_ILEGIBLE || 'La imagen está borrosa o desenfocada';
+          const currentName = doc?.nombre_archivo || 'DOCUMENTO';
+          const flaggedName = currentName.startsWith('⚠️ BORROSO - ') ? currentName : `⚠️ BORROSO - ${currentName}`;
+          if (doc) {
+            const isUuid = typeof doc.id === 'string' && doc.id.includes('-');
+            const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
+            await supabase.from(table).update({ nombre_archivo: flaggedName }).eq('id', doc.id);
+            await fetchClientData(true);
+          }
+          toast.error(`⚠️ Imagen borrosa o ilegible detectada (${motivo}). La IA no inventó datos. Solicita una nueva foto al cliente.`, { duration: 9000, icon: '🔍' });
+          return;
+        }
+
+        // Auto-renombrar inmediatamente
         const tipo = aiData.TIPO_DOCUMENTO || 'DOCUMENTO';
         const nombre = aiData.NOMBRE_COMPLETO || 'DESCONOCIDO';
         const newFileName = `${tipo} - ${nombre}`.toUpperCase();
@@ -456,12 +492,42 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         if (doc) {
           const isUuid = typeof doc.id === 'string' && doc.id.includes('-');
           const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
-          supabase.from(table).update({ nombre_archivo: newFileName }).eq('id', doc.id).then(() => fetchClientData(true));
+          supabase.from(table).update({ nombre_archivo: newFileName }).eq('id', doc.id);
         }
 
-        extraction.setExtractedData(aiData);
-        extraction.setUploadedDocRecord(doc);
-        extraction.setIsExtractionModalOpen(true);
+        // Si el documento pertenece a otra persona (familiar), se transfiere y se autocompletan sus datos
+        let mismatchHandled = false;
+        try {
+          const currentCliente = await getCliente(clientId);
+          const { moved, targetClient, isNewClient, isBlurry, motivoIlegible } = await resolvePersonAndApplyData({
+            currentCliente,
+            extractedData: aiData,
+            customFieldsConfig: extraCustomFieldsForAi,
+            moveDocument: doc ? (targetId) => reassignDocument(doc.id, targetId, newFileName) : null,
+          });
+
+          if (isBlurry) {
+            mismatchHandled = true;
+            toast.error(`⚠️ Documento borroso (${motivoIlegible}). No se alteraron los datos del cliente.`);
+          } else if (moved) {
+            mismatchHandled = true;
+            await fetchClientData(true);
+            toast.success(
+              `Documento de ${aiData.NOMBRE_COMPLETO || 'familiar'} detectado — ` +
+              `${isNewClient ? 'se creó la ficha de' : 'se vinculó a'} ` +
+              `"${targetClient.nombre}", se le transfirió el archivo y se completaron sus datos personales ✨`,
+              { duration: 9000, icon: '🔀' }
+            );
+          }
+        } catch (autoErr) {
+          console.warn('[ClientView] Error en resolvePersonAndApplyData:', autoErr);
+        }
+
+        if (!mismatchHandled) {
+          extraction.setExtractedData(aiData);
+          extraction.setUploadedDocRecord(doc);
+          extraction.setIsExtractionModalOpen(true);
+        }
       } else {
         toast.error('La IA no encontró datos extraíbles.', { id: toastId });
       }

@@ -114,7 +114,7 @@ serve(async (req) => {
     // a Supabase Storage (bucket whatsapp_media), devolviendo una URL firmada de larga
     // duración. El link de amojo a veces ya viene autenticado/firmado y a veces no —
     // se prueba primero sin credenciales y, si falla, con el Bearer token de la cuenta.
-    const downloadKommoChatAttachment = async (link: string, fileNameHint: string | null, uniqueId: string | number): Promise<{ url: string | null, type: string | null, name: string | null }> => {
+    const downloadKommoChatAttachment = async (link: string, fileNameHint: string | null, uniqueId: string | number): Promise<{ url: string | null, type: string | null, name: string | null, bytes?: Uint8Array }> => {
         const empty = { url: null, type: null, name: null };
         if (!link) return empty;
 
@@ -129,6 +129,9 @@ serve(async (req) => {
             }
 
             const blob = await fileRes.blob();
+            const arrayBuffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(arrayBuffer);
+
             const mimeType = fileRes.headers.get('content-type') || blob.type || 'application/octet-stream';
             const hasExt = !!fileNameHint && /\.[a-zA-Z0-9]{2,5}$/.test(fileNameHint);
             const ext = hasExt ? '' : `.${(mimeType.split('/')[1] || 'bin').split(';')[0]}`;
@@ -151,10 +154,163 @@ serve(async (req) => {
                 .from('whatsapp_media')
                 .createSignedUrl(finalName, 315360000); // ~10 años
 
-            return { url: signed?.signedUrl || null, type: mimeType, name: finalName };
+            return { url: signed?.signedUrl || null, type: mimeType, name: finalName, bytes };
         } catch (err) {
             console.error('Error descargando adjunto de Kommo:', err);
             return empty;
+        }
+    };
+
+    const uint8ToBase64 = (bytes: Uint8Array): string => {
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+        }
+        return btoa(binary);
+    };
+
+    const classifyAndExtractCloud = async (bytes: Uint8Array, mimeType: string, groqApiKey: string) => {
+        const base64 = uint8ToBase64(bytes);
+        const prompt = `Eres un asistente oficial de extracción de datos para una agencia migratoria en Brasil.
+REGLA DE ORO DE VERACIDAD (PROHIBIDO INVENTAR DATOS):
+- NUNCA inventes, adivines o completes datos que no se lean con total claridad.
+- Si la imagen está borrosa, fuera de foco, pixelada o con reflejos que impiden lectura segura, marca "borroso": true, "motivo_borroso": "descripción de por qué no se lee", y deja los datos en null.
+- Si la imagen es nítida, marca "borroso": false y extrae los datos visibles.
+- Todas las fechas en DD/MM/YYYY.
+- CPF solo dígitos. Pasaporte letras+números en numero_pasaporte; carnet de identidad en carnet_identidad.
+- Tipo de documento: PASAPORTE, CPF, RNM, CARNET DE IDENTIDAD, PROTOCOLO DE REFUGIO, COMPROBANTE DE RESIDENCIA, OTRO.
+
+Devuelve ÚNICAMENTE un JSON:
+{
+  "tipo_documento": "VALOR",
+  "borroso": false,
+  "motivo_borroso": null,
+  "datos_extraidos": {
+    "nombre": null,
+    "cpf": null,
+    "nacionalidad": null,
+    "fecha_nacimiento": null,
+    "numero_pasaporte": null,
+    "fecha_emision_pasaporte": null,
+    "fecha_vencimiento_pasaporte": null,
+    "carnet_identidad": null,
+    "rnm": null,
+    "numero_refugio": null,
+    "nombre_padre": null,
+    "nombre_madre": null,
+    "sexo": null
+  }
+}`;
+
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${groqApiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: 'qwen/qwen3.6-27b',
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+                    ],
+                }],
+                temperature: 0.1,
+                response_format: { type: 'json_object' },
+            }),
+        });
+
+        if (!res.ok) return null;
+        const json = await res.json();
+        const content = json.choices?.[0]?.message?.content || '{}';
+        const parsed = JSON.parse(content.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim());
+        return {
+            tipo: parsed.tipo_documento || 'DOCUMENTO',
+            borroso: parsed.borroso === true,
+            motivo: parsed.motivo_borroso || null,
+            datos: parsed.datos_extraidos || {}
+        };
+    };
+
+    const detectPersonMismatchCloud = (currentNombre: string | null, currentCpf: string | null, datos: Record<string, any>) => {
+        const cleanExtractedCpf = (datos.cpf || '').replace(/\D/g, '');
+        const cleanCurrentCpf = (currentCpf || '').replace(/\D/g, '');
+        if (cleanExtractedCpf.length === 11 && cleanCurrentCpf.length === 11) {
+            return cleanExtractedCpf !== cleanCurrentCpf;
+        }
+        const n1 = (currentNombre || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        const n2 = (datos.nombre || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        if (!n1 || !n2) return false;
+        const w1 = n1.split(/\s+/).filter((w: string) => w.length > 2);
+        const w2 = n2.split(/\s+/).filter((w: string) => w.length > 2);
+        if (w1.length === 0 || w2.length === 0) return false;
+        const firstNamesMatch = w1[0] === w2[0];
+        const sharedWords = w1.filter((w: string) => w2.includes(w)).length;
+        return sharedWords === 0 || (sharedWords === 1 && !firstNamesMatch);
+    };
+
+    const resolveOrCreateRelatedClientCloud = async (supabaseAdmin: any, currentClienteId: number, datos: Record<string, any>) => {
+        const cleanCpf = (datos.cpf || '').replace(/\D/g, '');
+        let targetId: number | null = null;
+        if (cleanCpf.length === 11) {
+            const { data } = await supabaseAdmin.from('clientes').select('id').neq('id', currentClienteId).or(`cpf.eq.${cleanCpf},cpf.eq.${datos.cpf}`).limit(1);
+            if (data && data.length > 0) targetId = data[0].id;
+        }
+        if (!targetId && datos.nombre) {
+            const { data } = await supabaseAdmin.from('clientes').select('id').neq('id', currentClienteId).ilike('nombre', `%${datos.nombre}%`).limit(1);
+            if (data && data.length > 0) targetId = data[0].id;
+        }
+        if (!targetId) {
+            const { data: newClient } = await supabaseAdmin.from('clientes').insert({
+                nombre: (datos.nombre || 'NUEVO FAMILIAR').toUpperCase(),
+                cpf: datos.cpf || '',
+                nacionalidad: (datos.nacionalidad || '').toUpperCase(),
+                estado_cliente: 'nuevo',
+                canal_adquisicion: 'Familiar Vinculado'
+            }).select('id').single();
+            if (newClient) targetId = newClient.id;
+        }
+        if (targetId) {
+            const { data: rel } = await supabaseAdmin.from('relaciones_clientes').select('id')
+                .or(`and(cliente_id.eq.${currentClienteId},cliente_relacionado_id.eq.${targetId}),and(cliente_id.eq.${targetId},cliente_relacionado_id.eq.${currentClienteId})`)
+                .limit(1);
+            if (!rel || rel.length === 0) {
+                await supabaseAdmin.from('relaciones_clientes').insert({
+                    cliente_id: currentClienteId,
+                    cliente_relacionado_id: targetId,
+                    tipo_relacion: 'Familiar',
+                    descripcion: 'Familiar vinculado automáticamente por documento de WhatsApp'
+                });
+            }
+        }
+        return targetId;
+    };
+
+    const applyExtractedDataCloud = async (supabaseAdmin: any, clientId: number, datos: Record<string, any>) => {
+        const { data: clientRow } = await supabaseAdmin.from('clientes').select('*').eq('id', clientId).single();
+        if (!clientRow) return;
+        const updates: Record<string, any> = {};
+        const colMap: Record<string, string> = {
+            'nombre': 'nombre', 'cpf': 'cpf', 'nacionalidad': 'nacionalidad',
+            'fecha_nacimiento': 'fecha_nacimiento', 'lugar_nacimiento': 'lugar_nacimiento',
+            'sexo': 'sexo', 'numero_pasaporte': 'numero_pasaporte', 'carnet_identidad': 'carnet_identidad',
+            'rnm': 'rnm', 'numero_refugio': 'numero_refugio', 'nombre_padre': 'nombre_padre', 'nombre_madre': 'nombre_madre'
+        };
+        for (const [key, val] of Object.entries(datos)) {
+            if (!val || typeof val !== 'string') continue;
+            const col = colMap[key];
+            if (col) {
+                const currentVal = clientRow[col];
+                if (currentVal === null || currentVal === undefined || String(currentVal).trim() === '') {
+                    updates[col] = String(val).toUpperCase();
+                }
+            }
+        }
+        if (Object.keys(updates).length > 0) {
+            await supabaseAdmin.from('clientes').update(updates).eq('id', clientId);
         }
     };
 
@@ -632,11 +788,50 @@ serve(async (req) => {
             // verse en la conversación, no como documento a revisar.
             const isAudio = (mediaInfo.type || '').startsWith('audio/');
             if (attachmentLink && mediaInfo.url && !isAudio) {
+                let targetClientId = principalClientId;
+                let finalDocName = mediaInfo.name || attachmentFileName || 'Documento de WhatsApp';
+
+                // Si es una imagen y tenemos bytes y GROQ_API_KEY, clasificar y autocompletar con IA en la nube
+                const groqApiKey = Deno.env.get('GROQ_API_KEY');
+                if (groqApiKey && mediaInfo.bytes && (mediaInfo.type || '').startsWith('image/')) {
+                    try {
+                        const aiRes = await classifyAndExtractCloud(mediaInfo.bytes, mediaInfo.type, groqApiKey);
+                        if (aiRes) {
+                            if (aiRes.borroso) {
+                                finalDocName = `⚠️ BORROSO - ${finalDocName}`;
+                                await supabaseClient.from('notificaciones_equipo').insert({
+                                    cliente_id: principalClientId,
+                                    mensaje: `⚠️ Documento borroso recibido por WhatsApp para cliente #${principalClientId}: ${aiRes.motivo || 'Ilegible'}. Pide al cliente una nueva foto.`
+                                });
+                            } else if (aiRes.tipo && aiRes.datos) {
+                                // Chequear si pertenece a un familiar
+                                const { data: currentClientRow } = await supabaseClient.from('clientes').select('id, nombre, cpf').eq('id', principalClientId).single();
+                                if (currentClientRow) {
+                                    const isMismatch = detectPersonMismatchCloud(currentClientRow.nombre, currentClientRow.cpf, aiRes.datos);
+                                    if (isMismatch) {
+                                        const relatedClientId = await resolveOrCreateRelatedClientCloud(supabaseClient, principalClientId, aiRes.datos);
+                                        if (relatedClientId) {
+                                            targetClientId = relatedClientId;
+                                            finalDocName = `${aiRes.tipo} - ${(aiRes.datos.nombre || 'FAMILIAR').toUpperCase()}`;
+                                            await applyExtractedDataCloud(supabaseClient, relatedClientId, aiRes.datos);
+                                        }
+                                    } else {
+                                        finalDocName = `${aiRes.tipo} - ${(currentClientRow.nombre || aiRes.datos.nombre || '').toUpperCase()}`;
+                                        await applyExtractedDataCloud(supabaseClient, principalClientId, aiRes.datos);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (aiErr) {
+                        console.warn('[kommo-webhook] Error en clasificación IA de adjunto:', aiErr);
+                    }
+                }
+
                 await supabaseClient.from('documentos_pendientes').insert({
-                    cliente_id: principalClientId,
+                    cliente_id: targetClientId,
                     telefono: msgTelefono,
                     url_archivo: mediaInfo.url,
-                    nombre_archivo: mediaInfo.name || attachmentFileName || 'Documento de WhatsApp',
+                    nombre_archivo: finalDocName,
                     tipo_contenido: mediaInfo.type,
                     origen: 'kommo',
                     verificado: false
