@@ -25,6 +25,11 @@ const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
 export const AI_FIELD_MAP = {
   'NOMBRE_COMPLETO': 'nombre',
   'CPF': 'cpf',
+  'TELEFONO': 'telefono',
+  'EMAIL': 'email',
+  'ESTADO_CIVIL': 'estado_civil',
+  'CIUDAD': 'ciudad',
+  'ESTADO': 'estado',
   'RNM': 'rnm',
   'CARNET_IDENTIDAD': 'carnet_identidad',
   'FECHA_NACIMIENTO': 'fecha_nacimiento',
@@ -47,7 +52,7 @@ const AI_DATE_KEYS = new Set([
   'FECHA_VENCIMIENTO_REFUGIO',
 ]);
 
-const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO', 'NOMBRE_ARCHIVO']);
+const AI_IGNORED_KEYS = new Set(['ILEGIBLE', 'TIPO_DOCUMENTO', 'NOMBRE_ARCHIVO', 'FAMILIARES_MENCIONADOS', 'CAMPOS_ADICIONALES']);
 
 const humanizeAiKey = (key) => key.toLowerCase().split('_').filter(Boolean)
   .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -112,6 +117,46 @@ export async function applyExtractedDataToClient({
   for (const [key, value] of Object.entries(extractedData)) {
     if (!value) continue;
     const upperKey = key.toUpperCase();
+    if (AI_IGNORED_KEYS.has(upperKey)) continue;
+
+    if (upperKey === 'DIRECCION') {
+      let dirObj = null;
+      if (typeof value === 'object' && value !== null) {
+        dirObj = {
+          cep: value.cep || '',
+          endereco: value.endereco || '',
+          numero: value.numero || '',
+          complemento: value.complemento || '',
+          bairro: value.bairro || '',
+          cidade: value.cidade || '',
+          estado: value.estado || '',
+          ponto_referencia: value.ponto_referencia || '',
+        };
+      } else if (typeof value === 'string' && value.trim()) {
+        try {
+          if (value.startsWith('{')) dirObj = JSON.parse(value);
+        } catch (_) {}
+        if (!dirObj) {
+          dirObj = { endereco: value.trim() };
+        }
+      }
+
+      if (dirObj) {
+        const currentValue = clientRow ? clientRow['direccion'] : null;
+        const isCurrentlyEmpty = !currentValue || currentValue === '{}' || currentValue === 'null' || currentValue === '""';
+        if (!skipIfAlreadyFilled || isCurrentlyEmpty) {
+          updates['direccion'] = JSON.stringify(dirObj);
+          if (dirObj.cidade && (!skipIfAlreadyFilled || !clientRow?.ciudad)) {
+            updates['ciudad'] = dirObj.cidade.toUpperCase();
+          }
+          if (dirObj.estado && (!skipIfAlreadyFilled || !clientRow?.estado)) {
+            updates['estado'] = dirObj.estado.toUpperCase();
+          }
+          applied.push('direccion');
+        }
+      }
+      continue;
+    }
 
     const mappedCol = AI_FIELD_MAP[upperKey];
     if (mappedCol) {
@@ -253,6 +298,65 @@ export async function resolveOrCreateRelatedClient({ currentCliente, extractedDa
   }
 
   return { targetClient, isNewClient };
+}
+
+/**
+ * Crea o vincula un familiar mencionado (ej. desde el chat) al cliente titular.
+ * @param {object} params
+ * @param {object} params.currentCliente
+ * @param {object} params.relativeData - { nombre, parentesco, cpf, detalles }
+ * @returns {Promise<{targetClient: object, isNew: boolean}>}
+ */
+export async function createAndLinkRelative({ currentCliente, relativeData }) {
+  if (!currentCliente || !relativeData?.nombre) return null;
+
+  const rawName = relativeData.nombre.trim().toUpperCase();
+  let query = supabase.from('clientes').select('id, nombre, cpf').neq('id', currentCliente.id);
+  if (relativeData.cpf) {
+    query = query.eq('cpf', relativeData.cpf);
+  } else {
+    query = query.ilike('nombre', `%${rawName}%`);
+  }
+  const { data: matches } = await query.limit(1);
+
+  let targetClient;
+  let isNew = false;
+
+  if (matches && matches.length > 0) {
+    targetClient = matches[0];
+  } else {
+    targetClient = await createCliente({
+      nombre: rawName,
+      cpf: relativeData.cpf || '',
+      estado_cliente: 'nuevo',
+      canal_adquisicion: 'Familiar Vinculado'
+    });
+    isNew = true;
+  }
+
+  const tipoRelacion = relativeData.parentesco?.trim() || 'Familiar';
+
+  // Verificar si ya existe relación previa
+  const { data: existingRelation } = await supabase
+    .from('relaciones_clientes')
+    .select('id')
+    .or(`and(cliente_id.eq.${currentCliente.id},cliente_relacionado_id.eq.${targetClient.id}),and(cliente_id.eq.${targetClient.id},cliente_relacionado_id.eq.${currentCliente.id})`)
+    .limit(1);
+
+  if (!existingRelation || existingRelation.length === 0) {
+    try {
+      await insertRelacion({
+        cliente_id: currentCliente.id,
+        cliente_relacionado_id: targetClient.id,
+        tipo_relacion: tipoRelacion,
+        descripcion: relativeData.detalles || 'Detectado desde conversación de chat'
+      });
+    } catch (err) {
+      if (err?.code !== '23505') console.error('[clientExtractionService] Error creando relación de familiar:', err);
+    }
+  }
+
+  return { targetClient, isNew };
 }
 
 /**

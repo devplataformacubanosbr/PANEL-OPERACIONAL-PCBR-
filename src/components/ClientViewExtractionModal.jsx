@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, X, ArrowRight, AlertTriangle, UserPlus, MoveRight, Search } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { reassignDocument } from '../services/storageService';
-import { createCliente } from '../services/clientesService';
+import { createCliente, insertRelacion } from '../services/clientesService';
+import { applyExtractedDataToClient } from '../services/clientExtractionService';
 import { normalizeDateToDDMMYYYY } from '../utils/dateFormatter';
 import { toIsoDate, FIXED_FIELDS_CATALOG } from './clientView.constants';
 
@@ -66,12 +68,35 @@ export default function ClientViewExtractionModal({
   const handleMoveToSelected = async (targetClient) => {
     if (!uploadedDocRecord || !targetClient) return;
     setMismatchState(prev => ({ ...prev, isProcessing: true }));
-    const { success, error } = await reassignDocument(uploadedDocRecord.id, targetClient.id);
-    if (success) {
-      alert(`Documento movido a ${targetClient.nombre} exitosamente.`);
-      onClose(true);
-    } else {
-      alert('Error al mover documento: ' + error);
+    try {
+      const { success, error } = await reassignDocument(uploadedDocRecord.id, targetClient.id);
+      if (success) {
+        // Asegurar relación familiar
+        if (cliente && cliente.id) {
+          try {
+            await insertRelacion({
+              cliente_id: cliente.id,
+              cliente_relacionado_id: targetClient.id,
+              tipo_relacion: 'Familiar',
+              descripcion: 'Familiar vinculado al mover documento'
+            });
+          } catch (_) {}
+        }
+        // Aplicar datos faltantes al cliente destino
+        await applyExtractedDataToClient({
+          targetClientId: targetClient.id,
+          extractedData,
+          skipIfAlreadyFilled: true
+        });
+        toast.success(`Documento movido a ${targetClient.nombre} y datos completados.`);
+        onClose(true);
+      } else {
+        toast.error('Error al mover documento: ' + error);
+        setMismatchState(prev => ({ ...prev, isProcessing: false }));
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al procesar reasignación');
       setMismatchState(prev => ({ ...prev, isProcessing: false }));
     }
   };
@@ -132,12 +157,35 @@ export default function ClientViewExtractionModal({
   const handleMoveToExisting = async () => {
     if (!uploadedDocRecord || !mismatchState.matchedClient) return;
     setMismatchState(prev => ({ ...prev, isProcessing: true }));
-    const { success, error } = await reassignDocument(uploadedDocRecord.id, mismatchState.matchedClient.id);
-    if (success) {
-      alert(`Documento movido a ${mismatchState.matchedClient.nombre} exitosamente.`);
-      onClose(true);
-    } else {
-      alert('Error al mover documento: ' + error);
+    try {
+      const { success, error } = await reassignDocument(uploadedDocRecord.id, mismatchState.matchedClient.id);
+      if (success) {
+        // Asegurar relación familiar
+        if (cliente && cliente.id) {
+          try {
+            await insertRelacion({
+              cliente_id: cliente.id,
+              cliente_relacionado_id: mismatchState.matchedClient.id,
+              tipo_relacion: 'Familiar',
+              descripcion: 'Familiar vinculado al mover documento'
+            });
+          } catch (_) {}
+        }
+        // Aplicar datos al perfil existente
+        await applyExtractedDataToClient({
+          targetClientId: mismatchState.matchedClient.id,
+          extractedData,
+          skipIfAlreadyFilled: true
+        });
+        toast.success(`Documento movido a ${mismatchState.matchedClient.nombre} exitosamente.`);
+        onClose(true);
+      } else {
+        toast.error('Error al mover documento: ' + error);
+        setMismatchState(prev => ({ ...prev, isProcessing: false }));
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al mover documento');
       setMismatchState(prev => ({ ...prev, isProcessing: false }));
     }
   };
@@ -146,8 +194,6 @@ export default function ClientViewExtractionModal({
     if (!uploadedDocRecord) return;
     setMismatchState(prev => ({ ...prev, isProcessing: true }));
     try {
-      // rnm y carnet_identidad ya no son columnas reales de `clientes` — viven
-      // en el JSONB campos_personalizados.
       const camposPersonalizados = {};
       if (extractedData.RNM) camposPersonalizados.rnm = extractedData.RNM;
       if (extractedData.CARNET_IDENTIDAD) camposPersonalizados.carnet_identidad = extractedData.CARNET_IDENTIDAD;
@@ -158,6 +204,8 @@ export default function ClientViewExtractionModal({
         nacionalidad: extractedData.NACIONALIDAD?.toUpperCase() || '',
         fecha_nacimiento: extractedData.FECHA_NACIMIENTO ? toIsoDate(normalizeDateToDDMMYYYY(extractedData.FECHA_NACIMIENTO)) : null,
         sexo: extractedData.SEXO?.toUpperCase() || '',
+        estado_cliente: 'nuevo',
+        canal_adquisicion: 'Familiar Vinculado',
         ...(Object.keys(camposPersonalizados).length > 0 ? { campos_personalizados: camposPersonalizados } : {}),
       };
 
@@ -165,23 +213,33 @@ export default function ClientViewExtractionModal({
       
       // Crear relacionamiento con el cliente original
       if (cliente && cliente.id) {
-        await supabase.from('relaciones_clientes').insert({
-          cliente_id: cliente.id,
-          cliente_relacionado_id: newClient.id,
-          tipo_relacion: 'Familiar'
-        });
+        try {
+          await insertRelacion({
+            cliente_id: cliente.id,
+            cliente_relacionado_id: newClient.id,
+            tipo_relacion: 'Familiar',
+            descripcion: 'Familiar creado a partir de documento analizado'
+          });
+        } catch (_) {}
       }
+
+      // Aplicar todos los datos extraídos (pasaporte, refugio, fechas, etc.) a la nueva ficha
+      await applyExtractedDataToClient({
+        targetClientId: newClient.id,
+        extractedData,
+        skipIfAlreadyFilled: false
+      });
       
       const { success, error } = await reassignDocument(uploadedDocRecord.id, newClient.id);
       if (success) {
-        alert('Cliente creado, relacionamiento añadido y documento asignado exitosamente.');
+        toast.success(`Cliente familiar "${newClient.nombre}" creado, vinculado y documento reasignado.`);
         onClose(true);
       } else {
-        alert('Cliente creado pero hubo un error al reasignar el documento: ' + error);
+        toast.error('Cliente creado pero hubo un error al reasignar el documento: ' + error);
       }
     } catch (err) {
       console.error(err);
-      alert('Error al crear el nuevo cliente.');
+      toast.error('Error al crear el nuevo cliente familiar.');
       setMismatchState(prev => ({ ...prev, isProcessing: false }));
     }
   };

@@ -7,7 +7,7 @@ import StepIndicator from "./StepIndicator";
 import StepPersonalData from "./StepPersonalData";
 import StepDocumentsAddress from "./StepDocumentsAddress";
 import StepTramite from "./StepTramite";
-import { analyzeDocumentImage } from "../../services/aiService";
+import { analyzeDocumentImage, extractClientDataFromChatText } from "../../services/aiService";
 import { uploadDocument } from "../../services/storageService";
 import { createCliente, updateCliente } from "../../services/clientesService";
 import { createEntrada, getCatalogoTramites, getOperarios } from "../../services/tramitesService";
@@ -123,6 +123,68 @@ export default function NewClientWizard({ onClose, onClientCreated, mode = "full
     if (cleanNumbers.length === 8) handleCepSearch(cleanNumbers);
   };
 
+  const applyAiExtractedToWizardForm = (aiData) => {
+    if (!aiData || Object.keys(aiData).length === 0) return;
+
+    let nuevosNombres = formData.nombres;
+    let nuevosApellidos = formData.apellidos;
+
+    if (aiData.NOMBRE_COMPLETO) {
+      const parts = aiData.NOMBRE_COMPLETO.trim().split(" ");
+      if (parts.length > 2) {
+        nuevosNombres = parts.slice(0, parts.length - 2).join(" ");
+        nuevosApellidos = parts.slice(parts.length - 2).join(" ");
+      } else if (parts.length === 2) {
+        nuevosNombres = parts[0];
+        nuevosApellidos = parts[1];
+      } else {
+        nuevosNombres = parts[0];
+      }
+    }
+
+    const dir = aiData.DIRECCION && typeof aiData.DIRECCION === 'object' ? aiData.DIRECCION : {};
+
+    setFormData((prev) => ({
+      ...prev,
+      nombres: nuevosNombres || prev.nombres,
+      apellidos: nuevosApellidos || prev.apellidos,
+      cpf: aiData.CPF || prev.cpf,
+      carnet_identidad: aiData.CARNET_IDENTIDAD || prev.carnet_identidad,
+      telefono: aiData.TELEFONO || prev.telefono,
+      email: aiData.EMAIL ? aiData.EMAIL.toLowerCase() : prev.email,
+      cep: dir.cep || prev.cep,
+      endereco: dir.endereco || prev.endereco,
+      numero: dir.numero || prev.numero,
+      complemento: dir.complemento || prev.complemento,
+      bairro: dir.bairro || prev.bairro,
+      cidade: dir.cidade || aiData.CIUDAD || prev.cidade,
+      estado: dir.estado || aiData.ESTADO || prev.estado,
+      ponto_referencia: dir.ponto_referencia || prev.ponto_referencia,
+    }));
+  };
+
+  const handleChatPaste = async () => {
+    const raw = window.prompt("Pegá aquí el texto del chat de WhatsApp o conversación del cliente:");
+    if (!raw || !raw.trim()) return;
+
+    setIsExtracting(true);
+    const toastId = toast.loading("Analizando texto con IA...");
+    try {
+      const aiData = await extractClientDataFromChatText(raw.trim());
+      if (aiData && Object.keys(aiData).length > 0) {
+        applyAiExtractedToWizardForm(aiData);
+        toast.success("¡Datos del chat extraídos y aplicados!", { id: toastId });
+      } else {
+        toast.error("No se encontraron datos extraíbles en el texto.", { id: toastId });
+      }
+    } catch (err) {
+      console.error("Error analizando chat:", err);
+      toast.error("No se pudo extraer información del chat.", { id: toastId });
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -141,31 +203,8 @@ export default function NewClientWizard({ onClose, onClientCreated, mode = "full
       const aiData = await analyzeDocumentImage(fileOrBase64);
 
       if (aiData && Object.keys(aiData).length > 0) {
-        let nuevosNombres = formData.nombres;
-        let nuevosApellidos = formData.apellidos;
-
-        if (aiData.NOMBRE_COMPLETO) {
-          const parts = aiData.NOMBRE_COMPLETO.split(" ");
-          if (parts.length > 2) {
-            nuevosNombres = parts.slice(0, parts.length - 2).join(" ");
-            nuevosApellidos = parts.slice(parts.length - 2).join(" ");
-          } else if (parts.length === 2) {
-            nuevosNombres = parts[0];
-            nuevosApellidos = parts[1];
-          } else {
-            nuevosNombres = parts[0];
-          }
-        }
-
-        setFormData((prev) => ({
-          ...prev,
-          nombres: nuevosNombres || prev.nombres,
-          apellidos: nuevosApellidos || prev.apellidos,
-          cpf: aiData.CPF || prev.cpf,
-          carnet_identidad: aiData.CARNET_IDENTIDAD || prev.carnet_identidad,
-        }));
-
-        toast.success("¡Datos autocompletados con éxito!", { id: toastId });
+        applyAiExtractedToWizardForm(aiData);
+        toast.success("¡Datos del documento autocompletados con éxito!", { id: toastId });
       } else {
         toast.error("No se pudo extraer información útil.", { id: toastId });
       }
@@ -346,7 +385,17 @@ export default function NewClientWizard({ onClose, onClientCreated, mode = "full
       >
         <form id="new-client-quick-form" onSubmit={handleQuickSubmit} className="flex flex-col gap-4">
           {errorMessage && <ErrorBanner message={errorMessage} />}
-          <StepPersonalData formData={formData} updateField={updateField} visibleError={visibleError} quick />
+          <StepPersonalData
+            formData={formData}
+            updateField={updateField}
+            visibleError={visibleError}
+            quick
+            handleFileUpload={handleFileUpload}
+            handleChatPaste={handleChatPaste}
+            isExtracting={isExtracting}
+            uploadedFile={uploadedFile}
+            fileInputRef={fileInputRef}
+          />
         </form>
       </Modal>
     );
@@ -393,7 +442,16 @@ export default function NewClientWizard({ onClose, onClientCreated, mode = "full
 
         {step === 1 && (
           <form id="wizard-step-1" onSubmit={handleStep1Next}>
-            <StepPersonalData formData={formData} updateField={updateField} visibleError={visibleError} />
+            <StepPersonalData
+              formData={formData}
+              updateField={updateField}
+              visibleError={visibleError}
+              handleFileUpload={handleFileUpload}
+              handleChatPaste={handleChatPaste}
+              isExtracting={isExtracting}
+              uploadedFile={uploadedFile}
+              fileInputRef={fileInputRef}
+            />
           </form>
         )}
 

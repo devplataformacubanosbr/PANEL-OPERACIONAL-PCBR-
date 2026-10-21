@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { User, Search, Edit2, Copy, Check, Plus, X, Trash2, Loader2, GripVertical } from 'lucide-react';
+import { User, Search, Edit2, Copy, Check, Plus, X, Trash2, Loader2, GripVertical, Sparkles } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -59,7 +59,9 @@ const ClientPersonalData = ({
   onSaveFieldValue,
   onDeleteCategory,
   onDeleteField,
-  onReorderFields
+  onReorderFields,
+  onScanChat,
+  isScanningChat
 }) => {
   // Estos identificadores de "Documentos de Identidad" ya se muestran con su
   // propio diseño agrupado en "Documentos Asociados" (docGroups, más abajo);
@@ -561,6 +563,29 @@ const ClientPersonalData = ({
               style={{ paddingLeft: '2.2rem', width: '100%', fontSize: '0.875rem' }}
             />
           </div>
+          {onScanChat && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={onScanChat}
+              disabled={isScanningChat}
+              style={{
+                flexShrink: 0,
+                background: 'linear-gradient(135deg, rgba(55,138,221,0.15), rgba(124,92,191,0.15))',
+                borderColor: 'rgba(55,138,221,0.3)',
+                color: 'var(--brand-primary, #378ADD)',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+              title="Escanear conversación de WhatsApp y autocompletar la ficha con IA"
+            >
+              {isScanningChat ? (
+                <Loader2 size={14} className="animate-spin" style={{ marginRight: '4px' }} />
+              ) : (
+                <Sparkles size={14} style={{ marginRight: '4px' }} />
+              )}
+              Escanear Chat ✨
+            </button>
+          )}
           <button className="btn btn-secondary btn-sm" onClick={() => openEditModal('ALL_PERSONAL')} style={{ flexShrink: 0 }}>
             <Edit2 size={14} style={{ marginRight: '4px' }} /> Editar Datos
           </button>

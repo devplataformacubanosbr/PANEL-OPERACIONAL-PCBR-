@@ -259,6 +259,133 @@ Usa null para los campos que no estén visibles en el documento. No inventes dat
 }
 
 // ──────────────────────────────────────────────────────────────
+// FUNCIÓN 1.2 — Extraer datos personales y familiares desde el chat (WhatsApp / CRM)
+// ──────────────────────────────────────────────────────────────
+/**
+ * Analiza un hilo de conversación de WhatsApp o texto pegado y extrae entidades del cliente
+ * y posibles familiares mencionados.
+ * @param {string|Array} chatInput - Texto completo o array de mensajes
+ * @param {Array<{identificador: string, nombre_campo: string}>} [knownCustomFields]
+ * @returns {Promise<object>} Campos del cliente, dirección estructurada y familiares
+ */
+export async function extractClientDataFromChatText(chatInput, knownCustomFields = []) {
+  if (!chatInput) return {};
+
+  let formattedText = '';
+  if (Array.isArray(chatInput)) {
+    if (chatInput.length === 0) return {};
+    formattedText = chatInput
+      .map(m => {
+        const remitente = (!m.remitente || m.remitente === 'incoming' || m.tipo === 'entrante') ? 'Cliente' : 'Operador/Agente';
+        const fecha = m.fecha_recepcion || m.created_at || '';
+        const timeStr = fecha ? `[${new Date(fecha).toLocaleDateString()} ${new Date(fecha).toLocaleTimeString()}] ` : '';
+        return `${timeStr}${remitente}: ${m.texto || ''}`;
+      })
+      .filter(line => line.trim().length > 0)
+      .join('\n');
+  } else {
+    formattedText = String(chatInput).trim();
+  }
+
+  if (!formattedText) return {};
+
+  const knownCustomFieldsBlock = knownCustomFields.length > 0
+    ? `\nCAMPOS PERSONALIZADOS DISPONIBLES EN EL SISTEMA:\n${knownCustomFields.map(f => ` - ${f.identificador.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n`
+    : '';
+
+  const prompt = `Eres un asistente de inteligencia artificial especializado en extracción precisa de entidades y datos para una agencia de asesoría migratoria y jurídica en Brasil.
+Tu tarea es leer atentamente la transcripción de una conversación de chat (WhatsApp o CRM) entre un cliente y la agencia, y extraer TODOS los datos personales, de contacto, documentos, dirección y familiares mencionados.
+
+TEXTO DE LA CONVERSACIÓN:
+"""
+${formattedText}
+"""
+${knownCustomFieldsBlock}
+REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
+1. IDENTIFICACIÓN DEL CLIENTE TITULAR:
+   - Extrae el nombre completo del CLIENTE TITULAR que habla o sobre quien se tramita la cuenta.
+   - Si dice "Hola, soy Yaisel Rodríguez García", el titular es "YAISEL RODRÍGUEZ GARCÍA".
+2. DOCUMENTOS Y FORMATOS:
+   - CPF: Extrae los dígitos y dale formato XXX.XXX.XXX-XX si es posible.
+   - FECHAS: Convierte cualquier fecha (nacimiento, emisión, etc.) a formato DD/MM/YYYY estricto.
+   - SEXO: Usa "Masculino" o "Feminino".
+   - ESTADO CIVIL: "Soltero(a)", "Casado(a)", "Divorciado(a)", "Viudo(a)", "Unión Estable".
+   - TELÉFONO: Extrae el número si se menciona.
+   - EMAIL: Extrae correo electrónico si se menciona.
+   - PASAPORTE / RNM / PROTOCOLO REFUGIO: Extrae sus números si se mencionan.
+3. DIRECCIÓN EN BRASIL:
+   - Si el cliente menciona su domicilio o dirección (ej. "Rua Augusta 500 apto 12, Consolação, São Paulo, CEP 01305-000"):
+     Estructúrala en el sub-objeto "DIRECCION" separando:
+     - "endereco": Nombre de la calle / avenida / logradouro (ej. "Rua Augusta")
+     - "numero": Número del inmueble (ej. "500")
+     - "complemento": Apto, casa, bloque (ej. "Apto 12")
+     - "bairro": Barrio (ej. "Consolação")
+     - "cidade": Ciudad (ej. "São Paulo")
+     - "estado": Estado o sigla UF (ej. "SP" o "São Paulo")
+     - "cep": Código postal en formato XXXXX-XXX
+     - "ponto_referencia": Referencia si se menciona
+4. FAMILIARES / PERSONAS RELACIONADAS MENCIONADAS:
+   - Si en el chat el cliente menciona familiares o acompañantes (ej. "vengo con mi esposa Dayami", "mi hijo Kevin de 4 años", "mi madre María García"):
+     Agrégalos en el array "FAMILIARES_MENCIONADOS" con los siguientes campos:
+     {
+       "nombre": "DAYAMI ...",
+       "parentesco": "Esposa" | "Esposo" | "Hijo(a)" | "Madre" | "Padre" | "Hermano(a)" | "Familiar",
+       "cpf": "XXX.XXX.XXX-XX" (si lo menciona o null),
+       "detalles": "Cualquier detalle relevante mencionado en el chat (edad, situación migratoria, etc.)"
+     }
+5. NO INVENTES NADA:
+   - Si un dato no se menciona en el chat, déjalo en null o array vacío.
+   - Devuelve ÚNICAMENTE un objeto JSON válido (sin markdown, sin bloques de código, sin <think>).
+
+FORMATO JSON DE RESPUESTA:
+{
+  "NOMBRE_COMPLETO": null,
+  "CPF": null,
+  "TELEFONO": null,
+  "EMAIL": null,
+  "NACIONALIDAD": null,
+  "FECHA_NACIMIENTO": null,
+  "SEXO": null,
+  "ESTADO_CIVIL": null,
+  "LUGAR_NACIMIENTO": null,
+  "NUMERO_DOCUMENTO": null,
+  "RNM": null,
+  "CARNET_IDENTIDAD": null,
+  "NUMERO_REFUGIO": null,
+  "NOMBRE_MADRE": null,
+  "NOMBRE_PADRE": null,
+  "DIRECCION": {
+    "endereco": null,
+    "numero": null,
+    "complemento": null,
+    "bairro": null,
+    "cidade": null,
+    "estado": null,
+    "cep": null,
+    "ponto_referencia": null
+  },
+  "FAMILIARES_MENCIONADOS": [],
+  "CAMPOS_ADICIONALES": {}
+}`;
+
+  const raw = await callGroq(
+    MODEL_TEXT,
+    [{ role: 'user', content: prompt }],
+    0.1,
+    { type: 'json_object' },
+    'none'
+  );
+
+  try {
+    const parsed = JSON.parse(cleanJson(raw));
+    return parsed;
+  } catch (err) {
+    console.warn('[aiService] Error parseando JSON de extracción de chat:', err, raw);
+    return {};
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
 // FUNCIÓN 1.5 — Analizar logo de marca y sugerir colores (branding)
 // ──────────────────────────────────────────────────────────────
 const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;

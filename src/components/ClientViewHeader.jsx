@@ -22,6 +22,8 @@ export default function ClientViewHeader({
   onGeneratePassword,
   onGenerateNumero,
   portalLoading,
+  onScanChat,
+  isScanningChat,
 }) {
   const fieldsToRender = configCabecera || ['telefono', 'email'];
 
@@ -118,6 +120,25 @@ export default function ClientViewHeader({
           <PenTool size={16} />
           Extraer Firma
         </button>
+        {onScanChat && (
+          <button
+            className="btn btn-secondary"
+            onClick={onScanChat}
+            disabled={isScanningChat}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              background: 'linear-gradient(135deg, rgba(55,138,221,0.15), rgba(124,92,191,0.15))',
+              borderColor: 'rgba(55,138,221,0.3)',
+              color: 'var(--brand-primary, #378ADD)'
+            }}
+            title="Escanear conversación de WhatsApp y autocompletar la ficha con IA"
+          >
+            {isScanningChat ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            Escanear Chat ✨
+          </button>
+        )}
         <button className="btn btn-secondary" onClick={() => openEditModal && openEditModal('ALL_PERSONAL')}><Edit2 size={16} /> Editar Datos</button>
       </div>
 

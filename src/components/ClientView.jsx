@@ -20,7 +20,8 @@
 import React, { useState, useCallback, useMemo, lazy, Suspense } from 'react';
 import { supabase } from '../supabaseClient';
 import toast from 'react-hot-toast';
-import { analyzeDocumentImage } from '../services/aiService';
+import { analyzeDocumentImage, extractClientDataFromChatText } from '../services/aiService';
+import { applyExtractedDataToClient, createAndLinkRelative } from '../services/clientExtractionService';
 import useClientAiChat from '../hooks/useClientAiChat';
 import { useOrganization } from '../context/OrganizationContext';
 
@@ -53,6 +54,7 @@ const ClientViewRelateModal = lazy(() => import('./ClientViewRelateModal'));
 const ClientViewNewTramiteModal = lazy(() => import('./ClientViewNewTramiteModal'));
 const ClientViewEditModal = lazy(() => import('./ClientViewEditModal'));
 const ClientViewExtractionModal = lazy(() => import('./ClientViewExtractionModal'));
+const ClientChatExtractionModal = lazy(() => import('./ClientChatExtractionModal'));
 const SignatureExtractorModal = lazy(() => import('./SignatureExtractorModal'));
 const SyncDataModal = lazy(() => import('./SyncDataModal'));
 import useClientData from '../hooks/useClientData';
@@ -469,6 +471,122 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
     }
   };
 
+  // ── Extracción Inteligente desde el Chat (Flujo B & C) ───────────────────────
+  const [isScanningChat, setIsScanningChat] = useState(false);
+  const [chatExtractionData, setChatExtractionData] = useState(null);
+  const [isChatExtractionModalOpen, setIsChatExtractionModalOpen] = useState(false);
+  const [isApplyingChatData, setIsApplyingChatData] = useState(false);
+
+  const handleScanChat = async () => {
+    if (!client?.id) return;
+    setIsScanningChat(true);
+    const toastId = toast.loading('Consultando historial de chat de WhatsApp...');
+
+    try {
+      // 1. Consultar mensajes de la tabla mensajes
+      const { data: mensajes, error: msgError } = await supabase
+        .from('mensajes')
+        .select('id, cliente_id, texto, remitente, tipo, fecha_recepcion, created_at')
+        .eq('cliente_id', client.id)
+        .order('fecha_recepcion', { ascending: true })
+        .limit(100);
+
+      if (msgError) throw msgError;
+
+      let chatInput = mensajes;
+      if (!mensajes || mensajes.length === 0) {
+        toast.dismiss(toastId);
+        // Si no hay mensajes registrados automáticamente, dar opción de pegar
+        const pasted = window.prompt(
+          'No se encontraron mensajes automáticos de WhatsApp en la base de datos para este cliente.\n\n¿Deseas pegar una conversación de chat o texto para analizarlo ahora?'
+        );
+        if (!pasted || !pasted.trim()) {
+          setIsScanningChat(false);
+          return;
+        }
+        chatInput = pasted.trim();
+        toast.loading('Analizando texto con IA...', { id: toastId });
+      } else {
+        toast.loading(`Analizando ${mensajes.length} mensajes con IA...`, { id: toastId });
+      }
+
+      // 2. Extraer datos con Groq / aiService
+      const extracted = await extractClientDataFromChatText(
+        chatInput,
+        getExtraCustomFieldsForAiPrompt(customFieldsConfig)
+      );
+
+      toast.dismiss(toastId);
+
+      // Verificar si la IA encontró algún dato relevante
+      const hasTitularData = Object.keys(extracted).some(
+        k => !['FAMILIARES_MENCIONADOS', 'CAMPOS_ADICIONALES', 'DIRECCION'].includes(k) && extracted[k]
+      ) || (extracted.DIRECCION && Object.values(extracted.DIRECCION).some(Boolean));
+      const hasFamiliares = Array.isArray(extracted.FAMILIARES_MENCIONADOS) && extracted.FAMILIARES_MENCIONADOS.length > 0;
+
+      if (!hasTitularData && !hasFamiliares) {
+        toast('No se encontraron nuevos datos personales ni familiares en los mensajes analizados.', { icon: 'ℹ️' });
+        setIsScanningChat(false);
+        return;
+      }
+
+      setChatExtractionData(extracted);
+      setIsChatExtractionModalOpen(true);
+    } catch (err) {
+      console.error('[ClientView] handleScanChat error:', err);
+      toast.dismiss(toastId);
+      toast.error('Error al analizar la conversación: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setIsScanningChat(false);
+    }
+  };
+
+  const handleApplyChatData = async ({ clientUpdates, relativesToCreate = [] }) => {
+    setIsApplyingChatData(true);
+    const toastId = toast.loading('Guardando datos en la ficha...');
+    try {
+      // 1. Aplicar datos del cliente titular
+      if (clientUpdates && Object.keys(clientUpdates).length > 0) {
+        await applyExtractedDataToClient({
+          targetClientId: client.id,
+          extractedData: clientUpdates,
+          customFieldsConfig,
+          skipIfAlreadyFilled: false
+        });
+      }
+
+      // 2. Crear y vincular familiares detectados en el chat
+      let createdRelativesCount = 0;
+      for (const rel of relativesToCreate) {
+        try {
+          const res = await createAndLinkRelative({
+            currentCliente: client,
+            relativeData: rel
+          });
+          if (res) createdRelativesCount++;
+        } catch (relErr) {
+          console.warn('[ClientView] Error vinculando familiar:', relErr);
+        }
+      }
+
+      toast.dismiss(toastId);
+      toast.success(
+        `Ficha actualizada con éxito ✨` +
+        (createdRelativesCount > 0 ? ` (${createdRelativesCount} familiar(es) vinculado(s))` : '')
+      );
+
+      setIsChatExtractionModalOpen(false);
+      setChatExtractionData(null);
+      await fetchClientData(true);
+    } catch (err) {
+      console.error('[ClientView] handleApplyChatData error:', err);
+      toast.dismiss(toastId);
+      toast.error('Error guardando los datos: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setIsApplyingChatData(false);
+    }
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{ padding: 'var(--section-gap, 16px)', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="animate-fade-in">
@@ -491,6 +609,8 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         onGeneratePassword={handleGeneratePassword}
         onGenerateNumero={handleGenerateNumero}
         portalLoading={portalLoading}
+        onScanChat={handleScanChat}
+        isScanningChat={isScanningChat}
       />
 
       <div
@@ -514,6 +634,8 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             onDeleteCategory={edit.handleDeleteCategory}
             onDeleteField={edit.handleDeleteField}
             onReorderFields={edit.handleReorderFields}
+            onScanChat={handleScanChat}
+            isScanningChat={isScanningChat}
           />
           <ClientHistory clientId={clientId} />
         </div>
@@ -688,6 +810,17 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
           isSaving={extraction.isSaving}
           onNavigateToClient={onNavigateToClient}
         />
+
+        {isChatExtractionModalOpen && (
+          <ClientChatExtractionModal
+            isOpen={isChatExtractionModalOpen}
+            onClose={() => setIsChatExtractionModalOpen(false)}
+            client={client}
+            extractedData={chatExtractionData}
+            onApply={handleApplyChatData}
+            isApplying={isApplyingChatData}
+          />
+        )}
 
         <ClientViewNewTramiteModal
           isOpen={tramites.isNewTramiteModalOpen}
