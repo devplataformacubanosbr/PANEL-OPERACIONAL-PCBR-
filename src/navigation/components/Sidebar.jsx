@@ -37,6 +37,7 @@ export default function Sidebar({
   navigateToTeamManagement,
   navigateToDirectory,
   navigateToSettings,
+  navigateToAgent,
 }) {
   const { userProfile, logout, isAdmin } = useAuth();
   const { organizationName, logoUrl } = useOrganization();
@@ -145,9 +146,9 @@ export default function Sidebar({
               />
             }
             label="Piloto Automático"
-            active={isModalOpen}
+            active={currentView === 'agent'}
             isExpanded={isExpanded}
-            onClick={openControlCenter}
+            onClick={() => handleNavClick(navigateToAgent || openControlCenter)}
             badge={
               <span
                 className={cn(

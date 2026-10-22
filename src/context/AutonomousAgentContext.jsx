@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
-import { runAgentCycle, processNextPendingDocument, harvestNextClientChat } from '../services/autonomousAgentService';
+import {
+  runAgentCycle,
+  processNextPendingDocument,
+  harvestNextClientChat,
+  getUpcomingQueue
+} from '../services/autonomousAgentService.js';
 
 const AutonomousAgentContext = createContext(null);
 
@@ -50,6 +55,26 @@ export const AutonomousAgentProvider = ({ children }) => {
   // Registro de actividad en vivo (Live Logs)
   const [recentLogs, setRecentLogs] = useState([]);
 
+  // Historial rico con tarjetas visuales detalladas (QUÉ HIZO)
+  const [richHistory, setRichHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('app_autopilot_rich_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Cola de próximas tareas (QUÉ HARÁ)
+  const [upcomingQueue, setUpcomingQueue] = useState([]);
+  const [totalPendingCount, setTotalPendingCount] = useState(0);
+
+  // Monitor en vivo del paso actual (QUÉ ESTÁ HACIENDO AHORA)
+  const [currentActivity, setCurrentActivity] = useState(null);
+
+  // Contador de cuenta regresiva para el próximo ciclo
+  const [countdown, setCountdown] = useState(35);
+
   // Configuración de alcances del agente
   const [settings, setSettings] = useState(() => {
     try {
@@ -71,6 +96,24 @@ export const AutonomousAgentProvider = ({ children }) => {
   useEffect(() => {
     localStorage.setItem('app_autopilot_settings', JSON.stringify(settings));
   }, [settings]);
+
+  // Guardar historial rico
+  useEffect(() => {
+    try {
+      localStorage.setItem('app_autopilot_rich_history', JSON.stringify(richHistory.slice(0, 50)));
+    } catch (_) {}
+  }, [richHistory]);
+
+  // Actualizar cola de próximas tareas
+  const refreshQueue = useCallback(async () => {
+    try {
+      const res = await getUpcomingQueue(8);
+      if (res && res.items) {
+        setUpcomingQueue(res.items);
+        setTotalPendingCount(res.totalPending);
+      }
+    } catch (_) {}
+  }, []);
 
   // Helper para añadir logs en tiempo real
   const addLog = useCallback((logEntry) => {
@@ -133,11 +176,59 @@ export const AutonomousAgentProvider = ({ children }) => {
     else startAgent();
   };
 
+  // ── EJECUTAR UN SOLO CICLO DEL AGENTE ───────────────────────────────────────
+  const executeCycle = useCallback(async () => {
+    if (inCycleRef.current || isProcessingNow) return null;
+    inCycleRef.current = true;
+    setIsProcessingNow(true);
+
+    setCurrentActivity({
+      step: 'Escaneando documentos entrantes...',
+      detail: 'Revisando WhatsApp y Kommo en busca de nuevos archivos y chats'
+    });
+
+    let cycleResult = null;
+    try {
+      cycleResult = await runAgentCycle(settings, (log) => {
+        addLog(log);
+        if (log.message) {
+          setCurrentActivity({
+            step: log.type === 'error' ? 'Incidencia' : 'Procesando con IA Visión',
+            detail: log.message,
+            docName: log.docName || '',
+            clientName: log.clientName || ''
+          });
+        }
+      });
+
+      if (cycleResult && cycleResult.details) {
+        const item = {
+          id: 'rich_' + Date.now() + Math.random().toString(36).substring(2, 6),
+          timestamp: new Date().toLocaleTimeString(),
+          date: new Date().toLocaleDateString(),
+          task: cycleResult.task,
+          ...cycleResult.details
+        };
+
+        setRichHistory(prev => [item, ...prev.slice(0, 49)]);
+      }
+
+      await refreshQueue();
+    } catch (err) {
+      addLog({ type: 'error', message: `❌ Error en ciclo: ${err.message}` });
+    } finally {
+      setIsProcessingNow(false);
+      inCycleRef.current = false;
+      setCurrentActivity(null);
+      setCountdown(settings.cycleIntervalSecs || 35);
+    }
+
+    return cycleResult;
+  }, [settings, addLog, refreshQueue, isProcessingNow]);
+
   // ── EJECUTAR UN LOTE BAJO DEMANDA ("PROCESAR AHORA") ───────────────────────
   const runBatchNow = async (count = 5) => {
     if (isProcessingNow) return;
-    setIsProcessingNow(true);
-
     addLog({
       type: 'info',
       message: `⚡ Iniciando lote manual de ${count} tareas prioritarias con IA...`
@@ -146,55 +237,45 @@ export const AutonomousAgentProvider = ({ children }) => {
     let processed = 0;
     for (let i = 0; i < count; i++) {
       try {
-        const res = await runAgentCycle(settings, addLog);
-        if (res.task !== 'idle') {
+        const res = await executeCycle();
+        if (res && res.task !== 'idle') {
           processed++;
-          // Pausa breve de cortesía de 1.8 segundos entre llamadas para respetar límites de Groq
           await new Promise(r => setTimeout(r, 1800));
         } else {
           addLog({ type: 'info', message: '✨ No hay más tareas pendientes por procesar en este momento.' });
           break;
         }
       } catch (err) {
-        addLog({ type: 'error', message: `❌ Error en ciclo: ${err.message}` });
         break;
       }
     }
 
-    setIsProcessingNow(false);
     toast.success(`Lote completado: ${processed} tareas procesadas exitosamente.`);
   };
 
-  // ── BUCLE AUTÓNOMO EN SEGUNDO PLANO ─────────────────────────────────────────
+  // ── INICIALIZACIÓN Y COUNTDOWN ──────────────────────────────────────────────
   useEffect(() => {
-    if (!isAgentRunning) return;
+    refreshQueue();
+  }, [refreshQueue]);
 
-    const intervalMs = Math.max(15, settings.cycleIntervalSecs || 35) * 1000;
+  useEffect(() => {
+    if (!isAgentRunning) {
+      setCountdown(settings.cycleIntervalSecs || 35);
+      return;
+    }
 
-    const runCycle = async () => {
-      if (inCycleRef.current || isProcessingNow) return;
-      inCycleRef.current = true;
-      setIsProcessingNow(true);
+    const timer = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          executeCycle();
+          return settings.cycleIntervalSecs || 35;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
-      try {
-        await runAgentCycle(settings, addLog);
-      } catch (e) {
-        console.warn('[AutonomousAgent] Error en ciclo autónomo:', e);
-      } finally {
-        setIsProcessingNow(false);
-        inCycleRef.current = false;
-      }
-    };
-
-    // Ejecutar primer ciclo tras 3 segundos de gracia al montar
-    const timeoutId = setTimeout(runCycle, 3000);
-    const intervalId = setInterval(runCycle, intervalMs);
-
-    return () => {
-      clearTimeout(timeoutId);
-      clearInterval(intervalId);
-    };
-  }, [isAgentRunning, settings, addLog, isProcessingNow]);
+    return () => clearInterval(timer);
+  }, [isAgentRunning, settings.cycleIntervalSecs, executeCycle]);
 
   const updateSettings = (newSettings) => {
     setSettings(prev => ({ ...prev, ...newSettings }));
@@ -205,6 +286,12 @@ export const AutonomousAgentProvider = ({ children }) => {
     setRecentLogs([]);
   };
 
+  const clearRichHistory = () => {
+    setRichHistory([]);
+    localStorage.removeItem('app_autopilot_rich_history');
+    toast.success('Historial visual de resultados reiniciado.');
+  };
+
   return (
     <AutonomousAgentContext.Provider
       value={{
@@ -212,15 +299,23 @@ export const AutonomousAgentProvider = ({ children }) => {
         isProcessingNow,
         stats,
         recentLogs,
+        richHistory,
+        upcomingQueue,
+        totalPendingCount,
+        currentActivity,
+        countdown,
         settings,
         isModalOpen,
         setIsModalOpen,
         startAgent,
         pauseAgent,
         toggleAgent,
+        executeCycle,
         runBatchNow,
+        refreshQueue,
         updateSettings,
         clearLogs,
+        clearRichHistory,
         openControlCenter: () => setIsModalOpen(true),
         closeControlCenter: () => setIsModalOpen(false)
       }}

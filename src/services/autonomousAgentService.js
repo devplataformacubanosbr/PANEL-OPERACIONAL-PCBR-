@@ -169,15 +169,26 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
     window.dispatchEvent(new CustomEvent('generatePdfUnicoCheck', { detail: { clientId: finalClientId } }));
 
     // Si el documento clasificado fue un Pasaporte o Carnet, intentar extraer firma de inmediato
+    let signatureRes = null;
     if (options.autoExtractSignatures && (tipoDoc.includes('PASAPORTE') || tipoDoc.includes('CARNET'))) {
-      await autoExtractClientSignature(finalClientId, fileOrBase64, finalName, logCallback);
+      signatureRes = await autoExtractClientSignature(finalClientId, fileOrBase64, finalName, logCallback);
     }
+
+    const formattedName = `${tipoDoc.toUpperCase()} - ${finalName.toUpperCase()}`;
 
     return {
       success: true,
       action: moved ? 'moved_to_relative' : 'organized_client_doc',
       docId: doc.id,
+      clientId: finalClientId,
+      clientName: finalName,
       tipoDoc,
+      originalFileName: doc.nombre_archivo,
+      newFileName: formattedName,
+      extractedData: aiData,
+      signatureBase64: signatureRes?.signatureBase64 || null,
+      moved,
+      isNewClient,
       targetClient: finalName
     };
   } catch (err) {
@@ -301,7 +312,7 @@ export async function autoExtractClientSignature(clientId, imageSource, clientNa
     });
 
     window.dispatchEvent(new CustomEvent('refreshClientData', { detail: { clientId } }));
-    return { success: true, docId: uploadRes.data.id };
+    return { success: true, docId: uploadRes.data.id, signatureBase64: result.base64 };
   } catch (err) {
     logCallback({
       type: 'error',
@@ -368,10 +379,17 @@ export async function harvestNextClientChat(logCallback = () => {}) {
         logCallback({
           type: 'success',
           message: `💬 Chat cosechado para ${client.nombre}: rescatado ${validCpf ? 'CPF ' + validCpf : ''} ${validEmail ? 'Email ' + validEmail : ''}`,
-          clientId: client.id
+          clientId: client.id,
+          clientName: client.nombre
         });
 
-        return { success: true, clientId: client.id, updates };
+        return {
+          success: true,
+          action: 'chat_harvested',
+          clientId: client.id,
+          clientName: client.nombre,
+          updates
+        };
       }
     }
 
@@ -402,4 +420,41 @@ export async function runAgentCycle(settings = {}, logCallback = () => {}) {
   }
 
   return { task: 'idle', message: 'No hay tareas pendientes en este ciclo.' };
+}
+
+// ── 5. OBTENER COLA DE PRÓXIMAS TAREAS (BACKLOG) ─────────────────────────────
+export async function getUpcomingQueue(limit = 8) {
+  try {
+    const { data: docs, error, count } = await supabase
+      .from('documentos_pendientes')
+      .select('id, cliente_id, nombre_archivo, tipo_contenido, fecha_recepcion', { count: 'exact' })
+      .not('nombre_archivo', 'like', '% - %')
+      .not('nombre_archivo', 'ilike', '%BORROSO%')
+      .not('nombre_archivo', 'ilike', '%ERROR%')
+      .order('fecha_recepcion', { ascending: false })
+      .limit(limit);
+
+    if (error || !docs) return { items: [], totalPending: 0 };
+
+    const clientIds = [...new Set(docs.map(d => d.cliente_id).filter(Boolean))];
+    let clientMap = {};
+    if (clientIds.length > 0) {
+      const { data: clients } = await supabase
+        .from('clientes')
+        .select('id, nombre')
+        .in('id', clientIds);
+      if (clients) {
+        clientMap = clients.reduce((acc, c) => ({ ...acc, [c.id]: c.nombre }), {});
+      }
+    }
+
+    const enriched = docs.map(d => ({
+      ...d,
+      clientName: clientMap[d.cliente_id] || `Cliente #${d.cliente_id}`
+    }));
+
+    return { items: enriched, totalPending: count || docs.length };
+  } catch {
+    return { items: [], totalPending: 0 };
+  }
 }

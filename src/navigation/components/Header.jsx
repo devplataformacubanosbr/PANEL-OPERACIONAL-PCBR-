@@ -32,6 +32,7 @@ export default function Header({
   navigateToDashboard,
   navigateToClientsList,
   navigateToSettings,
+  navigateToAgent,
   globalSearch,
   handleSearchChange,
   onClearSearch,
@@ -190,6 +191,16 @@ export default function Header({
               </span>
             </>
           )}
+
+          {currentView === 'agent' && (
+            <>
+              <ChevronRight size={13} className="text-chrome-border shrink-0" />
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 font-semibold text-indigo-300 bg-indigo-500/20 border border-indigo-500/40 rounded-md shadow-sm">
+                <Bot size={14} className="text-indigo-400" />
+                <span>Centro de Control IA (Piloto)</span>
+              </span>
+            </>
+          )}
         </nav>
       </div>
 
@@ -267,15 +278,23 @@ export default function Header({
       <div className="flex flex-1 items-center justify-end gap-2">
         {/* Piloto Automático IA */}
         <button
-          onClick={openControlCenter}
+          onClick={() => {
+            if (navigateToAgent) {
+              navigateToAgent();
+            } else {
+              openControlCenter();
+            }
+          }}
           className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all duration-200 ${
-            isProcessingNow
-              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.25)] animate-pulse'
-              : isAgentRunning
-                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.2)] hover:bg-emerald-500/25'
-                : 'bg-chrome-bg-raised/70 border-chrome-border text-chrome-text hover:text-white hover:border-chrome-accent/50'
+            currentView === 'agent'
+              ? 'bg-indigo-600/30 border-indigo-500/70 text-indigo-200 ring-2 ring-indigo-500/40 shadow-[0_0_15px_rgba(99,102,241,0.35)]'
+              : isProcessingNow
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.25)] animate-pulse'
+                : isAgentRunning
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.2)] hover:bg-emerald-500/25'
+                  : 'bg-chrome-bg-raised/70 border-chrome-border text-chrome-text hover:text-white hover:border-chrome-accent/50'
           }`}
-          title="Centro de Control del Piloto Automático IA"
+          title="Abrir Centro de Control del Piloto Automático IA"
         >
           <span className="relative flex h-2 w-2">
             {isAgentRunning && (
@@ -283,7 +302,7 @@ export default function Header({
             )}
             <span className={`relative inline-flex rounded-full h-2 w-2 ${isProcessingNow ? 'bg-amber-400' : isAgentRunning ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
           </span>
-          <Bot size={15} className={isProcessingNow ? 'animate-bounce text-amber-300' : isAgentRunning ? 'text-emerald-300' : 'text-chrome-text'} />
+          <Bot size={15} className={isProcessingNow ? 'animate-bounce text-amber-300' : currentView === 'agent' ? 'text-indigo-300' : isAgentRunning ? 'text-emerald-300' : 'text-chrome-text'} />
           <span className="hidden md:inline font-mono text-[11px] font-bold tracking-tight">
             {isProcessingNow ? 'IA Trabajando...' : isAgentRunning ? 'PILOTO ON' : 'PILOTO OFF'}
           </span>

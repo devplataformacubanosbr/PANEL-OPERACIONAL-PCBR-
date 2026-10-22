@@ -16,6 +16,7 @@ export const useNavigation = (isReady = true) => {
         if (hash === '#team-management') return 'team-management';
         if (hash === '#settings') return 'settings';
         if (hash === '#directory') return 'directory';
+        if (hash === '#agent') return 'agent';
         
         const saved = localStorage.getItem('app_currentView');
         if (saved) return saved;
@@ -56,6 +57,8 @@ export const useNavigation = (isReady = true) => {
             window.location.hash = 'settings';
         } else if (currentView === 'directory') {
             window.location.hash = 'directory';
+        } else if (currentView === 'agent') {
+            window.location.hash = 'agent';
         } else {
             window.location.hash = 'dashboard';
         }
@@ -87,6 +90,9 @@ export const useNavigation = (isReady = true) => {
                 setSelectedClientId(null);
             } else if (hash === '#directory') {
                 setCurrentView('directory');
+                setSelectedClientId(null);
+            } else if (hash === '#agent') {
+                setCurrentView('agent');
                 setSelectedClientId(null);
             } else {
                 setCurrentView('dashboard');
@@ -137,6 +143,11 @@ export const useNavigation = (isReady = true) => {
         setCurrentView('directory');
     }, []);
 
+    const navigateToAgent = useCallback(() => {
+        setSelectedClientId(null);
+        setCurrentView('agent');
+    }, []);
+
     return {
         currentView,
         selectedClientId,
@@ -148,5 +159,6 @@ export const useNavigation = (isReady = true) => {
         navigateToTeamManagement,
         navigateToSettings,
         navigateToDirectory,
+        navigateToAgent,
     };
 };

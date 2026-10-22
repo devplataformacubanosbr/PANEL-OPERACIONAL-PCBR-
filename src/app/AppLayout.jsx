@@ -43,6 +43,7 @@ const TeamManagement = lazy(() => import('../components/TeamManagement'));
 const SettingsView = lazy(() => import('../components/SettingsView'));
 const DirectoryView = lazy(() => import('../components/directory/DirectoryView'));
 const AutonomousAgentModal = lazy(() => import('../components/agent/AutonomousAgentModal'));
+const AgentCommandCenterView = lazy(() => import('../components/agent/AgentCommandCenterView'));
 
 import '../App.css';
 
@@ -66,6 +67,7 @@ export default function AppLayout() {
     navigateToTeamManagement,
     navigateToSettings,
     navigateToDirectory,
+    navigateToAgent,
   } = useNavigation(isAuthenticated);
 
   // --- Recent clients (accesos rápidos al enfocar la búsqueda vacía) ---
@@ -158,6 +160,7 @@ export default function AppLayout() {
           navigateToTeamManagement={navigateToTeamManagement}
           navigateToDirectory={navigateToDirectory}
           navigateToSettings={navigateToSettings}
+          navigateToAgent={navigateToAgent}
         />
 
         {/* Main Content Area */}
@@ -172,6 +175,7 @@ export default function AppLayout() {
             navigateToDashboard={navigateToDashboard}
             navigateToClientsList={navigateToClientsList}
             navigateToSettings={navigateToSettings}
+            navigateToAgent={navigateToAgent}
             globalSearch={globalSearch}
             handleSearchChange={handleSearchChange}
             onClearSearch={() => setGlobalSearch('')}
@@ -183,7 +187,7 @@ export default function AppLayout() {
           />
 
           {/* Main Content */}
-          <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: currentView === 'client' ? 'hidden' : 'auto' }}>
+          <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: (currentView === 'client' || currentView === 'agent') ? 'hidden' : 'auto' }}>
             <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><LoadingSpinner size="lg" /></div>}>
 
               {currentView === 'dashboard' && <DashboardView navigateToClientsList={navigateToClientsList} />}
@@ -193,6 +197,7 @@ export default function AppLayout() {
               {currentView === 'team-management' && <TeamManagement userProfile={userProfile} />}
               {currentView === 'settings' && <SettingsView userProfile={userProfile} />}
               {currentView === 'directory' && <DirectoryView />}
+              {currentView === 'agent' && <AgentCommandCenterView onNavigateToClient={navigateToClientTracked} />}
 
             </Suspense>
           </main>
