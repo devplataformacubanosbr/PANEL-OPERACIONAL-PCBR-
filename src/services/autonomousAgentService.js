@@ -31,6 +31,7 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       .select('*')
       .not('nombre_archivo', 'like', '% - %')
       .not('nombre_archivo', 'ilike', '%BORROSO%')
+      .not('nombre_archivo', 'ilike', '%ERROR%')
       .order('creado_en', { ascending: false })
       .limit(10);
 
@@ -56,6 +57,10 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       message: `📄 Analizando documento pendiente #${doc.id}: "${doc.nombre_archivo || 'Sin nombre'}"...`,
       clientId: doc.cliente_id
     });
+
+    // Resolver cliente para contexto
+    const currentCliente = await getCliente(doc.cliente_id).catch(() => null);
+    const clientName = currentCliente?.nombre || `Cliente #${doc.cliente_id}`;
 
     // Resolver ruta en storage
     let path = doc.url_archivo;
@@ -83,22 +88,45 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       throw new Error('La IA no devolvió datos estructurados para este documento.');
     }
 
-    // CASO A: Imagen borrosa o ilegible
+    // CASO A: Imagen borrosa o ilegible (HUMAN INTERVENTION REQUIRED)
     if (aiData.DOCUMENTO_BORROSO === true || aiData.ILEGIBLE === true) {
-      const motivo = aiData.MOTIVO_ILEGIBLE || 'Imagen borrosa o sin nitidez';
+      const motivo = aiData.MOTIVO_ILEGIBLE || 'Imagen borrosa, con reflejo o texto ilegible';
       const flaggedName = `⚠️ BORROSO - ${doc.nombre_archivo || 'Documento'}`;
       await supabase.from('documentos_pendientes').update({ nombre_archivo: flaggedName }).eq('id', doc.id);
 
+      // Crear alerta en notificaciones_equipo para que el operador lo vea en la campana
+      try {
+        await supabase.from('notificaciones_equipo').insert({
+          cliente_id: doc.cliente_id,
+          mensaje: `⚠️ Documento borroso recibido para ${clientName} (#${doc.cliente_id}): ${motivo}. Solicitar reenvío nítido.`
+        });
+      } catch (_) {}
+
+      const firstName = (clientName || '').split(' ')[0];
+      const suggestedMessage = `Hola ${firstName ? firstName + ', ' : ''}la foto del documento que nos envió no se puede leer con claridad (${motivo.toLowerCase()}). Por favor, ¿podría enviarnos una foto más nítida, enfocada y con buena iluminación?`;
+
       logCallback({
         type: 'warning',
-        message: `⚠️ Documento #${doc.id} marcado como BORROSO (${motivo}). La IA protegió la ficha y no inventó datos.`,
-        clientId: doc.cliente_id
+        message: `⚠️ Documento #${doc.id} marcado como BORROSO (${motivo}) para "${clientName}". Se aisló para revisión manual y se preparó mensaje de WhatsApp.`,
+        clientId: doc.cliente_id,
+        clientName,
+        docId: doc.id,
+        motivo,
+        suggestedMessage
       });
-      return { success: true, action: 'flagged_blurry', docId: doc.id, motivo };
+
+      return {
+        success: true,
+        action: 'flagged_blurry',
+        docId: doc.id,
+        clientId: doc.cliente_id,
+        clientName,
+        motivo,
+        suggestedMessage
+      };
     }
 
-    // CASO B: Documento con datos válidos
-    const currentCliente = await getCliente(doc.cliente_id);
+    // CASO B: Documento con datos válidos (100% AUTOMATIZADO)
     if (!currentCliente) {
       throw new Error(`Cliente #${doc.cliente_id} no encontrado en base de datos.`);
     }
@@ -118,7 +146,8 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       logCallback({
         type: 'success',
         message: `🔀 Documento "${tipoDoc}" pertenecía a un familiar: ${isNewClient ? 'Ficha creada para' : 'Vinculado a'} "${finalName}" con documento reasignado y ficha completada.`,
-        clientId: finalClientId
+        clientId: finalClientId,
+        clientName: finalName
       });
     } else {
       const formattedName = `${tipoDoc.toUpperCase()} - ${finalName.toUpperCase()}`;
@@ -126,8 +155,9 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
 
       logCallback({
         type: 'success',
-        message: `✨ Documento clasificado como "${formattedName}" y ficha de ${finalName} actualizada.`,
-        clientId: finalClientId
+        message: `✨ Documento clasificado automáticamente como "${formattedName}" y ficha de ${finalName} actualizada.`,
+        clientId: finalClientId,
+        clientName: finalName
       });
     }
 
@@ -148,11 +178,26 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       targetClient: finalName
     };
   } catch (err) {
+    // Si falló sobre un documento específico, marcarlo como ERROR para no trabar el ciclo
+    if (doc?.id) {
+      const errorName = `🚨 ERROR - ${doc.nombre_archivo || 'Documento'}`;
+      await supabase.from('documentos_pendientes').update({ nombre_archivo: errorName }).eq('id', doc.id).catch(() => {});
+      try {
+        await supabase.from('notificaciones_equipo').insert({
+          cliente_id: doc.cliente_id,
+          mensaje: `🚨 Revisión manual: Error en documento #${doc.id} (Cliente #${doc.cliente_id}): ${err.message}`
+        });
+      } catch (_) {}
+    }
+
     logCallback({
       type: 'error',
-      message: `❌ Error organizando documento: ${err.message}`
+      message: `❌ Error en documento #${doc?.id || 'desconocido'}: ${err.message}. Aislado para revisión manual humana.`,
+      clientId: doc?.cliente_id,
+      docId: doc?.id,
+      error: err.message
     });
-    return { success: false, error: err.message };
+    return { success: false, error: err.message, docId: doc?.id, clientId: doc?.cliente_id };
   }
 }
 
