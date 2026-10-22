@@ -19,17 +19,45 @@ const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'openai/gpt-oss-120b';   // Texto / razonamiento general
 const MODEL_VISION = 'qwen/qwen3.6-27b'; // Visión + OCR
 
-// La API Key ya no se expone aquí. Ahora usamos Supabase Edge Functions.
+function getApiKey() {
+  return import.meta.env.VITE_GROQ_API_KEY || '';
+}
 
 /**
- * Llamada base a Groq (openai-compatible).
- * @param {string} model
- * @param {Array}  messages
- * @param {number} temperature
- * @returns {Promise<string>} contenido del mensaje del asistente
+ * Llamada directa a Groq API como fallback de alta resiliencia
+ */
+async function callGroqDirect(model, messages, temperature = 0.1, responseFormat = null) {
+  const key = getApiKey();
+  const body = {
+    model,
+    messages,
+    temperature,
+    max_tokens: 4096
+  };
+  if (responseFormat) body.response_format = responseFormat;
+
+  const res = await fetch(GROQ_BASE_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Groq Direct API Error (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content?.trim() || '';
+}
+
+/**
+ * Llamada base a Groq (openai-compatible con fallback automático).
  */
 async function callGroq(model, messages, temperature = 0.1, responseFormat = null, reasoningEffort = null) {
-  // 1. Intentar invocación por Edge Function de Supabase (ai-proxy) usando GROQ_API_KEY guardado en Supabase
   try {
     const payload = { model, messages, temperature, max_tokens: 8192 };
     if (responseFormat) payload.response_format = responseFormat;
@@ -39,70 +67,29 @@ async function callGroq(model, messages, temperature = 0.1, responseFormat = nul
       body: payload
     });
 
-    if (!error && data && !data.error) {
-      return data?.choices?.[0]?.message?.content?.trim() || '';
+    if (!error && !data?.error && data?.choices?.[0]?.message?.content) {
+      return data.choices[0].message.content.trim();
     }
-  } catch (proxyErr) {
-    console.warn("AI Proxy invoke failed, trying fallback:", proxyErr.message);
-  }
-
-  // 2. Fallback a llamada directa si ai-proxy no está disponible o falla
-  try {
-    const apiKey = import.meta.env.VITE_GROQ_API_KEY;
-    if (!apiKey) throw new Error('No Groq API Key configurada en VITE_GROQ_API_KEY ni en Supabase secrets.');
-
-    const bodyData = {
-      model,
-      messages,
-      temperature,
-      max_tokens: 8192
-    };
-    if (responseFormat) {
-      bodyData.response_format = responseFormat;
-    }
-    if (reasoningEffort) {
-      bodyData.reasoning_effort = reasoningEffort;
-    }
-
-    const res = await fetch(GROQ_BASE_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(bodyData)
-    });
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error?.message || `HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-    return data?.choices?.[0]?.message?.content?.trim() || '';
+    return await callGroqDirect(model, messages, temperature, responseFormat);
   } catch (err) {
-    console.error("AI Fetch Error:", err.message);
-    throw new Error(`Error en el servicio de IA: ${err.message}`);
+    console.warn("AI Kernel Gateway warning, usando canal directo:", err.message);
+    return await callGroqDirect(model, messages, temperature, responseFormat);
   }
 }
 
 /** Limpia JSON que el modelo a veces envuelve en ```json ... ``` y remueve bloques <think> */
 function cleanJson(raw) {
   let cleaned = raw;
-  // Remover bloques <think> completos
   cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  // Si quedó un <think> sin cerrar (modelo cortado), remover desde ahí hasta el final
   if (cleaned.includes('<think>')) {
     cleaned = cleaned.replace(/<think>[\s\S]*/gi, '');
   }
   cleaned = cleaned.trim();
 
-  // Intentar encontrar un bloque de código JSON
   const match = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (match) {
     return match[1].trim();
   }
-  // Si no hay bloque, intentar encontrar el primer '{' y el último '}'
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start !== -1 && end !== -1 && end > start) {
@@ -116,119 +103,48 @@ function cleanJson(raw) {
 // ──────────────────────────────────────────────────────────────
 /**
  * Extrae datos personales de la foto de un documento.
- * @param {File|string} fileOrBase64 - Imagen del documento (pasaporte, CPF, RNM, etc.)
- * @param {Array<{identificador: string, nombre_campo: string}>} [knownCustomFields] -
- *   Campos personalizados ya existentes en el sistema (config_campos_clientes),
- *   para que la IA reutilice su clave exacta en vez de inventar una nueva para
- *   el mismo dato. Ver useClientViewExtraction.getExtraCustomFieldsForAiPrompt.
- * @returns {Promise<object>} Campos encontrados en el documento
  */
 export async function analyzeDocumentImage(fileOrBase64, knownCustomFields = []) {
-  // Redimensionar imagen a max 900px / comprimir para mantener visual tokens en ~2000 (dentro del límite TPM de 8000 en Groq)
   const base64 = await resizeImageToBase64(fileOrBase64, 900, 0.8);
 
-  const knownCustomFieldsBlock = knownCustomFields.length > 0
-    ? `\n10.5. CAMPOS PERSONALIZADOS QUE YA EXISTEN EN EL SISTEMA (creados antes, a mano o por otra extracción IA). El nombre de cada uno puede terminar con el tipo de documento del que salió originalmente, entre paréntesis (ej. "Número de Licencia (CNH)"):\n${knownCustomFields.map(f => `   - ${f.identificador.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n   REGLA DE REUSO — MUY IMPORTANTE, no mezclar datos entre documentos distintos:\n   - Si un campo de la lista termina en "(TIPO DE DOCUMENTO)" y ese tipo NO coincide con el "TIPO_DOCUMENTO" que vos identificaste en la imagen actual, NO lo reutilices aunque el dato se parezca conceptualmente — es de otro documento. Agregá el dato como un campo nuevo en su lugar.\n   - Si un campo de la lista coincide en tipo de documento (o no tiene tipo especificado) Y el dato coincide conceptualmente, ahí sí usá EXACTAMENTE esa clave (tal cual está escrita, en mayúsculas) — no inventes una clave distinta para el mismo dato.\n   - Solo si el dato no coincide con NINGUNO de estos ni con los campos fijos de abajo, agregalo con una clave nueva.\n`
-    : '';
+  let raw = '';
+  try {
+    const { data, error } = await supabase.functions.invoke('ai-proxy', {
+      body: {
+        action: 'ANALYZE_IMMIGRATION_DOCUMENT',
+        imageBase64: base64,
+        knownCustomFields
+      }
+    });
 
-const prompt = `Eres un asistente especializado en leer documentos de identidad e inmigración \
-(Pasaportes, CPF, RNM de Brasil, CNH, Cédulas, etc.) Y TAMBIÉN hojas escritas a mano \
-(formularios, notas o listas donde un cliente o un agente anotó datos personales a mano,
-en vez de un documento oficial impreso).
+    if (!error && !data?.error && data?.choices?.[0]?.message?.content) {
+      raw = data.choices[0].message.content.trim();
+    }
+  } catch (proxyErr) {
+    console.warn('[aiService] ai-proxy falló, usando canal directo Groq:', proxyErr.message);
+  }
+
+  // Fallback directo a Groq si ai-proxy no devolvió respuesta válida
+  if (!raw) {
+    const knownFieldsBlock = Array.isArray(knownCustomFields) && knownCustomFields.length > 0
+      ? `\nCAMPOS PERSONALIZADOS DISPONIBLES EN EL SISTEMA:\n${knownCustomFields.map(f => ` - ${f.identificador?.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n`
+      : '';
+
+    const directPrompt = `Eres un asistente especializado en leer documentos de identidad e inmigración (Pasaportes, CPF, RNM de Brasil, CNH, Cédulas, etc.) y hojas manuscritas.
 Analiza CUIDADOSAMENTE la imagen y extrae todos los datos personales visibles.
 
-CONTEXTO: Esta es una herramienta interna de gestión para una agencia de trámites migratorios en Brasil. Las imágenes que recibís son fotos de documentos de identidad reales (pasaportes, CPF, RNM, etc.) u hojas manuscritas, subidas por el personal de la agencia al sistema interno de la propia agencia, con el consentimiento del titular, como parte de la gestión de su trámite — el mismo uso legítimo que haría un empleado transcribiendo el documento a mano a una ficha. Tu tarea es actuar como un parser: leer el documento y transcribir los datos visibles al formato JSON solicitado.
-
-REGLAS DE EXTRACCIÓN Y VERACIDAD ESTRICTA (ANTI-ALUCINACIÓN):
-0. PROHIBIDO INVENTAR O ADIVINAR DATOS (REGLA FUNDAMENTAL):
-   - Esta es una herramienta jurídica y migratoria oficial. NUNCA inventes, adivines o completes un dato que no se vea con total certeza y claridad en la imagen.
-   - Si un dato no es 100% legible, o si la imagen está borrosa, fuera de foco, pixelada, recortada o con reflejos de luz que impiden leer con certeza absoluta cada caracter, DEBES asignar null a ese campo.
-   - Prohibido suponer dígitos de CPF, letras de pasaporte, nombres o fechas. Si dudas de un caracter, usa null.
+REGLAS DE EXTRACCIÓN Y VERACIDAD ESTRICTA:
 1. DETECCIÓN DE IMAGEN BORROSA O ILEGIBLE:
-   - Si la imagen está desenfocada, movida, borrosa, con brillo/reflejos que tapan la información, o con resolución insuficiente para leer los datos con certeza:
-     * Marca "DOCUMENTO_BORROSO": true
-     * Marca "ILEGIBLE": true
-     * En "MOTIVO_ILEGIBLE" describe claramente el problema (ej: "Foto desenfocada y con reflejo de flash que oculta el texto", "Baja resolución, los números de documento no se distinguen").
-   - Si la imagen es nítida y perfectamente legible:
-     * "DOCUMENTO_BORROSO": false
-     * "ILEGIBLE": false
-     * "MOTIVO_ILEGIBLE": null
-2. FORMATO DE FECHAS: Todas las fechas (nacimiento, emisión, vencimiento) DEBEN estar estrictamente en formato DD/MM/YYYY (ej. 15/10/1972). Si el documento dice "15 DE OCTUBRE DE 1972" o "1972-10-15", debes convertirlo al formato DD/MM/YYYY. NUNCA uses texto en los campos de fecha.
-3. Para pasaportes y documentos de identidad (Carnet de Identidad de Cuba, RNM, etc.):
-   - "APELLIDOS / SURNAMES" suele aparecer ARRIBA o en un recuadro específico.
-   - "NOMBRES / GIVEN NAMES" suele aparecer DEBAJO o marcado como "NOMBRE / FIRST NAME".
-   - Tú debes concatenarlos siempre en el orden correcto: "NOMBRE(S) APELLIDO(S)". Ejemplo: Si dice Apellidos: GUIBERT GONZALEZ y Nombres: GEORGINA, el NOMBRE_COMPLETO debe ser "GEORGINA GUIBERT GONZALEZ".
-
-3.1. REGLA ESTRICTA DE TRANSCRIPCIÓN LITERAL DE NOMBRES (CERO AUTOCORRECCIÓN):
-   - En Cuba y Latinoamérica los nombres de pila son únicos, combinados y no tradicionales.
-   - NUNCA alteres, 'corrijas', supongas o cambies letras de un nombre basándote en nombres populares hispanos.
-   - EJEMPLO FUNDAMENTAL: Si el documento dice "DALIENA" (letras D-A-L-I-E-N-A), debes transcribir EXACTAMENTE "DALIENA". BAJO NINGUNA CIRCUNSTANCIA lo cambies a "DANIELA".
-   - Si dice "DAILANI", escribe "DAILANI". Si dice "YAISEL", escribe "YAISEL". Si dice "DAYAMI", escribe "DAYAMI".
-   - Lee minuciosamente letra por letra cada caracter. Cambiar una sola letra (como L por N) invalida por completo el trámite migratorio ante la Policía Federal de Brasil.
-
-3.2. Para el CARNÉ DE IDENTIDAD DE CUBA:
-   - "NI: [11 dígitos]" (ej. 14101261010) es el campo "CARNET_IDENTIDAD".
-   - Los primeros 6 dígitos del NI corresponden a la fecha de nacimiento en formato YYMMDD (ej. 141012 -> 12/10/2014).
-   - "NOMBRE / FIRST NAME" corresponde al nombre de pila.
-   - "APELLIDOS / LAST NAME" corresponde a los apellidos.
-   - "HIJO (A) DE [Nombre]" indica los progenitores ("NOMBRE_PADRE" / "NOMBRE_MADRE").
-
-4. Números en Pasaportes:
-   - "Nº DE PASAPORTE / PASSPORT Nº" (ej. letras y números como L302474) corresponde al campo "NUMERO_DOCUMENTO".
-   - "Nº DE IDENTIDAD / ID Nº" (ej. 11 dígitos numéricos como 74021012519) corresponde al campo "CARNET_IDENTIDAD". NO lo coloques en NUMERO_DOCUMENTO.
-5. Fechas en Pasaportes:
-   - "FECHA DE EMISION / DATE OF ISSUE" corresponde al campo "FECHA_EMISION_PASAPORTE".
-   - "FECHA DE VENCIMIENTO / DATE OF EXPIRY" corresponde al campo "FECHA_VENCIMIENTO_PASAPORTE".
-6. Nacimiento, Nacionalidad y Sexo:
-   - "NACIONALIDAD / NATIONALITY" corresponde al campo "NACIONALIDAD".
-   - "FECHA DE NACIMIENTO / DATE OF BIRTH" corresponde al campo "FECHA_NACIMIENTO".
-   - "LUGAR DE NACIMIENTO / PLACE OF BIRTH" corresponde al campo "LUGAR_NACIMIENTO".
-   - "SEXO / SEX": Si el documento dice "F", debes escribir "Feminino". Si dice "M", debes escribir "Masculino". Nunca escribas solo la letra.
-7. Documentos Ilegibles y Código MRZ:
-   - Si la parte principal del documento está borrosa o difícil de leer, busca los datos en el código MRZ (las dos líneas de letras y números en la parte inferior).
-   - En el MRZ puedes encontrar el Nombre, Apellidos, Número de Pasaporte y Carnet de Identidad.
-   - Si tuviste dificultad para leer la parte principal y usaste el MRZ, pon el campo "ILEGIBLE" en true. Si se lee bien, ponlo en false.
-8. Protocolos de Solicitação de Refúgio:
-   - El número justo debajo del título "Protocolo de Solicitação de Refúgio" (ej. 08018.../...) corresponde al campo "NUMERO_REFUGIO".
-   - "Validade" corresponde al campo "FECHA_VENCIMIENTO_REFUGIO".
-   - "Filiação 1" y "Filiação 2" son los padres. Normalmente Filiação 1 es la madre ("NOMBRE_MADRE") y Filiação 2 el padre ("NOMBRE_PADRE"), pero usa el sentido común analizando los nombres si están al revés (ej. un nombre masculino en Filiação 1 sería el padre).
-9. RNM (Registro Nacional Migratório de Brasil):
-   - El número alfanumérico destacado bajo "RNM" (ej. F744334-H) corresponde al campo "RNM".
-   - Concatena "NOME" y "SOBRENOME" para formar el "NOMBRE_COMPLETO" (ej. "ROXANA CASTILLO MANZANO").
-   - "DATA DE NASCIMENTO" es "FECHA_NACIMIENTO".
-   - "NACIONALIDADE" es "NACIONALIDAD".
-   - Bajo "FILIAÇÃO" aparecen los padres. Asigna uno a "NOMBRE_MADRE" y otro a "NOMBRE_PADRE" por lógica de nombres.
-
-10. TIPO DE DOCUMENTO:
-   - Identifica qué documento es y colócalo en "TIPO_DOCUMENTO". Usa valores como: "PASAPORTE", "CPF", "RNM", "CARNET DE IDENTIDAD", "PROTOCOLO DE REFUGIO", "CNH", "CERTIFICADO DE NACIMIENTO", "DOCUMENTO", "HOJA MANUSCRITA", etc.
-11. HOJAS MANUSCRITAS:
-   - Si la imagen NO es un documento oficial sino una hoja escrita a mano (letra
-     manuscrita, formulario en blanco completado a mano, lista de datos, notas,
-     etc.), igual analízala: interpreta la letra lo mejor que puedas y extrae cada
-     dato que reconozcas usando los mismos campos de esta lista (nombre →
-     NOMBRE_COMPLETO, teléfono, dirección, etc. si aparecen).
-   - Si la letra es difícil de leer, transcribe tu mejor interpretación de todos
-     modos (no la descartes) y marca "ILEGIBLE" en true para que se revise a mano.
-12. DATOS ADICIONALES (MUY IMPORTANTE): No te limites a los campos fijos de abajo.
-   Si en el documento ves CUALQUIER OTRO dato personal identificable, ESTABLE y
-   reutilizable que no encaje en ninguno de esos campos (ej. número de licencia
-   de conducir, categoría de licencia, profesión, estado civil impreso, dirección
-   impresa, número de seguro, código de registro, restricciones, altura, tipo de
-   sangre, fecha de expedición de otro documento, etc.), agrégalo dentro del
-   objeto "CAMPOS_ADICIONALES" al final del JSON, usando como clave un nombre
-   corto en MAYUSCULAS_CON_GUION_BAJO que describa el dato (ej. "NUMERO_LICENCIA",
-   "CATEGORIA_LICENCIA", "PROFESION"). No repitas ahí un dato que ya pusiste en un
-   campo fijo de arriba, ni el nombre/tipo del archivo o documento (eso ya se
-   gestiona aparte, no es un dato del cliente).
-   SÉ CONSERVADOR: cada clave nueva que agregues acá crea un campo permanente en
-   el sistema, así que evitá basura. NO agregues nada que sea: un código de barras,
-   número de folio/página interno, watermark, texto de relleno o instrucciones
-   impresas en el documento, o cualquier cosa que no puedas leer con confianza
-   razonable (si dudás de si es un dato real o ruido de la imagen, mejor omitilo).
-   Si no hay ningún dato adicional genuino, deja "CAMPOS_ADICIONALES" como un
-   objeto vacío {}.
-${knownCustomFieldsBlock}
-Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra, SIN bloques <think> de razonamiento) con estos campos:
+   - "DOCUMENTO_BORROSO": true y "ILEGIBLE": true ÚNICAMENTE cuando la imagen esté tan borrosa o dañada que resulte IMPOSIBLE leer los datos mínimos de identificación (nombre o número de documento).
+   - Si la imagen permite leer el nombre o número de documento, aunque tenga ligeros reflejos o ángulo imperfecto: DEBES poner "DOCUMENTO_BORROSO": false, "ILEGIBLE": false, "MOTIVO_ILEGIBLE": null y extraer todos los datos que se lean con certeza.
+2. FORMATO DE FECHAS: Estrictamente DD/MM/YYYY (ej. 15/10/1972).
+3. NOMBRES: Transcripción literal carácter por carácter. CERO correcciones o suposiciones.
+4. CARNET DE IDENTIDAD DE CUBA: "NI: [11 dígitos]" es "CARNET_IDENTIDAD". Los primeros 6 dígitos son YYMMDD de nacimiento.
+5. PASAPORTES: Número de pasaporte en "NUMERO_DOCUMENTO". "FECHA_EMISION_PASAPORTE" y "FECHA_VENCIMIENTO_PASAPORTE" en DD/MM/YYYY.
+6. PROTOCOLOS DE REFUGIO: Número bajo título en "NUMERO_REFUGIO". "Validade" en "FECHA_VENCIMIENTO_REFUGIO". Filiação 1 y 2 a madre/padre.
+7. RNM DE BRASIL: Código alfanumérico en "RNM". Nome y Sobrenome a "NOMBRE_COMPLETO". Filiação a madre/padre.
+${knownFieldsBlock}
+Devuelve ÚNICAMENTE un objeto JSON puro con:
 {
   "TIPO_DOCUMENTO": null,
   "NOMBRE_COMPLETO": null,
@@ -250,52 +166,58 @@ Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin texto extra, SIN blo
   "ILEGIBLE": false,
   "MOTIVO_ILEGIBLE": null,
   "CAMPOS_ADICIONALES": {}
-}
-Usa null para los campos que no estén visibles o no se lean con claridad en el documento. NO inventes datos.`;
+}`;
 
-  const raw = await callGroq(
-    MODEL_VISION,
-    [{
-      role: 'user',
-      content: [
-        { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: base64 } },
-      ],
-    }],
-    0.1,
-    { type: "json_object" },
-    'none'
-  );
+    raw = await callGroqDirect(
+      MODEL_VISION,
+      [{
+        role: 'user',
+        content: [
+          { type: 'text', text: directPrompt },
+          { type: 'image_url', image_url: { url: base64 } }
+        ]
+      }],
+      0.1,
+      { type: "json_object" }
+    );
+  }
 
   try {
     const parsed = JSON.parse(cleanJson(raw));
-    // CAMPOS_ADICIONALES viaja como un objeto anidado para que el modelo no
-    // mezcle datos sueltos con los campos fijos, pero el resto del flujo
-    // (modal de revisión, guardado) espera un único objeto plano — se
-    // aplanan acá antes de devolver.
     const adicionales = parsed.CAMPOS_ADICIONALES && typeof parsed.CAMPOS_ADICIONALES === 'object'
       ? parsed.CAMPOS_ADICIONALES
       : {};
     delete parsed.CAMPOS_ADICIONALES;
     const merged = { ...parsed, ...adicionales };
 
-    const esBorroso = parsed.DOCUMENTO_BORROSO === true || parsed.ILEGIBLE === true;
+    // Un documento es borroso ÚNICAMENTE si no tiene datos mínimos de identidad
+    const hasAnyId = Boolean(
+      (merged.NOMBRE_COMPLETO && String(merged.NOMBRE_COMPLETO).trim().length > 3) ||
+      merged.NUMERO_DOCUMENTO ||
+      merged.CPF ||
+      merged.CARNET_IDENTIDAD ||
+      merged.RNM
+    );
+
+    const esBorroso = (parsed.DOCUMENTO_BORROSO === true || parsed.ILEGIBLE === true) && !hasAnyId;
     if (esBorroso) {
       merged.DOCUMENTO_BORROSO = true;
       merged.ILEGIBLE = true;
-      merged.MOTIVO_ILEGIBLE = parsed.MOTIVO_ILEGIBLE || 'Imagen borrosa o de baja calidad';
+      merged.MOTIVO_ILEGIBLE = parsed.MOTIVO_ILEGIBLE || 'Imagen borrosa o ilegible';
+    } else {
+      merged.DOCUMENTO_BORROSO = false;
+      merged.ILEGIBLE = false;
+      merged.MOTIVO_ILEGIBLE = null;
     }
 
-    // Filtrar campos null/vacíos/objetos raros para que el UI solo muestre
-    // datos con valor (y nunca intente renderizar un objeto como texto).
     return Object.fromEntries(
       Object.entries(merged).filter(([k, v]) => {
         if (k === 'DOCUMENTO_BORROSO' || k === 'ILEGIBLE') return true;
         return v !== null && v !== '' && typeof v !== 'object';
       })
     );
-  } catch {
-    console.warn('[aiService] No se pudo parsear JSON del análisis de imagen. Respuesta cruda:', raw);
+  } catch (err) {
+    console.warn('[aiService] No se pudo parsear JSON del análisis de imagen:', err.message, raw);
     return {};
   }
 }
@@ -313,10 +235,20 @@ export async function detectSignatureBoundingBox(fileOrBase64) {
   try {
     const base64 = await resizeImageToBase64(fileOrBase64, 1024, 0.85);
 
-    const prompt = `Analiza esta imagen de pasaporte o documento oficial de identidad (como Pasaporte Cubano, Carnet de Identidad o RNM).
-Tu objetivo es localizar con la mayor precisión posible el recuadro donde se encuentra la FIRMA MANUSCRITA del titular (habitualmente identificada como "Firma del titular", "Firma", o "Signature of bearer", situada debajo o al lado de la foto biométrica del titular, o justo encima de la zona de lectura mecánica MRZ).
+    let raw = '';
+    const { data, error } = await supabase.functions.invoke('ai-proxy', {
+      body: {
+        action: 'DETECT_SIGNATURE_BBOX',
+        imageBase64: base64
+      }
+    });
 
-Devuelve ÚNICAMENTE un objeto JSON estrictamente válido, sin markdown ni explicaciones:
+    if (!error && !data?.error && data?.choices?.[0]?.message?.content) {
+      raw = data.choices[0].message.content.trim();
+    } else {
+      const sigPrompt = `Analiza esta imagen de pasaporte o documento de identidad oficial.
+Localiza con precisión el recuadro donde se encuentra la FIRMA MANUSCRITA del titular.
+Devuelve ÚNICAMENTE un JSON:
 {
   "found": true,
   "x": 8.5,
@@ -324,45 +256,34 @@ Devuelve ÚNICAMENTE un objeto JSON estrictamente válido, sin markdown ni expli
   "width": 38.0,
   "height": 18.0
 }
-Donde "x", "y", "width" y "height" son porcentajes flotantes del 0 al 100 respecto al ancho y alto total de la imagen:
-- x: porcentaje horizontal desde el borde izquierdo hasta el inicio del recuadro de la firma
-- y: porcentaje vertical desde el borde superior hasta el inicio del recuadro de la firma
-- width: ancho del recuadro de la firma en porcentaje
-- height: alto del recuadro de la firma en porcentaje
+Si no hay firma visible, devuelve {"found": false, "x": null, "y": null, "width": null, "height": null}`;
 
-Si la imagen no tiene firma visible o está completamente ilegible, devuelve:
-{
-  "found": false,
-  "x": null,
-  "y": null,
-  "width": null,
-  "height": null
-}`;
+      raw = await callGroqDirect(
+        MODEL_VISION,
+        [{
+          role: 'user',
+          content: [
+            { type: 'text', text: sigPrompt },
+            { type: 'image_url', image_url: { url: base64 } }
+          ]
+        }],
+        0.1,
+        { type: "json_object" }
+      );
+    }
 
-    const raw = await callGroq(
-      MODEL_VISION,
-      [{
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: base64 } },
-        ],
-      }],
-      0.1,
-      { type: "json_object" },
-      'none'
-    );
-
-    const parsed = JSON.parse(cleanJson(raw));
-    if (parsed && parsed.found && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-      return {
-        found: true,
-        x: Math.max(0, Math.min(95, parsed.x)),
-        y: Math.max(0, Math.min(95, parsed.y)),
-        width: Math.max(8, Math.min(90, parsed.width || 35)),
-        height: Math.max(5, Math.min(80, parsed.height || 18)),
-        fallback: false
-      };
+    if (raw) {
+      const parsed = JSON.parse(cleanJson(raw));
+      if (parsed && parsed.found && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+        return {
+          found: true,
+          x: Math.max(0, Math.min(95, parsed.x)),
+          y: Math.max(0, Math.min(95, parsed.y)),
+          width: Math.max(8, Math.min(90, parsed.width || 35)),
+          height: Math.max(5, Math.min(80, parsed.height || 18)),
+          fallback: false
+        };
+      }
     }
   } catch (err) {
     console.warn('[detectSignatureBoundingBox] Error detectando firma con IA:', err.message);
@@ -411,92 +332,29 @@ export async function extractClientDataFromChatText(chatInput, knownCustomFields
 
   if (!formattedText) return {};
 
-  const knownCustomFieldsBlock = knownCustomFields.length > 0
-    ? `\nCAMPOS PERSONALIZADOS DISPONIBLES EN EL SISTEMA:\n${knownCustomFields.map(f => ` - ${f.identificador.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n`
-    : '';
+  let raw = '';
+  try {
+    const { data, error } = await supabase.functions.invoke('ai-proxy', {
+      body: {
+        action: 'EXTRACT_CHAT_ENTITIES',
+        chatText: formattedText,
+        knownCustomFields
+      }
+    });
 
-  const prompt = `Eres un asistente de inteligencia artificial especializado en extracción precisa de entidades y datos para una agencia de asesoría migratoria y jurídica en Brasil.
-Tu tarea es leer atentamente la transcripción de una conversación de chat (WhatsApp o CRM) entre un cliente y la agencia, y extraer TODOS los datos personales, de contacto, documentos, dirección y familiares mencionados.
+    if (!error && !data?.error && data?.choices?.[0]?.message?.content) {
+      raw = data.choices[0].message.content.trim();
+    }
+  } catch (err) {
+    console.warn('[aiService] Error en ai-proxy chat extraction, usando fallback directo:', err.message);
+  }
 
-TEXTO DE LA CONVERSACIÓN:
-"""
-${formattedText}
-"""
-${knownCustomFieldsBlock}
-REGLAS DE EXTRACCIÓN MUY IMPORTANTES:
-1. IDENTIFICACIÓN DEL CLIENTE TITULAR:
-   - Extrae el nombre completo del CLIENTE TITULAR que habla o sobre quien se tramita la cuenta.
-   - Si dice "Hola, soy Yaisel Rodríguez García", el titular es "YAISEL RODRÍGUEZ GARCÍA".
-2. DOCUMENTOS Y FORMATOS:
-   - CPF: Extrae los dígitos y dale formato XXX.XXX.XXX-XX si es posible.
-   - FECHAS: Convierte cualquier fecha (nacimiento, emisión, etc.) a formato DD/MM/YYYY estricto.
-   - SEXO: Usa "Masculino" o "Feminino".
-   - ESTADO CIVIL: "Soltero(a)", "Casado(a)", "Divorciado(a)", "Viudo(a)", "Unión Estable".
-   - TELÉFONO: Extrae el número si se menciona.
-   - EMAIL: Extrae correo electrónico si se menciona.
-   - PASAPORTE / RNM / PROTOCOLO REFUGIO: Extrae sus números si se mencionan.
-3. DIRECCIÓN EN BRASIL:
-   - Si el cliente menciona su domicilio o dirección (ej. "Rua Augusta 500 apto 12, Consolação, São Paulo, CEP 01305-000"):
-     Estructúrala en el sub-objeto "DIRECCION" separando:
-     - "endereco": Nombre de la calle / avenida / logradouro (ej. "Rua Augusta")
-     - "numero": Número del inmueble (ej. "500")
-     - "complemento": Apto, casa, bloque (ej. "Apto 12")
-     - "bairro": Barrio (ej. "Consolação")
-     - "cidade": Ciudad (ej. "São Paulo")
-     - "estado": Estado o sigla UF (ej. "SP" o "São Paulo")
-     - "cep": Código postal en formato XXXXX-XXX
-     - "ponto_referencia": Referencia si se menciona
-4. FAMILIARES / PERSONAS RELACIONADAS MENCIONADAS:
-   - Si en el chat el cliente menciona familiares o acompañantes (ej. "vengo con mi esposa Dayami", "mi hijo Kevin de 4 años", "mi madre María García"):
-     Agrégalos en el array "FAMILIARES_MENCIONADOS" con los siguientes campos:
-     {
-       "nombre": "DAYAMI ...",
-       "parentesco": "Esposa" | "Esposo" | "Hijo(a)" | "Madre" | "Padre" | "Hermano(a)" | "Familiar",
-       "cpf": "XXX.XXX.XXX-XX" (si lo menciona o null),
-       "detalles": "Cualquier detalle relevante mencionado en el chat (edad, situación migratoria, etc.)"
-     }
-5. NO INVENTES NADA:
-   - Si un dato no se menciona en el chat, déjalo en null o array vacío.
-   - Devuelve ÚNICAMENTE un objeto JSON válido (sin markdown, sin bloques de código, sin <think>).
-
-FORMATO JSON DE RESPUESTA:
-{
-  "NOMBRE_COMPLETO": null,
-  "CPF": null,
-  "TELEFONO": null,
-  "EMAIL": null,
-  "NACIONALIDAD": null,
-  "FECHA_NACIMIENTO": null,
-  "SEXO": null,
-  "ESTADO_CIVIL": null,
-  "LUGAR_NACIMIENTO": null,
-  "NUMERO_DOCUMENTO": null,
-  "RNM": null,
-  "CARNET_IDENTIDAD": null,
-  "NUMERO_REFUGIO": null,
-  "NOMBRE_MADRE": null,
-  "NOMBRE_PADRE": null,
-  "DIRECCION": {
-    "endereco": null,
-    "numero": null,
-    "complemento": null,
-    "bairro": null,
-    "cidade": null,
-    "estado": null,
-    "cep": null,
-    "ponto_referencia": null
-  },
-  "FAMILIARES_MENCIONADOS": [],
-  "CAMPOS_ADICIONALES": {}
-}`;
-
-  const raw = await callGroq(
-    MODEL_TEXT,
-    [{ role: 'user', content: prompt }],
-    0.1,
-    { type: 'json_object' },
-    'none'
-  );
+  if (!raw) {
+    const chatPrompt = `Eres un asistente de IA para una agencia de inmigración en Brasil. Extrae entidades del cliente titular, documentos (CPF, RNM, Pasaporte), dirección en Brasil y familiares mencionados en esta conversación:\n"""\n${formattedText}\n"""\nDevuelve un JSON con: { "NOMBRE_COMPLETO": null, "CPF": null, "TELEFONO": null, "EMAIL": null, "NACIONALIDAD": null, "FECHA_NACIMIENTO": null, "SEXO": null, "ESTADO_CIVIL": null, "NUMERO_DOCUMENTO": null, "RNM": null, "CARNET_IDENTIDAD": null, "NUMERO_REFUGIO": null, "DIRECCION": { "endereco": null, "numero": null, "complemento": null, "bairro": null, "cidade": null, "estado": null, "cep": null }, "FAMILIARES_MENCIONADOS": [] }`;
+    try {
+      raw = await callGroqDirect(MODEL_TEXT, [{ role: 'user', content: chatPrompt }], 0.1, { type: 'json_object' });
+    } catch (_) {}
+  }
 
   const regexEntities = extractEntitiesRegex(formattedText);
 

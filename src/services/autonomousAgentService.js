@@ -14,9 +14,9 @@
  */
 
 import { supabase } from '../supabaseClient.js';
-import { analyzeDocumentImage, detectSignatureBoundingBox } from './aiService.js';
+import { analyzeDocumentImage } from './aiService.js';
 import { getCliente } from './clientesService.js';
-import { reassignDocument, uploadDocument, getSignedUrl } from './storageService.js';
+import { reassignDocument, uploadDocument } from './storageService.js';
 import { resolvePersonAndApplyData } from './clientExtractionService.js';
 import { convertPdfPageToImageBase64 } from './pdfToImage.js';
 import { processSignatureImage, PASSPORT_SIGNATURE_PRESETS } from '../utils/signatureExtractor.js';
@@ -91,9 +91,21 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       throw new Error('La IA no devolvió datos estructurados para este documento.');
     }
 
-    // CASO A: Imagen borrosa o ilegible (HUMAN INTERVENTION REQUIRED)
-    if (aiData.DOCUMENTO_BORROSO === true || aiData.ILEGIBLE === true) {
-      const motivo = aiData.MOTIVO_ILEGIBLE || 'Imagen borrosa, con reflejo o texto ilegible';
+    // Comprobar si la IA logró extraer datos esenciales de identificación
+    const hasCoreData = Boolean(
+      (aiData.NOMBRE_COMPLETO && String(aiData.NOMBRE_COMPLETO).trim().length > 3) ||
+      aiData.NUMERO_DOCUMENTO ||
+      aiData.CPF ||
+      aiData.CARNET_IDENTIDAD ||
+      aiData.RNM
+    );
+
+    // Un documento va a REVISIÓN sólo si es genuinamente ilegible y NO se pudo extraer nada útil
+    const isTrulyUnreadable = (aiData.DOCUMENTO_BORROSO === true || aiData.ILEGIBLE === true) && !hasCoreData;
+
+    // CASO A: Imagen genuinamente borrosa o sin datos identificables (HUMAN INTERVENTION REQUIRED)
+    if (isTrulyUnreadable || (!hasCoreData && !aiData.TIPO_DOCUMENTO)) {
+      const motivo = aiData.MOTIVO_ILEGIBLE || 'Imagen borrosa o sin datos de identificación legibles';
       const flaggedName = `⚠️ BORROSO - ${doc.nombre_archivo || 'Documento'}`;
       await supabase.from('documentos_pendientes').update({ nombre_archivo: flaggedName }).eq('id', doc.id);
 

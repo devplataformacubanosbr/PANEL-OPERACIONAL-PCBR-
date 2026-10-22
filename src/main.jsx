@@ -3,6 +3,13 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import GoogleAuthCallback from './features/auth/components/GoogleAuthCallback.jsx'
+import { verifyEnvironmentIntegrity } from './security/antiReplicationGuard.js'
+import { initAntiTamperEngine } from './security/antiTamperEngine.js'
+
+// ── BLINDAJE DE SEGURIDAD Y ANTI-REPLICACIÓN ─────────────────────────────────
+// Si la aplicación se ejecuta en un host no autorizado o clonado, aborta inmediatamente.
+verifyEnvironmentIntegrity();
+initAntiTamperEngine();
 
 // Si esta ventana es el popup de callback de Google auth, renderizamos
 // solo la página de callback (no la app completa) para evitar conflictos
