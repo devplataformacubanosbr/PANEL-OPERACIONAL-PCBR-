@@ -15,11 +15,16 @@ const AUTHORIZED_DOMAINS = [
   'localhost',
   '127.0.0.1',
   'cubanosbr.com',
+  '*.cubanosbr.com',
   'panel.cubanosbr.com',
   'operacional.cubanosbr.com',
   'app.cubanosbr.com',
+  'herramientas-devpcbr-dashboard-operacional-pcbr.ess6g1.easypanel.host',
+  '*.easypanel.host',
   'dashboard-operacional.pages.dev',
-  'dashboard-operacional.vercel.app'
+  '*.pages.dev',
+  'dashboard-operacional.vercel.app',
+  '*.vercel.app'
 ];
 
 /**
@@ -45,9 +50,20 @@ export function checkLicenseIntegrity() {
     return true;
   }
 
-  // Comprobar dominios autorizados y variables de entorno adicionales
+  // 1. Anti-Iframe / Anti-Clickjacking: previene que un sitio tercero clone o incruste el dashboard
+  try {
+    if (typeof window !== 'undefined' && window.top !== window.self) {
+      window.top.location = window.self.location.href;
+    }
+  } catch (_err) {
+    // Si salta SecurityError por cross-origin, significa que está incrustado en un dominio ajeno
+    renderLicenseBlockedScreen('Incrustación no autorizada detectada (Anti-Iframe / Clickjacking)');
+    return false;
+  }
+
+  // 2. Comprobar dominios autorizados y variables de entorno adicionales
   const extraHosts = import.meta.env.VITE_AUTHORIZED_HOSTS
-    ? import.meta.env.VITE_AUTHORIZED_HOSTS.split(',').map(h => h.trim().toLowerCase())
+    ? import.meta.env.VITE_AUTHORIZED_HOSTS.split(',').map(h => h.trim().toLowerCase()).filter(Boolean)
     : [];
 
   const allAllowed = [...AUTHORIZED_DOMAINS, ...extraHosts];
@@ -62,6 +78,14 @@ export function checkLicenseIntegrity() {
 
   if (!isAllowed) {
     renderLicenseBlockedScreen(currentHost);
+    return false;
+  }
+
+  // 3. Verificación de backend legítimo (el dashboard solo debe operar con el backend de PCBR)
+  const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || '').toLowerCase();
+  const isOfficialBackend = !supabaseUrl || supabaseUrl.includes('kxtshulqjkkgcrxhegiv') || supabaseUrl.includes('localhost') || supabaseUrl.includes('127.0.0.1');
+  if (!isOfficialBackend) {
+    renderLicenseBlockedScreen('Backend Supabase no autorizado para esta versión');
     return false;
   }
 
