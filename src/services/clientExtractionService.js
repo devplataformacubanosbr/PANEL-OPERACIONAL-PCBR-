@@ -19,30 +19,102 @@ import { createCliente, getCliente, insertRelacion } from './clientesService';
 import { getDocuments, reassignDocument } from './storageService';
 import { analyzeDocumentImage } from './aiService';
 
+import {
+  validateAndFormatCpf,
+  validateAndFormatEmail,
+  validateAndFormatPhone,
+  validateAndFormatDate,
+  formatPersonName,
+  parseBrazilianAddress
+} from '../utils/entityParser';
+
 const FIXED_COLUMN_IDS = new Set(FIXED_FIELDS_CATALOG.map(f => f.id));
 
-/** Mapeo de claves IA → columnas de la tabla `clientes` */
+export const MIGRATION_FIELDS = new Set([
+  'rnm',
+  'numero_refugio',
+  'fecha_vencimiento_refugio',
+  'numero_pasaporte',
+  'fecha_emision_pasaporte',
+  'fecha_vencimiento_pasaporte',
+  'carnet_identidad',
+  'policia_federal',
+  'fecha_entrada_brasil',
+  'lugar_entrada_brasil',
+  'nombre_madre',
+  'nombre_padre',
+  'tramite'
+]);
+
+/** Mapeo canónico de claves IA → columnas y campos de la tabla `clientes` */
 export const AI_FIELD_MAP = {
+  // Identidad personal
   'NOMBRE_COMPLETO': 'nombre',
+  'NOMBRE': 'nombre',
+  'NOME': 'nombre',
   'CPF': 'cpf',
+  'CIC': 'cpf',
+  'CADASTRO_PESSOAS_FISICAS': 'cpf',
   'TELEFONO': 'telefono',
+  'TELEFONE': 'telefono',
+  'CELULAR': 'telefono',
   'EMAIL': 'email',
+  'E_MAIL': 'email',
+  'EMAIL_PESSOAL': 'email',
   'ESTADO_CIVIL': 'estado_civil',
-  'CIUDAD': 'ciudad',
-  'ESTADO': 'estado',
-  'RNM': 'rnm',
-  'CARNET_IDENTIDAD': 'carnet_identidad',
-  'FECHA_NACIMIENTO': 'fecha_nacimiento',
-  'LUGAR_NACIMIENTO': 'lugar_nacimiento',
+  'SEXO': 'sexo',
   'NACIONALIDAD': 'nacionalidad',
+  'PAIS': 'pais',
+  'PAIS_ORIGEN': 'pais',
+  'CIUDAD': 'ciudad',
+  'CIDADE': 'ciudad',
+  'MUNICIPIO': 'ciudad',
+  'ESTADO': 'estado',
+  'UF': 'estado',
+  'ESTADO_FEDERAL': 'estado_federal',
+  'LUGAR_NACIMIENTO': 'lugar_nacimiento',
+  'FECHA_NACIMIENTO': 'fecha_nacimiento',
+
+  // Documentos migratorios
+  'RNM': 'rnm',
+  'CRNM': 'rnm',
+  'CIE': 'rnm',
+  'RNE': 'rnm',
+  'REGISTRO_NACIONAL_MIGRATORIO': 'rnm',
+
+  'CARNET_IDENTIDAD': 'carnet_identidad',
+  'CARNET': 'carnet_identidad',
+  'CEDULA': 'carnet_identidad',
+  'DNI': 'carnet_identidad',
+  'DOCUMENTO_IDENTIDAD': 'carnet_identidad',
+  'CI': 'carnet_identidad',
+
   'NUMERO_DOCUMENTO': 'numero_pasaporte',
+  'NUMERO_PASAPORTE': 'numero_pasaporte',
+  'PASAPORTE': 'numero_pasaporte',
+  'PASAPORTE_CUBANO': 'numero_pasaporte',
+
   'NUMERO_REFUGIO': 'numero_refugio',
+  'PROTOCOLO_REFUGIO': 'numero_refugio',
+  'SISCONARE': 'numero_refugio',
+  'REFUGIO': 'numero_refugio',
+
   'FECHA_EMISION_PASAPORTE': 'fecha_emision_pasaporte',
   'FECHA_VENCIMIENTO_PASAPORTE': 'fecha_vencimiento_pasaporte',
   'FECHA_VENCIMIENTO_REFUGIO': 'fecha_vencimiento_refugio',
-  'SEXO': 'sexo',
+
+  'FECHA_ENTRADA_BRASIL': 'fecha_entrada_brasil',
+  'FECHA_ENTRADA': 'fecha_entrada_brasil',
+  'LUGAR_ENTRADA_BRASIL': 'lugar_entrada_brasil',
+  'LUGAR_ENTRADA': 'lugar_entrada_brasil',
+  'POLICIA_FEDERAL': 'policia_federal',
+  'TRAMITE': 'tramite',
+
+  // Familiares
   'NOMBRE_MADRE': 'nombre_madre',
   'NOMBRE_PADRE': 'nombre_padre',
+  'FILIACAO_1': 'nombre_madre',
+  'FILIACAO_2': 'nombre_padre',
 };
 
 const AI_DATE_KEYS = new Set([
@@ -50,6 +122,13 @@ const AI_DATE_KEYS = new Set([
   'FECHA_EMISION_PASAPORTE',
   'FECHA_VENCIMIENTO_PASAPORTE',
   'FECHA_VENCIMIENTO_REFUGIO',
+  'FECHA_ENTRADA_BRASIL',
+  'FECHA_ENTRADA',
+  'FECHA_EXPEDICION',
+  'FECHA_DECLARACION',
+  'FECHA_FORMALIZACION',
+  'SALIDA_DE_CUBA',
+  'FECHA_SOLICITUD',
 ]);
 
 const AI_IGNORED_KEYS = new Set([
@@ -169,26 +248,43 @@ export async function applyExtractedDataToClient({
     const mappedCol = AI_FIELD_MAP[upperKey];
     if (mappedCol) {
       let finalValue;
-      if (AI_DATE_KEYS.has(upperKey)) {
-        const normalized = normalizeDateToDDMMYYYY(value);
-        finalValue = normalized ? toIsoDate(normalized) : String(value).toUpperCase();
+      if (mappedCol === 'cpf') {
+        const cpfFmt = validateAndFormatCpf(value);
+        finalValue = cpfFmt || String(value).trim();
+      } else if (mappedCol === 'email') {
+        const emailFmt = validateAndFormatEmail(value);
+        finalValue = emailFmt || String(value).trim().toLowerCase();
+      } else if (mappedCol === 'telefono') {
+        const phoneFmt = validateAndFormatPhone(value);
+        finalValue = phoneFmt || String(value).trim();
+      } else if (mappedCol === 'nombre') {
+        finalValue = formatPersonName(value) || String(value).trim();
+      } else if (AI_DATE_KEYS.has(upperKey) || upperKey.includes('FECHA') || upperKey.includes('DATA')) {
+        const dateNorm = validateAndFormatDate(value);
+        finalValue = dateNorm.iso || toIsoDate(normalizeDateToDDMMYYYY(value)) || String(value).trim();
       } else {
-        finalValue = String(value).toUpperCase();
+        finalValue = String(value).trim().toUpperCase();
       }
 
+      // Si es un campo fijo de la tabla clientes
       if (FIXED_COLUMN_IDS.has(mappedCol)) {
         const currentValue = clientRow ? clientRow[mappedCol] : null;
         const isCurrentlyEmpty = currentValue === null || currentValue === undefined || String(currentValue).trim() === '';
-        if (skipIfAlreadyFilled && !isCurrentlyEmpty) continue;
-        updates[mappedCol] = finalValue;
-        applied.push(mappedCol);
-      } else {
+        if (!skipIfAlreadyFilled || isCurrentlyEmpty) {
+          updates[mappedCol] = finalValue;
+          applied.push(mappedCol);
+        }
+      }
+
+      // Si es uno de los campos migratorios o no-fijo, guardar siempre en campos_personalizados para sincronía total
+      if (MIGRATION_FIELDS.has(mappedCol) || !FIXED_COLUMN_IDS.has(mappedCol)) {
         const currentValue = clientRow?.campos_personalizados?.[mappedCol];
         const isCurrentlyEmpty = currentValue === null || currentValue === undefined || String(currentValue).trim() === '';
-        if (skipIfAlreadyFilled && !isCurrentlyEmpty) continue;
-        customJsonUpdates[mappedCol] = finalValue;
-        hasCustomJsonUpdates = true;
-        applied.push(mappedCol);
+        if (!skipIfAlreadyFilled || isCurrentlyEmpty) {
+          customJsonUpdates[mappedCol] = finalValue;
+          hasCustomJsonUpdates = true;
+          if (!applied.includes(mappedCol)) applied.push(mappedCol);
+        }
       }
     } else if (!AI_IGNORED_KEYS.has(upperKey)) {
       const generatedId = toIdentificador(key);

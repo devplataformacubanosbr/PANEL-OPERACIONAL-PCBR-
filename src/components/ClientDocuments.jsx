@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { FileText, Loader2, UploadCloud, X, ChevronDown, ChevronUp, Layers, CheckSquare, Square, CheckCircle2, Circle, Wand2, Archive, RotateCcw } from 'lucide-react';
+import { FileText, Loader2, UploadCloud, X, ChevronDown, ChevronUp, Layers, CheckSquare, Square, CheckCircle2, Circle, Wand2, Archive, RotateCcw, PenTool } from 'lucide-react';
 import { SignedImage } from './SignedImage';
 import EmptyState from './ui/EmptyState';
 import PreUploadDocumentModal from './PreUploadDocumentModal';
@@ -27,7 +27,8 @@ const ClientDocuments = ({
   handleConfirmUpload,
   handleOrganizeDocuments,
   organizing = false,
-  onRefresh // We'll assume the parent might pass this, or we can use window.location.reload as fallback or just nothing since ClientView doesn't pass it yet. We'll add it.
+  onOpenSignatureModal,
+  onRefresh
 }) => {
   const [isSectionExpanded, setIsSectionExpanded] = useState(defaultExpanded);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -344,6 +345,23 @@ const ClientDocuments = ({
                         {doc.estado === 'pendiente' ? '🤖 Borrador PDF Único' : '✅ PDF Único Aprobado'}
                       </span>
                     )}
+                    {doc.tipo_documento === 'FIRMA_DIGITAL' && (
+                      <span
+                        style={{
+                          fontSize: '0.65rem',
+                          padding: '1px 6px',
+                          background: 'rgba(59, 130, 246, 0.15)',
+                          color: '#3b82f6',
+                          borderRadius: '4px',
+                          border: '1px solid rgba(59, 130, 246, 0.35)',
+                          fontWeight: 600,
+                          flexShrink: 0
+                        }}
+                        title="Firma digital extraída y lista para estampar en formularios y trámites."
+                      >
+                        🖋️ Firma Digital
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
                     {doc.creado_en ? new Date(doc.creado_en).toLocaleDateString() : '—'} • {doc.tamano ? (doc.tamano / 1024).toFixed(0) + ' KB' : '—'}
@@ -351,6 +369,19 @@ const ClientDocuments = ({
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  {onOpenSignatureModal && doc.tipo_documento !== 'FIRMA_DIGITAL' && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onOpenSignatureModal(doc); }}
+                      style={{
+                        width: 24, height: 24, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'transparent', color: 'var(--color-primary, #3b82f6)', border: 'none', cursor: 'pointer'
+                      }}
+                      title="Extraer firma del pasaporte o documento"
+                    >
+                      <PenTool size={15} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); toggleVerification(doc); }}

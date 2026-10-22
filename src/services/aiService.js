@@ -13,6 +13,7 @@
 
 import { supabase } from '../supabaseClient';
 import { resizeImageToBase64 } from '../utils/canvasUtils';
+import { extractEntitiesRegex } from '../utils/entityParser';
 
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'openai/gpt-oss-120b';   // Texto / razonamiento general
@@ -285,6 +286,86 @@ Usa null para los campos que no estén visibles o no se lean con claridad en el 
 }
 
 // ──────────────────────────────────────────────────────────────
+// FUNCIÓN 1.1 — Localizar firma manuscrita en pasaporte o documento con IA
+// ──────────────────────────────────────────────────────────────
+/**
+ * Detecta las coordenadas del recuadro de la firma manuscrita del titular en un pasaporte o documento.
+ * Devuelve coordenadas en porcentajes { found: boolean, x: number, y: number, width: number, height: number, fallback: boolean }.
+ * @param {string|File} fileOrBase64 - Imagen del documento
+ * @returns {Promise<{ found: boolean, x: number, y: number, width: number, height: number, fallback: boolean }>}
+ */
+export async function detectSignatureBoundingBox(fileOrBase64) {
+  try {
+    const base64 = await resizeImageToBase64(fileOrBase64, 1024, 0.85);
+
+    const prompt = `Analiza esta imagen de pasaporte o documento oficial de identidad (como Pasaporte Cubano, Carnet de Identidad o RNM).
+Tu objetivo es localizar con la mayor precisión posible el recuadro donde se encuentra la FIRMA MANUSCRITA del titular (habitualmente identificada como "Firma del titular", "Firma", o "Signature of bearer", situada debajo o al lado de la foto biométrica del titular, o justo encima de la zona de lectura mecánica MRZ).
+
+Devuelve ÚNICAMENTE un objeto JSON estrictamente válido, sin markdown ni explicaciones:
+{
+  "found": true,
+  "x": 8.5,
+  "y": 64.0,
+  "width": 38.0,
+  "height": 18.0
+}
+Donde "x", "y", "width" y "height" son porcentajes flotantes del 0 al 100 respecto al ancho y alto total de la imagen:
+- x: porcentaje horizontal desde el borde izquierdo hasta el inicio del recuadro de la firma
+- y: porcentaje vertical desde el borde superior hasta el inicio del recuadro de la firma
+- width: ancho del recuadro de la firma en porcentaje
+- height: alto del recuadro de la firma en porcentaje
+
+Si la imagen no tiene firma visible o está completamente ilegible, devuelve:
+{
+  "found": false,
+  "x": null,
+  "y": null,
+  "width": null,
+  "height": null
+}`;
+
+    const raw = await callGroq(
+      MODEL_VISION,
+      [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: base64 } },
+        ],
+      }],
+      0.1,
+      { type: "json_object" },
+      'none'
+    );
+
+    const parsed = JSON.parse(cleanJson(raw));
+    if (parsed && parsed.found && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+      return {
+        found: true,
+        x: Math.max(0, Math.min(95, parsed.x)),
+        y: Math.max(0, Math.min(95, parsed.y)),
+        width: Math.max(8, Math.min(90, parsed.width || 35)),
+        height: Math.max(5, Math.min(80, parsed.height || 18)),
+        fallback: false
+      };
+    }
+  } catch (err) {
+    console.warn('[detectSignatureBoundingBox] Error detectando firma con IA:', err.message);
+  }
+
+  // Fallback heurístico calibrado para Pasaporte Cubano estándar
+  return {
+    found: true,
+    x: 8.0,
+    y: 64.0,
+    width: 38.0,
+    height: 18.0,
+    fallback: true
+  };
+}
+
+
+// ──────────────────────────────────────────────────────────────
 // FUNCIÓN 1.2 — Extraer datos personales y familiares desde el chat (WhatsApp / CRM)
 // ──────────────────────────────────────────────────────────────
 /**
@@ -402,12 +483,46 @@ FORMATO JSON DE RESPUESTA:
     'none'
   );
 
+  const regexEntities = extractEntitiesRegex(formattedText);
+
   try {
     const parsed = JSON.parse(cleanJson(raw));
+
+    // Refuerzo híbrido: si la IA omitió algún campo que el validador regex detectó con certeza
+    if (!parsed.CPF && regexEntities.cpfs.length > 0) {
+      parsed.CPF = regexEntities.cpfs[0];
+    }
+    if (!parsed.EMAIL && regexEntities.emails.length > 0) {
+      parsed.EMAIL = regexEntities.emails[0];
+    }
+    if (!parsed.TELEFONO && regexEntities.phones.length > 0) {
+      parsed.TELEFONO = regexEntities.phones[0];
+    }
+    if (!parsed.NUMERO_DOCUMENTO && regexEntities.passaporte) {
+      parsed.NUMERO_DOCUMENTO = regexEntities.passaporte;
+    }
+    if (regexEntities.ceps.length > 0) {
+      if (!parsed.DIRECCION || typeof parsed.DIRECCION !== 'object') {
+        parsed.DIRECCION = {};
+      }
+      if (!parsed.DIRECCION.cep) {
+        parsed.DIRECCION.cep = regexEntities.ceps[0];
+      }
+    }
+
     return parsed;
   } catch (err) {
     console.warn('[aiService] Error parseando JSON de extracción de chat:', err, raw);
-    return {};
+    // Si la IA falla, devolver al menos los datos detectados por regex
+    return {
+      CPF: regexEntities.cpfs[0] || null,
+      EMAIL: regexEntities.emails[0] || null,
+      TELEFONO: regexEntities.phones[0] || null,
+      NUMERO_DOCUMENTO: regexEntities.passaporte || null,
+      DIRECCION: regexEntities.ceps.length > 0 ? { cep: regexEntities.ceps[0] } : null,
+      FAMILIARES_MENCIONADOS: [],
+      CAMPOS_ADICIONALES: {},
+    };
   }
 }
 

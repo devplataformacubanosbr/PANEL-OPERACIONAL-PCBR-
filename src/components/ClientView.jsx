@@ -114,6 +114,7 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
+  const [signatureInitialDoc, setSignatureInitialDoc] = useState(null);
 
   // ── Portal de Clientes — Credenciales ──────────────────────────────────────
   const [portalCredentials, setPortalCredentials] = useState(undefined);
@@ -667,7 +668,10 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         setIsAiChatOpen={setIsAiChatOpen}
         handleSendToExtension={handleSendToExtension}
         openEditModal={edit.openEditModal}
-        openSignatureModal={() => setIsSignatureModalOpen(true)}
+        openSignatureModal={(doc = null) => {
+          setSignatureInitialDoc(doc);
+          setIsSignatureModalOpen(true);
+        }}
         configCabecera={organization?.config_cabecera_cliente}
         campos={customFieldsConfig}
         handleCopy={handleCopy}
@@ -741,6 +745,10 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
             handleConfirmUpload={docs.handleConfirmUpload}
             handleOrganizeDocuments={docs.handleOrganizeDocuments}
             organizing={docs.organizing}
+            onOpenSignatureModal={(doc) => {
+              setSignatureInitialDoc(doc);
+              setIsSignatureModalOpen(true);
+            }}
             onRefresh={() => fetchClientData(true)}
           />
           <ClientRelations
@@ -905,7 +913,12 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
         {isSignatureModalOpen && (
           <SignatureExtractorModal
             client={client}
-            onClose={() => setIsSignatureModalOpen(false)}
+            documents={documentos || docs.documents || []}
+            initialDocument={signatureInitialDoc}
+            onClose={() => {
+              setIsSignatureModalOpen(false);
+              setSignatureInitialDoc(null);
+            }}
             onSaved={(_doc) => {
               toast.success('Firma guardada en documentos');
               fetchClientData(true);
