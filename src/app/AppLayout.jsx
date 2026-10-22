@@ -84,14 +84,17 @@ export default function AppLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isGlobalTeamChatOpen, setIsGlobalTeamChatOpen] = useState(false);
 
-  // Automatically close sidebar on client view
+  // Manejo responsivo del sidebar: en móviles se cierra al cambiar de vista, en desktop permanece accesible
   useEffect(() => {
-    if (currentView === 'client') {
+    if (window.innerWidth < 768) {
       setIsSidebarOpen(false);
     } else {
       setIsSidebarOpen(true);
     }
   }, [currentView]);
+
+  // Nombre del cliente seleccionado para migas de pan (breadcrumbs)
+  const selectedClientName = recentClients.find(c => String(c.id) === String(selectedClientId))?.nombre || null;
 
   // --- Search ---
   // Only 'dashboard' and 'clients' filter in place; every other view
@@ -154,6 +157,7 @@ export default function AppLayout() {
           navigateToTeamChat={navigateToTeamChat}
           navigateToTeamManagement={navigateToTeamManagement}
           navigateToDirectory={navigateToDirectory}
+          navigateToSettings={navigateToSettings}
         />
 
         {/* Main Content Area */}
@@ -165,6 +169,8 @@ export default function AppLayout() {
             isSidebarOpen={isSidebarOpen}
             setIsSidebarOpen={setIsSidebarOpen}
             navigateToHome={navigateToHome}
+            navigateToDashboard={navigateToDashboard}
+            navigateToClientsList={navigateToClientsList}
             navigateToSettings={navigateToSettings}
             globalSearch={globalSearch}
             handleSearchChange={handleSearchChange}
@@ -172,6 +178,8 @@ export default function AppLayout() {
             onNavigateToClient={navigateToClientTracked}
             recentClients={recentClients}
             onNewClient={() => setIsNewClientModalOpen(true)}
+            selectedClientId={selectedClientId}
+            clientName={selectedClientName}
           />
 
           {/* Main Content */}
