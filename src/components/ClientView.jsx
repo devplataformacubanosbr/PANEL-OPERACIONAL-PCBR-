@@ -525,6 +525,34 @@ export default function ClientView({ clientId, onBack, onNavigateToClient }) {
               `"${targetClient.nombre}", se le transfirió el archivo y se completaron sus datos personales ✨`,
               { duration: 9000, icon: '🔀' }
             );
+          } else {
+            mismatchHandled = true;
+            if (doc) {
+              const isUuid = typeof doc.id === 'string' && doc.id.includes('-');
+              const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
+              await supabase.from(table).update({
+                nombre_archivo: newFileName,
+                ...(isUuid ? { verificado: true } : { estado: 'verificado' })
+              }).eq('id', doc.id);
+            }
+            await fetchClientData(true);
+
+            // Auto-extraer firma si es pasaporte / carnet
+            const isSignable = (aiData.TIPO_DOCUMENTO || '').includes('PASAPORTE') ||
+                               (aiData.TIPO_DOCUMENTO || '').includes('CARNET') ||
+                               (aiData.TIPO_DOCUMENTO || '').includes('RNM') ||
+                               Boolean(aiData.FIRMA_BBOX?.found);
+            if (isSignable) {
+              try {
+                const { autoExtractClientSignature } = await import('../services/autonomousAgentService');
+                await autoExtractClientSignature(clientId, fileOrBase64, currentCliente?.nombre, () => {}, aiData.FIRMA_BBOX);
+              } catch (_) {}
+            }
+
+            toast.success(
+              `✨ Documento clasificado y ficha de ${currentCliente?.nombre || 'cliente'} actualizada automáticamente.`,
+              { duration: 6000, icon: '📄' }
+            );
           }
         } catch (autoErr) {
           console.warn('[ClientView] Error en resolvePersonAndApplyData:', autoErr);

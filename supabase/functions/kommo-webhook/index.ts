@@ -172,15 +172,15 @@ serve(async (req) => {
 
     const classifyAndExtractCloud = async (bytes: Uint8Array, mimeType: string, groqApiKey: string) => {
         const base64 = uint8ToBase64(bytes);
-        const prompt = `Eres un asistente oficial de extracción de datos para una agencia migratoria en Brasil.
-REGLA DE ORO DE VERACIDAD (PROHIBIDO INVENTAR DATOS):
-- NUNCA inventes, adivines o completes datos que no se lean con total claridad.
-- Si la imagen está borrosa, fuera de foco, pixelada o con reflejos que impiden lectura segura, marca "borroso": true, "motivo_borroso": "descripción de por qué no se lee", y deja los datos en null.
-- Si la imagen es nítida, marca "borroso": false y extrae los datos visibles.
-- Todas las fechas en DD/MM/YYYY.
-- CPF solo dígitos. Pasaporte letras+números en numero_pasaporte; carnet de identidad en carnet_identidad.
-- Tipo de documento: PASAPORTE, CPF, RNM, CARNET DE IDENTIDAD, PROTOCOLO DE REFUGIO, COMPROBANTE DE RESIDENCIA, OTRO.
-
+        const prompt = `Eres un perito oficial y asistente de inteligencia artificial experto en procesamiento de documentos de identidad, migración y extranjería en Brasil (Policía Federal, Cartórios, CONARE).
+REGLAS DE CLASIFICACIÓN Y RIGOR:
+1. CLASIFICACIÓN: "tipo_documento" debe ser uno de: PASAPORTE, CARNET DE IDENTIDAD, PROTOCOLO DE REFUGIO, RNM, CPF, COMPROBANTE DE RESIDENCIA, COMPROBANTE PIX, CERTIDAO DE MATRIMONIO, CERTIDAO DE NACIMIENTO, OTRO.
+2. PASAPORTES (MRZ): Lee las líneas MRZ (P<CUB...). En pasaportes cubanos, extrae nombre, apellidos, número de pasaporte y en la línea 2 del MRZ el carnet de identidad de 11 dígitos.
+3. PROTOCOLO DE REFUGIO / RNM: Extrae filiación (nombre_madre, nombre_padre), fecha de vencimiento y número de proceso/protocolo.
+4. CALIDAD DE IMAGEN (ANTI-FALSO BORROSO):
+   - Marca "borroso": true ÚNICAMENTE si la imagen es una foto negra/vacía, meme, sticker o completamente ilegible donde no se lee ningún dato de identidad.
+   - Si se lee el nombre, número de documento, carnet, dirección o cualquier dato útil, pon "borroso": false.
+5. Fechas estrictamente en formato DD/MM/AAAA.
 Devuelve ÚNICAMENTE un JSON:
 {
   "tipo_documento": "VALOR",
@@ -290,25 +290,50 @@ Devuelve ÚNICAMENTE un JSON:
     };
 
     const applyExtractedDataCloud = async (supabaseAdmin: any, clientId: number, datos: Record<string, any>) => {
-        const { data: clientRow } = await supabaseAdmin.from('clientes').select('*').eq('id', clientId).single();
+        const { data: clientRow } = await supabaseAdmin
+            .from('clientes')
+            .select('id, nombre, cpf, nacionalidad, fecha_nacimiento, lugar_nacimiento, sexo, campos_personalizados')
+            .eq('id', clientId)
+            .single();
         if (!clientRow) return;
+
         const updates: Record<string, any> = {};
-        const colMap: Record<string, string> = {
-            'nombre': 'nombre', 'cpf': 'cpf', 'nacionalidad': 'nacionalidad',
-            'fecha_nacimiento': 'fecha_nacimiento', 'lugar_nacimiento': 'lugar_nacimiento',
-            'sexo': 'sexo', 'numero_pasaporte': 'numero_pasaporte', 'carnet_identidad': 'carnet_identidad',
-            'rnm': 'rnm', 'numero_refugio': 'numero_refugio', 'nombre_padre': 'nombre_padre', 'nombre_madre': 'nombre_madre'
-        };
+        const customFields: Record<string, any> = { ...(clientRow.campos_personalizados || {}) };
+        let hasCustomUpdates = false;
+
+        // Columnas fijas reales de la tabla clientes
+        const directCols = new Set(['nombre', 'cpf', 'nacionalidad', 'fecha_nacimiento', 'lugar_nacimiento', 'sexo']);
+
+        // Campos migratorios que se almacenan en campos_personalizados JSONB
+        const migrationFields = new Set([
+            'numero_pasaporte', 'carnet_identidad', 'rnm', 'numero_refugio',
+            'nombre_padre', 'nombre_madre', 'fecha_vencimiento_refugio',
+            'fecha_emision_pasaporte', 'fecha_vencimiento_pasaporte'
+        ]);
+
         for (const [key, val] of Object.entries(datos)) {
             if (!val || typeof val !== 'string') continue;
-            const col = colMap[key];
-            if (col) {
-                const currentVal = clientRow[col];
+            const strVal = String(val).trim().toUpperCase();
+            if (!strVal) continue;
+
+            if (directCols.has(key)) {
+                const currentVal = clientRow[key];
                 if (currentVal === null || currentVal === undefined || String(currentVal).trim() === '') {
-                    updates[col] = String(val).toUpperCase();
+                    updates[key] = strVal;
+                }
+            } else if (migrationFields.has(key) || key.startsWith('custom_')) {
+                const currentVal = customFields[key];
+                if (currentVal === null || currentVal === undefined || String(currentVal).trim() === '') {
+                    customFields[key] = strVal;
+                    hasCustomUpdates = true;
                 }
             }
         }
+
+        if (hasCustomUpdates) {
+            updates.campos_personalizados = customFields;
+        }
+
         if (Object.keys(updates).length > 0) {
             await supabaseAdmin.from('clientes').update(updates).eq('id', clientId);
         }
@@ -827,6 +852,11 @@ Devuelve ÚNICAMENTE un JSON:
                     }
                 }
 
+                const isSuccessfullyClassified = Boolean(
+                    aiRes && !aiRes.borroso && aiRes.tipo &&
+                    !['DOCUMENTO', 'OTRO'].includes(aiRes.tipo.toUpperCase())
+                );
+
                 await supabaseClient.from('documentos_pendientes').insert({
                     cliente_id: targetClientId,
                     telefono: msgTelefono,
@@ -834,7 +864,7 @@ Devuelve ÚNICAMENTE un JSON:
                     nombre_archivo: finalDocName,
                     tipo_contenido: mediaInfo.type,
                     origen: 'kommo',
-                    verificado: false
+                    verificado: isSuccessfullyClassified
                 });
             }
         }

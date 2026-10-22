@@ -162,14 +162,40 @@ export default function useClientViewDocuments({
                   `"${targetClient.nombre}", se le transfirió el archivo y se autocompletaron sus datos personales ✨`,
                   { duration: 9000, icon: '🔀' }
                 );
+              } else {
+                mismatchHandled = true;
+                if (docRecord) {
+                  const isUuid = typeof docRecord.id === 'string' && docRecord.id.includes('-');
+                  const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
+                  await supabase.from(table).update({
+                    nombre_archivo: newFileName,
+                    ...(isUuid ? { verificado: true } : { estado: 'verificado' })
+                  }).eq('id', docRecord.id);
+                  await fetchClientData();
+                }
+
+                // Auto-extraer firma si es pasaporte / carnet
+                const isSignable = (aiData.TIPO_DOCUMENTO || '').includes('PASAPORTE') ||
+                                   (aiData.TIPO_DOCUMENTO || '').includes('CARNET') ||
+                                   (aiData.TIPO_DOCUMENTO || '').includes('RNM') ||
+                                   Boolean(aiData.FIRMA_BBOX?.found);
+                if (isSignable) {
+                  try {
+                    const { autoExtractClientSignature } = await import('../services/autonomousAgentService');
+                    await autoExtractClientSignature(clientId, fileOrBase64, currentCliente?.nombre, () => {}, aiData.FIRMA_BBOX);
+                  } catch (_) {}
+                }
+
+                toast.success(
+                  `✨ Documento clasificado y ficha de ${currentCliente?.nombre || 'cliente'} actualizada automáticamente.`,
+                  { duration: 6000, icon: '📄' }
+                );
               }
             } catch (autoSaveErr) {
               console.warn('[useClientViewDocuments] Auto-guardado / chequeo de persona distinta falló:', autoSaveErr.message);
             }
 
-            // El modal de revisión solo se abre si el documento seguía siendo
-            // del cliente actual -- si se movió a otro cliente relacionado, ya
-            // no tiene sentido revisar acá los datos de una persona distinta.
+            // El modal de revisión solo se abre si no pudo aplicarse automáticamente
             if (!mismatchHandled) {
               setExtractedData(aiData);
               if (setUploadedDocRecord) setUploadedDocRecord(docRecord);

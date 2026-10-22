@@ -179,6 +179,8 @@ export async function reassignDocument(documentId, newClientId, newFileName = nu
 
     const updates = { [column]: newClientId };
     if (newFileName) updates.nombre_archivo = newFileName;
+    if (isPendiente) updates.verificado = true;
+    else updates.estado = 'verificado';
 
     const { error } = await supabase
       .from(table)

@@ -708,10 +708,21 @@ export async function organizeClientDocuments({ clienteId, extraCustomFieldsForA
         const tipoDoc = aiData.TIPO_DOCUMENTO || 'DOCUMENTO';
         const personaNombre = clienteActual.nombre || aiData.NOMBRE_COMPLETO || '';
         if (personaNombre) {
-          const formattedName = `${tipoDoc.toUpperCase()} - ${personaNombre.toUpperCase()}`;
           const isUuid = typeof doc.id === 'string' && doc.id.includes('-');
           const table = isUuid ? 'documentos_pendientes' : 'documentos_operacionales';
-          supabase.from(table).update({ nombre_archivo: formattedName }).eq('id', doc.id);
+          await supabase.from(table).update({
+            nombre_archivo: formattedName,
+            ...(isUuid ? { verificado: true } : { estado: 'verificado' })
+          }).eq('id', doc.id);
+
+          // Si es un documento con firma, extraer firma digital en caneta azul automáticamente
+          const isSignable = tipoDoc.includes('PASAPORTE') || tipoDoc.includes('CARNET') || tipoDoc.includes('RNM') || Boolean(aiData.FIRMA_BBOX?.found);
+          if (isSignable) {
+            try {
+              const { autoExtractClientSignature } = await import('./autonomousAgentService');
+              await autoExtractClientSignature(clienteId, fileOrBase64, personaNombre, () => {}, aiData.FIRMA_BBOX);
+            } catch (_) {}
+          }
         }
       }
     } catch (err) {

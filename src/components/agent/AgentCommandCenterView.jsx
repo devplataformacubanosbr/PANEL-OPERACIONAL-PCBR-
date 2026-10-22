@@ -48,6 +48,7 @@ export default function AgentCommandCenterView({ onNavigateToClient }) {
     refreshQueue,
     updateSettings,
     clearRichHistory,
+    clearExceptions,
     openControlCenter
   } = useAutonomousAgent();
 
@@ -418,6 +419,15 @@ export default function AgentCommandCenterView({ onNavigateToClient }) {
                   badge={totalExceptions}
                   danger={totalExceptions > 0}
                 />
+                {totalExceptions > 0 && (
+                  <button
+                    onClick={clearExceptions}
+                    className="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[11px] font-semibold transition-colors flex items-center gap-1"
+                    title="Marcar todos los casos borrosos y excepciones como resueltos"
+                  >
+                    Marcar todo resuelto
+                  </button>
+                )}
               </div>
 
               <div className="flex items-center gap-2">

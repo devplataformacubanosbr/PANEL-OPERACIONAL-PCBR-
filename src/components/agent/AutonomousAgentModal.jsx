@@ -36,7 +36,8 @@ export default function AutonomousAgentModal() {
     pauseAgent,
     runBatchNow,
     updateSettings,
-    clearLogs
+    clearLogs,
+    clearExceptions
   } = useAutonomousAgent();
 
   const [activeTab, setActiveTab] = useState('monitor'); // 'monitor' | 'exceptions' | 'settings'
@@ -360,13 +361,32 @@ export default function AutonomousAgentModal() {
           ) : activeTab === 'exceptions' ? (
             /* Pestaña: Casos que requieren atención humana (Borrosos / Errores) */
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#f8fafc', margin: '0 0 0.25rem' }}>
-                  Bandeja de Casos para Revisión Manual ({exceptions.length})
-                </h3>
-                <p style={{ fontSize: '0.8rem', color: '#8b949e', margin: 0 }}>
-                  Todo lo normal se procesa 100% solo. Aquí solo aparecen fotos borrosas, reflejos o archivos con error que requieren contacto con el cliente.
-                </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#f8fafc', margin: '0 0 0.25rem' }}>
+                    Bandeja de Casos para Revisión Manual ({exceptions.length})
+                  </h3>
+                  <p style={{ fontSize: '0.8rem', color: '#8b949e', margin: 0 }}>
+                    Todo lo normal se procesa 100% solo. Aquí solo aparecen fotos borrosas o archivos con error que requieren contacto con el cliente.
+                  </p>
+                </div>
+                {exceptions.length > 0 && (
+                  <button
+                    onClick={clearExceptions}
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.15)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      color: '#f87171',
+                      padding: '0.4rem 0.8rem',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Marcar todo como resuelto
+                  </button>
+                )}
               </div>
 
               {exceptions.length === 0 ? (

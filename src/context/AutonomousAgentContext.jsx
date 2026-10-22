@@ -299,6 +299,16 @@ export const AutonomousAgentProvider = ({ children }) => {
     toast.success('Historial visual de resultados reiniciado.');
   };
 
+  const clearExceptions = useCallback(() => {
+    setStats(prev => ({
+      ...prev,
+      blurryDocs: 0,
+      errorDocs: 0
+    }));
+    setRecentLogs(prev => prev.filter(l => l.type !== 'error' && !l.message?.includes('BORROSO')));
+    toast.success('Bandeja de casos para revisión limpiada.');
+  }, []);
+
   return (
     <AutonomousAgentContext.Provider
       value={{
@@ -323,6 +333,7 @@ export const AutonomousAgentProvider = ({ children }) => {
         updateSettings,
         clearLogs,
         clearRichHistory,
+        clearExceptions,
         openControlCenter: () => setIsModalOpen(true),
         closeControlCenter: () => setIsModalOpen(false)
       }}

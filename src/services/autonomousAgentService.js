@@ -26,11 +26,11 @@ import { validateAndFormatCpf, validateAndFormatEmail, parseBrazilianAddress } f
 export async function processNextPendingDocument(options = {}, logCallback = () => {}) {
   let currentDoc = null;
   try {
-    // Buscar el documento pendiente más reciente que aún no haya sido organizado
+    // Buscar el documento pendiente más reciente que aún no haya sido verificado ni organizado
     const { data: candidates, error: fetchErr } = await supabase
       .from('documentos_pendientes')
       .select('*')
-      .not('nombre_archivo', 'like', '% - %')
+      .eq('verificado', false)
       .not('nombre_archivo', 'ilike', '%BORROSO%')
       .not('nombre_archivo', 'ilike', '%ERROR%')
       .order('fecha_recepcion', { ascending: false })
@@ -113,11 +113,14 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       aiData.NUMERO_DOCUMENTO ||
       aiData.CPF ||
       aiData.CARNET_IDENTIDAD ||
-      aiData.RNM
+      aiData.RNM ||
+      aiData.NUMERO_REFUGIO ||
+      (aiData.DIRECCION && (aiData.DIRECCION.endereco || aiData.DIRECCION.cidade || aiData.DIRECCION.cep)) ||
+      (aiData.TIPO_DOCUMENTO && !['OTRO', 'DOCUMENTO'].includes(aiData.TIPO_DOCUMENTO.toUpperCase()))
     );
 
-    // Un documento va a REVISIÓN sólo si es genuinamente ilegible y NO se pudo extraer nada útil
-    const isTrulyUnreadable = (aiData.DOCUMENTO_BORROSO === true || aiData.ILEGIBLE === true) && !hasCoreData;
+    // Un documento va a REVISIÓN sólo si es genuinamente un sticker/meme/vacío sin ningún dato
+    const isTrulyUnreadable = Boolean(aiData.DOCUMENTO_BORROSO && aiData.ILEGIBLE && !hasCoreData);
 
     // CASO A: Imagen genuinamente borrosa o sin datos identificables (HUMAN INTERVENTION REQUIRED)
     if (isTrulyUnreadable || (!hasCoreData && !aiData.TIPO_DOCUMENTO)) {
@@ -182,7 +185,10 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       });
     } else {
       const formattedName = `${tipoDoc.toUpperCase()} - ${finalName.toUpperCase()}`;
-      await supabase.from('documentos_pendientes').update({ nombre_archivo: formattedName }).eq('id', doc.id);
+      await supabase.from('documentos_pendientes').update({
+        nombre_archivo: formattedName,
+        verificado: true
+      }).eq('id', doc.id);
 
       logCallback({
         type: 'success',
@@ -510,7 +516,7 @@ export async function getUpcomingQueue(limit = 8) {
     const { data: docs, error, count } = await supabase
       .from('documentos_pendientes')
       .select('id, cliente_id, nombre_archivo, tipo_contenido, fecha_recepcion', { count: 'exact' })
-      .not('nombre_archivo', 'like', '% - %')
+      .eq('verificado', false)
       .not('nombre_archivo', 'ilike', '%BORROSO%')
       .not('nombre_archivo', 'ilike', '%ERROR%')
       .order('fecha_recepcion', { ascending: false })

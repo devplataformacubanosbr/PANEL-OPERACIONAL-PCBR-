@@ -151,12 +151,22 @@ export const GlobalIncomingDocumentListener = () => {
             } else {
               // Auto-renombrar el documento del titular para mantener orden
               const formattedName = `${tipoDoc.toUpperCase()} - ${(currentCliente.nombre || aiData.NOMBRE_COMPLETO || '').toUpperCase()}`;
-              await supabase.from('documentos_pendientes').update({ nombre_archivo: formattedName }).eq('id', doc.id);
+              await supabase.from('documentos_pendientes').update({
+                nombre_archivo: formattedName,
+                verificado: true
+              }).eq('id', doc.id);
 
               toast.success(
                 `✨ Documento de WhatsApp "${tipoDoc}" procesado automáticamente para ${currentCliente.nombre}`,
                 { duration: 9000, icon: '📄' }
               );
+            }
+
+            // Si el documento clasificado fue un Pasaporte, Carnet o RNM, extraer firma de inmediato
+            const isSignable = tipoDoc.includes('PASAPORTE') || tipoDoc.includes('CARNET') || tipoDoc.includes('RNM') || Boolean(aiData.FIRMA_BBOX?.found);
+            if (isSignable) {
+              const { autoExtractClientSignature } = await import('../services/autonomousAgentService');
+              await autoExtractClientSignature(finalClientId, fileOrBase64, targetClient?.nombre || currentCliente.nombre, () => {}, aiData.FIRMA_BBOX).catch(() => {});
             }
 
             // Notificar a componentes en pantalla para refrescar y evaluar PDF Único
