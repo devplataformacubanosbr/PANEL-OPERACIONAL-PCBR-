@@ -154,10 +154,25 @@ REGLAS DE EXTRACCIÓN Y VERACIDAD ESTRICTA (ANTI-ALUCINACIÓN):
      * "ILEGIBLE": false
      * "MOTIVO_ILEGIBLE": null
 2. FORMATO DE FECHAS: Todas las fechas (nacimiento, emisión, vencimiento) DEBEN estar estrictamente en formato DD/MM/YYYY (ej. 15/10/1972). Si el documento dice "15 DE OCTUBRE DE 1972" o "1972-10-15", debes convertirlo al formato DD/MM/YYYY. NUNCA uses texto en los campos de fecha.
-3. Para pasaportes (como el de Cuba), ten mucho cuidado con el orden del nombre:
-   - "APELLIDOS / SURNAMES" suele aparecer ARRIBA.
-   - "NOMBRES / GIVEN NAMES" suele aparecer DEBAJO.
+3. Para pasaportes y documentos de identidad (Carnet de Identidad de Cuba, RNM, etc.):
+   - "APELLIDOS / SURNAMES" suele aparecer ARRIBA o en un recuadro específico.
+   - "NOMBRES / GIVEN NAMES" suele aparecer DEBAJO o marcado como "NOMBRE / FIRST NAME".
    - Tú debes concatenarlos siempre en el orden correcto: "NOMBRE(S) APELLIDO(S)". Ejemplo: Si dice Apellidos: GUIBERT GONZALEZ y Nombres: GEORGINA, el NOMBRE_COMPLETO debe ser "GEORGINA GUIBERT GONZALEZ".
+
+3.1. REGLA ESTRICTA DE TRANSCRIPCIÓN LITERAL DE NOMBRES (CERO AUTOCORRECCIÓN):
+   - En Cuba y Latinoamérica los nombres de pila son únicos, combinados y no tradicionales.
+   - NUNCA alteres, 'corrijas', supongas o cambies letras de un nombre basándote en nombres populares hispanos.
+   - EJEMPLO FUNDAMENTAL: Si el documento dice "DALIENA" (letras D-A-L-I-E-N-A), debes transcribir EXACTAMENTE "DALIENA". BAJO NINGUNA CIRCUNSTANCIA lo cambies a "DANIELA".
+   - Si dice "DAILANI", escribe "DAILANI". Si dice "YAISEL", escribe "YAISEL". Si dice "DAYAMI", escribe "DAYAMI".
+   - Lee minuciosamente letra por letra cada caracter. Cambiar una sola letra (como L por N) invalida por completo el trámite migratorio ante la Policía Federal de Brasil.
+
+3.2. Para el CARNÉ DE IDENTIDAD DE CUBA:
+   - "NI: [11 dígitos]" (ej. 14101261010) es el campo "CARNET_IDENTIDAD".
+   - Los primeros 6 dígitos del NI corresponden a la fecha de nacimiento en formato YYMMDD (ej. 141012 -> 12/10/2014).
+   - "NOMBRE / FIRST NAME" corresponde al nombre de pila.
+   - "APELLIDOS / LAST NAME" corresponde a los apellidos.
+   - "HIJO (A) DE [Nombre]" indica los progenitores ("NOMBRE_PADRE" / "NOMBRE_MADRE").
+
 4. Números en Pasaportes:
    - "Nº DE PASAPORTE / PASSPORT Nº" (ej. letras y números como L302474) corresponde al campo "NUMERO_DOCUMENTO".
    - "Nº DE IDENTIDAD / ID Nº" (ej. 11 dígitos numéricos como 74021012519) corresponde al campo "CARNET_IDENTIDAD". NO lo coloques en NUMERO_DOCUMENTO.
