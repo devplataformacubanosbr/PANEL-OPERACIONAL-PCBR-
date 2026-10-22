@@ -17,7 +17,7 @@ import { extractEntitiesRegex } from '../utils/entityParser';
 
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL_TEXT = 'openai/gpt-oss-120b';   // Texto / razonamiento general
-const MODEL_VISION = 'qwen/qwen3.6-27b'; // Visión + OCR
+const MODEL_VISION = 'qwen/qwen3.8-27b'; // Visión + OCR (Groq multimodal oficial)
 
 function getApiKey() {
   return import.meta.env.VITE_GROQ_API_KEY || '';

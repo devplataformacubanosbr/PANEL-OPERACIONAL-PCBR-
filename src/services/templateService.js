@@ -324,7 +324,7 @@ export async function deleteTemplate(template) {
 // 5. Análisis IA — detectar campos en la plantilla
 // ──────────────────────────────────────────────
 export async function analyzeTemplateWithAI(imageBase64) {
-  const MODEL_VISION = 'qwen/qwen3.6-27b';
+  const MODEL_VISION = 'qwen/qwen3.8-27b';
 
   // Redimensionar la imagen para no superar el límite TPM (8000 tokens en Groq)
   const resizedImage = await resizeImageToBase64(imageBase64, 900, 0.8);

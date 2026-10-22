@@ -18,7 +18,7 @@ const corsHeaders = {
 }
 
 const MODEL_TEXT = 'openai/gpt-oss-120b';
-const MODEL_VISION = 'qwen/qwen3.6-27b';
+const MODEL_VISION = 'qwen/qwen3.8-27b';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {

@@ -106,7 +106,7 @@ Devuelve ÚNICAMENTE un objeto JSON puro, sin markdown, con esta forma exacta:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'qwen/qwen3.6-27b',
+        model: 'qwen/qwen3.8-27b',
         messages: [{
           role: 'user',
           content: [
