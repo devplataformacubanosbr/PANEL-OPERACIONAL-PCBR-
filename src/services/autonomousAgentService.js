@@ -14,7 +14,7 @@
  */
 
 import { supabase } from '../supabaseClient.js';
-import { analyzeDocumentImage } from './aiService.js';
+import { analyzeDocumentImage, detectSignatureBoundingBox } from './aiService.js';
 import { getCliente } from './clientesService.js';
 import { reassignDocument, uploadDocument } from './storageService.js';
 import { resolvePersonAndApplyData } from './clientExtractionService.js';
@@ -196,10 +196,19 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
     window.dispatchEvent(new CustomEvent('documentProcessed', { detail: { documentId: doc.id, clientId: finalClientId } }));
     window.dispatchEvent(new CustomEvent('generatePdfUnicoCheck', { detail: { clientId: finalClientId } }));
 
-    // Si el documento clasificado fue un Pasaporte o Carnet, intentar extraer firma de inmediato
+    // Si el documento clasificado fue un Pasaporte, Carnet, RNM o tiene firma detectada, extraer de inmediato
     let signatureRes = null;
-    if (options.autoExtractSignatures && (tipoDoc.includes('PASAPORTE') || tipoDoc.includes('CARNET'))) {
-      signatureRes = await autoExtractClientSignature(finalClientId, fileOrBase64, finalName, logCallback);
+    const isSignableDoc = tipoDoc.includes('PASAPORTE') ||
+                          tipoDoc.includes('PASSAPORTE') ||
+                          tipoDoc.includes('CARNET') ||
+                          tipoDoc.includes('RNM') ||
+                          tipoDoc.includes('CRNM') ||
+                          tipoDoc.includes('CEDULA') ||
+                          tipoDoc.includes('IDENTIDAD') ||
+                          Boolean(aiData.FIRMA_BBOX?.found);
+
+    if (options.autoExtractSignatures && isSignableDoc) {
+      signatureRes = await autoExtractClientSignature(finalClientId, fileOrBase64, finalName, logCallback, aiData.FIRMA_BBOX);
     }
 
     const formattedName = `${tipoDoc.toUpperCase()} - ${finalName.toUpperCase()}`;
@@ -244,7 +253,7 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
 }
 
 // ── 2. AUTO-EXTRAER FIRMA DIGITAL EN CANETA AZUL DESDE PASAPORTE / CARNET ───
-export async function autoExtractClientSignature(clientId, imageSource, clientName, logCallback = () => {}) {
+export async function autoExtractClientSignature(clientId, imageSource, clientName, logCallback = () => {}, providedBbox = null) {
   try {
     // 1. Verificar si el cliente ya tiene FIRMA_DIGITAL
     const { data: existingFirma } = await supabase
@@ -284,20 +293,65 @@ export async function autoExtractClientSignature(clientId, imageSource, clientNa
       img.src = srcUrl;
     });
 
-    // 3. Preset Pasaporte Cubano estándar (x: 8%, y: 64%, w: 38%, h: 18%)
-    const preset = PASSPORT_SIGNATURE_PRESETS[0].crop;
-    const cropPx = {
-      x: (preset.x / 100) * img.width,
-      y: (preset.y / 100) * img.height,
-      width: (preset.width / 100) * img.width,
-      height: (preset.height / 100) * img.height
-    };
+    // 3. Localizar el recuadro exacto de la firma usando IA de Visión (Groq Qwen 3.8)
+    let cropPx = null;
+    const candidateBbox = (providedBbox && providedBbox.found && typeof providedBbox.x === 'number')
+      ? providedBbox
+      : null;
+
+    if (candidateBbox) {
+      const padW = Math.max(1.5, (candidateBbox.width || 30) * 0.08);
+      const padH = Math.max(2.0, (candidateBbox.height || 15) * 0.12);
+      const normX = Math.max(0, candidateBbox.x - padW);
+      const normY = Math.max(0, candidateBbox.y - padH);
+      const normW = Math.min(100 - normX, (candidateBbox.width || 30) + padW * 2);
+      const normH = Math.min(100 - normY, (candidateBbox.height || 15) + padH * 2);
+
+      cropPx = {
+        x: (normX / 100) * img.width,
+        y: (normY / 100) * img.height,
+        width: (normW / 100) * img.width,
+        height: (normH / 100) * img.height
+      };
+    } else {
+      try {
+        const bbox = await detectSignatureBoundingBox(srcUrl);
+        if (bbox && bbox.found && typeof bbox.x === 'number' && typeof bbox.y === 'number') {
+          const padW = Math.max(1.5, (bbox.width || 30) * 0.08);
+          const padH = Math.max(2.0, (bbox.height || 15) * 0.12);
+          const normX = Math.max(0, bbox.x - padW);
+          const normY = Math.max(0, bbox.y - padH);
+          const normW = Math.min(100 - normX, (bbox.width || 30) + padW * 2);
+          const normH = Math.min(100 - normY, (bbox.height || 15) + padH * 2);
+
+          cropPx = {
+            x: (normX / 100) * img.width,
+            y: (normY / 100) * img.height,
+            width: (normW / 100) * img.width,
+            height: (normH / 100) * img.height
+          };
+        }
+      } catch (bboxErr) {
+        console.warn('[autoExtractClientSignature] IA bbox fallback:', bboxErr.message);
+      }
+    }
+
+    // Fallback de seguridad al preset si la IA no detectó recuadro
+    if (!cropPx) {
+      const preset = PASSPORT_SIGNATURE_PRESETS[0].crop;
+      cropPx = {
+        x: (preset.x / 100) * img.width,
+        y: (preset.y / 100) * img.height,
+        width: (preset.width / 100) * img.width,
+        height: (preset.height / 100) * img.height
+      };
+    }
 
     // 4. Procesar y convertir a Caneta Azul Bic transparente con autotrim
     const result = processSignatureImage(img, cropPx, {
-      threshold: 155,
+      threshold: 165,
       invert: false,
-      inkColor: '#0033aa', // Caneta Azul Bic
+      inkColor: '#0033aa', // Caneta Azul Bic con degradado fotorrealista por presión
       enhanceThinLines: true,
       autoTrim: true
     });

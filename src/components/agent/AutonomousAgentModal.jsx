@@ -512,20 +512,20 @@ export default function AutonomousAgentModal() {
                 gap: '0.5rem'
               }}>
                 <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Frecuencia del ciclo autónomo</span>
-                  <span style={{ color: '#60a5fa' }}>Cada {settings.cycleIntervalSecs} segundos</span>
+                  <span>Pausa si la cola está vacía</span>
+                  <span style={{ color: '#60a5fa' }}>{settings.cycleIntervalSecs}s</span>
                 </label>
                 <input
                   type="range"
-                  min="20"
-                  max="120"
-                  step="5"
+                  min="3"
+                  max="60"
+                  step="1"
                   value={settings.cycleIntervalSecs}
                   onChange={e => updateSettings({ cycleIntervalSecs: Number(e.target.value) })}
                   style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
                 />
-                <span style={{ fontSize: '0.75rem', color: '#6e7681' }}>
-                  Recomendado: 35 segundos para respetar los límites de tokens por minuto (TPM) de Groq.
+                <span style={{ fontSize: '0.75rem', color: '#10b981' }}>
+                  ⚡ Modo Continuo activo: Mientras haya documentos en la cola, el agente procesa seguido (cada 2 seg). Esta pausa solo aplica cuando no quedan documentos por procesar.
                 </span>
               </div>
             </div>

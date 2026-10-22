@@ -166,10 +166,19 @@ export default function AgentCommandCenterView({ onNavigateToClient }) {
           <button
             onClick={() => runBatchNow(5)}
             disabled={isProcessingNow}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 disabled:opacity-50 transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 disabled:opacity-50 transition-all"
             title="Procesa 5 tareas seguidas con IA"
           >
             Lote de 5
+          </button>
+
+          <button
+            onClick={() => runBatchNow(20)}
+            disabled={isProcessingNow}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-300 disabled:opacity-50 transition-all"
+            title="Procesa 20 tareas seguidas con IA"
+          >
+            ⚡ Lote de 20
           </button>
 
           <button
@@ -499,19 +508,22 @@ export default function AgentCommandCenterView({ onNavigateToClient }) {
             />
 
             <div className="pt-3 border-t border-white/10 flex flex-col gap-2">
-              <label className="text-slate-300 font-semibold flex justify-between">
-                <span>Intervalo del ciclo:</span>
-                <span className="text-blue-400">{settings.cycleIntervalSecs}s</span>
+              <label className="text-slate-300 font-semibold flex justify-between text-xs">
+                <span>Pausa si la cola está vacía:</span>
+                <span className="text-blue-400 font-mono">{settings.cycleIntervalSecs}s</span>
               </label>
               <input
                 type="range"
-                min="20"
-                max="90"
-                step="5"
+                min="3"
+                max="60"
+                step="1"
                 value={settings.cycleIntervalSecs}
                 onChange={e => updateSettings({ cycleIntervalSecs: Number(e.target.value) })}
                 className="w-full accent-blue-500 cursor-pointer"
               />
+              <span className="text-[10px] text-emerald-400">
+                ⚡ Modo Continuo activo: Mientras haya documentos pendientes, el agente procesa seguido (cada 2 seg).
+              </span>
             </div>
           </div>
         </div>

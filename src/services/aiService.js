@@ -105,7 +105,7 @@ function cleanJson(raw) {
  * Extrae datos personales de la foto de un documento.
  */
 export async function analyzeDocumentImage(fileOrBase64, knownCustomFields = []) {
-  const base64 = await resizeImageToBase64(fileOrBase64, 900, 0.8);
+  const base64 = await resizeImageToBase64(fileOrBase64, 1600, 0.90);
 
   let raw = '';
   try {
@@ -130,38 +130,74 @@ export async function analyzeDocumentImage(fileOrBase64, knownCustomFields = [])
       ? `\nCAMPOS PERSONALIZADOS DISPONIBLES EN EL SISTEMA:\n${knownCustomFields.map(f => ` - ${f.identificador?.toUpperCase()} (${f.nombre_campo})`).join('\n')}\n`
       : '';
 
-    const directPrompt = `Eres un asistente especializado en leer documentos de identidad e inmigración (Pasaportes, CPF, RNM de Brasil, CNH, Cédulas, etc.) y hojas manuscritas.
-Analiza CUIDADOSAMENTE la imagen y extrae todos los datos personales visibles.
+    const directPrompt = `Eres un perito oficial y asistente de inteligencia artificial experto en procesamiento de documentos de identidad, migración y extranjería en Brasil (Policía Federal, Cartórios, CONARE).
+Analiza CUIDADOSAMENTE esta imagen de documento y extrae todos los datos disponibles con máxima precisión.
 
-REGLAS DE EXTRACCIÓN Y VERACIDAD ESTRICTA:
-1. DETECCIÓN DE IMAGEN BORROSA O ILEGIBLE:
-   - "DOCUMENTO_BORROSO": true y "ILEGIBLE": true ÚNICAMENTE cuando la imagen esté tan borrosa o dañada que resulte IMPOSIBLE leer los datos mínimos de identificación (nombre o número de documento).
-   - Si la imagen permite leer el nombre o número de documento, aunque tenga ligeros reflejos o ángulo imperfecto: DEBES poner "DOCUMENTO_BORROSO": false, "ILEGIBLE": false, "MOTIVO_ILEGIBLE": null y extraer todos los datos que se lean con certeza.
-2. FORMATO DE FECHAS: Estrictamente DD/MM/YYYY (ej. 15/10/1972).
-3. NOMBRES: Transcripción literal carácter por carácter. CERO correcciones o suposiciones.
-4. CARNET DE IDENTIDAD DE CUBA: "NI: [11 dígitos]" es "CARNET_IDENTIDAD". Los primeros 6 dígitos son YYMMDD de nacimiento.
-5. PASAPORTES: Número de pasaporte en "NUMERO_DOCUMENTO". "FECHA_EMISION_PASAPORTE" y "FECHA_VENCIMIENTO_PASAPORTE" en DD/MM/YYYY.
-6. PROTOCOLOS DE REFUGIO: Número bajo título en "NUMERO_REFUGIO". "Validade" en "FECHA_VENCIMIENTO_REFUGIO". Filiação 1 y 2 a madre/padre.
-7. RNM DE BRASIL: Código alfanumérico en "RNM". Nome y Sobrenome a "NOMBRE_COMPLETO". Filiação a madre/padre.
+REGLAS DE ORO (VERACIDAD Y RIGOR):
+1. CLASIFICACIÓN DEL DOCUMENTO:
+   - "TIPO_DOCUMENTO": "PASAPORTE", "CARNET_IDENTIDAD", "PROTOCOLO_REFUGIO", "RNM", "CPF", "COMPROBANTE_RESIDENCIA", "COMPROBANTE_PIX", "CERTIDAO_CASAMENTO", "CERTIDAO_NASCIMENTO", "CNH" u "OTRO".
+2. PASAPORTES (ESPECIALMENTE CUBANO):
+   - Lee con extrema precisión las 2 líneas MRZ al final de la página (P<CUB...):
+     * Línea 1: P<CUB[APELLIDOS]<<[NOMBRES]... Extrae APELLIDOS y NOMBRES con total exactitud.
+     * Línea 2: [NUMERO_DOCUMENTO]<[CHECK][CUB][FECHA_NACIMIENTO_AAMMDD][CHECK][SEXO][FECHA_VENCIMIENTO_AAMMDD][CHECK][CARNET_IDENTIDAD_11_DIGITOS]...
+     * En pasaportes cubanos, los 11 dígitos del carnet de identidad están en la línea 2 del MRZ.
+   - NOMBRE_COMPLETO: Transcribe siempre en orden natural hispano: "[NOMBRES] [APELLIDOS]".
+   - Extrae también: FECHA_EMISION_PASAPORTE, FECHA_VENCIMIENTO_PASAPORTE, LUGAR_NACIMIENTO, NACIONALIDAD ("CUBANA").
+   - FIRMA DEL TITULAR: Localiza el recuadro donde firma el titular (habitualmente bajo la foto biométrica en la parte inferior izquierda). Devuelve "FIRMA_BBOX": { "found": true, "x": ..., "y": ..., "width": ..., "height": ... } en porcentajes del 0 al 100.
+3. CARNET DE IDENTIDAD (CUBA):
+   - "CARNET_IDENTIDAD": Número de Identidad (NI) de 11 dígitos (AAMMDDXXXXX).
+   - "FECHA_NACIMIENTO": DD/MM/AAAA calculado a partir de los primeros 6 dígitos del NI o del texto.
+   - "SEXO": M si el décimo dígito es par, F si es impar.
+   - "FIRMA_BBOX": Recuadro de firma si está visible.
+4. PROTOCOLO DE REFÚGIO / DPRNM (BRASIL):
+   - "NUMERO_REFUGIO": Número del proceso / protocolo (ej: 08018.079458/2026-51).
+   - "FECHA_VENCIMIENTO_REFUGIO": Fecha de validez del protocolo en DD/MM/AAAA.
+   - "NOMBRE_MADRE" (Filiação 1 / Mãe) y "NOMBRE_PADRE" (Filiação 2 / Pai).
+5. RNM / CRNM (REGISTRO NACIONAL MIGRATÓRIO - BRASIL):
+   - "RNM": Código alfanumérico (ej: V123456-A).
+   - "CPF": Si aparece en la tarjeta.
+   - "NOMBRE_MADRE" y "NOMBRE_PADRE".
+   - "FIRMA_BBOX": Recuadro de la firma manuscrita.
+6. COMPROBANTE DE RESIDENCIA (CUENTA DE LUZ, AGUA, GAS, INTERNET):
+   - "DIRECCION": Objeto JSON con:
+     {
+       "endereco": "Nombre de la calle/avenida/logradouro",
+       "numero": "Número de casa/edificio",
+       "complemento": "Apto/Bloque o vacío",
+       "bairro": "Barrio",
+       "cidade": "Ciudad / Municipio",
+       "estado": "Sigla del estado UF (ej: SP, RJ, SC, PR, RS, etc.)",
+       "cep": "00000-000"
+     }
+   - "NOMBRE_COMPLETO": Titular que figura en la factura.
+7. FORMATO DE FECHAS: Siempre estrictamente DD/MM/AAAA.
+8. CALIDAD DE IMAGEN (ANTI-FALSO REVISIÓN):
+   - "DOCUMENTO_BORROSO": true y "ILEGIBLE": true ÚNICAMENTE si no se puede leer ningún dato esencial de identificación. Si se lee el nombre, número de documento o dirección, pon false.
 ${knownFieldsBlock}
-Devuelve ÚNICAMENTE un objeto JSON puro con:
+Devuelve ÚNICAMENTE un objeto JSON puro (sin markdown, sin bloques <think>) con:
 {
   "TIPO_DOCUMENTO": null,
   "NOMBRE_COMPLETO": null,
+  "APELLIDOS": null,
+  "NOMBRES": null,
   "NOMBRE_MADRE": null,
   "NOMBRE_PADRE": null,
   "CPF": null,
   "RNM": null,
   "CARNET_IDENTIDAD": null,
-  "FECHA_NACIMIENTO": null,
-  "LUGAR_NACIMIENTO": null,
-  "NACIONALIDAD": null,
   "NUMERO_DOCUMENTO": null,
   "NUMERO_REFUGIO": null,
+  "FECHA_NACIMIENTO": null,
   "FECHA_EMISION_PASAPORTE": null,
   "FECHA_VENCIMIENTO_PASAPORTE": null,
   "FECHA_VENCIMIENTO_REFUGIO": null,
   "SEXO": null,
+  "NACIONALIDAD": null,
+  "LUGAR_NACIMIENTO": null,
+  "DIRECCION": null,
+  "MRZ_LINEA_1": null,
+  "MRZ_LINEA_2": null,
+  "FIRMA_BBOX": { "found": false, "x": null, "y": null, "width": null, "height": null },
   "DOCUMENTO_BORROSO": false,
   "ILEGIBLE": false,
   "MOTIVO_ILEGIBLE": null,
@@ -190,13 +226,20 @@ Devuelve ÚNICAMENTE un objeto JSON puro con:
     delete parsed.CAMPOS_ADICIONALES;
     const merged = { ...parsed, ...adicionales };
 
-    // Un documento es borroso ÚNICAMENTE si no tiene datos mínimos de identidad
+    // Si tenemos NOMBRES y APELLIDOS y no NOMBRE_COMPLETO, componer en orden natural
+    if (merged.NOMBRES && merged.APELLIDOS && (!merged.NOMBRE_COMPLETO || merged.NOMBRE_COMPLETO.startsWith(merged.APELLIDOS))) {
+      merged.NOMBRE_COMPLETO = `${merged.NOMBRES} ${merged.APELLIDOS}`.trim();
+    }
+
+    // Un documento es borroso ÚNICAMENTE si no tiene datos mínimos de identidad o domicilio
     const hasAnyId = Boolean(
       (merged.NOMBRE_COMPLETO && String(merged.NOMBRE_COMPLETO).trim().length > 3) ||
       merged.NUMERO_DOCUMENTO ||
       merged.CPF ||
       merged.CARNET_IDENTIDAD ||
-      merged.RNM
+      merged.RNM ||
+      merged.NUMERO_REFUGIO ||
+      (merged.DIRECCION && (merged.DIRECCION.endereco || merged.DIRECCION.cidade))
     );
 
     const esBorroso = (parsed.DOCUMENTO_BORROSO === true || parsed.ILEGIBLE === true) && !hasAnyId;
@@ -213,6 +256,8 @@ Devuelve ÚNICAMENTE un objeto JSON puro con:
     return Object.fromEntries(
       Object.entries(merged).filter(([k, v]) => {
         if (k === 'DOCUMENTO_BORROSO' || k === 'ILEGIBLE') return true;
+        if (k === 'FIRMA_BBOX' && v && typeof v === 'object' && v.found) return true;
+        if (k === 'DIRECCION' && v && typeof v === 'object') return true;
         return v !== null && v !== '' && typeof v !== 'object';
       })
     );
@@ -233,7 +278,7 @@ Devuelve ÚNICAMENTE un objeto JSON puro con:
  */
 export async function detectSignatureBoundingBox(fileOrBase64) {
   try {
-    const base64 = await resizeImageToBase64(fileOrBase64, 1024, 0.85);
+    const base64 = await resizeImageToBase64(fileOrBase64, 1400, 0.90);
 
     let raw = '';
     const { data, error } = await supabase.functions.invoke('ai-proxy', {
@@ -246,8 +291,18 @@ export async function detectSignatureBoundingBox(fileOrBase64) {
     if (!error && !data?.error && data?.choices?.[0]?.message?.content) {
       raw = data.choices[0].message.content.trim();
     } else {
-      const sigPrompt = `Analiza esta imagen de pasaporte o documento de identidad oficial.
-Localiza con precisión el recuadro donde se encuentra la FIRMA MANUSCRITA del titular.
+      const sigPrompt = `Eres un perito forense en caligrafía y documentos de identidad oficiales.
+Analiza esta imagen y localiza con precisión matemática las coordenadas del recuadro o zona donde se encuentra la FIRMA MANUSCRITA del titular.
+
+REGLAS DE LOCALIZACIÓN:
+1. PASAPORTE CUBANO:
+   - La firma manuscrita está situada en la página biográfica (página 2), en el recuadro "Firma del titular" directamente DEBAJO de la foto biométrica y POR ENCIMA de las líneas MRZ.
+   - Si la foto muestra ambas páginas del pasaporte abiertas (spread de 2 páginas), localiza la firma en la mitad o página donde está la foto del titular.
+2. CARNET DE IDENTIDAD CUBANO / CRNM / RNM BRASIL:
+   - Localiza el recuadro de firma manuscrita en el frente del documento.
+3. HOJA EN BLANCO O DOCUMENTO CON FIRMA SUELTA:
+   - Localiza el rectángulo que encierra los trazos de la firma con 5% de margen.
+
 Devuelve ÚNICAMENTE un JSON:
 {
   "found": true,
@@ -256,7 +311,8 @@ Devuelve ÚNICAMENTE un JSON:
   "width": 38.0,
   "height": 18.0
 }
-Si no hay firma visible, devuelve {"found": false, "x": null, "y": null, "width": null, "height": null}`;
+Donde x, y, width y height son porcentajes flotantes del 0 al 100 respecto al ancho y alto total de la imagen.
+Si no hay firma visible, devuelve { "found": false, "x": null, "y": null, "width": null, "height": null }`;
 
       raw = await callGroqDirect(
         MODEL_VISION,

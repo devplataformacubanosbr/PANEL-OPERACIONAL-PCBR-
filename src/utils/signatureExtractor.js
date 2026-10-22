@@ -112,14 +112,72 @@ export function processSignatureImage(image, pixelCrop, options = {}) {
   const imageData = ctx.getImageData(0, 0, cropW, cropH);
   const data = imageData.data;
 
+  // Muestreo adaptativo del fondo del papel en las 4 esquinas del recorte
+  let cornerLumSum = 0;
+  let cornerCount = 0;
+  const sampleW = Math.max(2, Math.floor(cropW * 0.08));
+  const sampleH = Math.max(2, Math.floor(cropH * 0.08));
+
+  for (let sy = 0; sy < sampleH; sy++) {
+    for (let sx = 0; sx < sampleW; sx++) {
+      // 4 esquinas
+      const corners = [
+        (sy * cropW + sx) * 4,
+        (sy * cropW + (cropW - 1 - sx)) * 4,
+        ((cropH - 1 - sy) * cropW + sx) * 4,
+        ((cropH - 1 - sy) * cropW + (cropW - 1 - sx)) * 4
+      ];
+      for (const idx of corners) {
+        if (data[idx + 3] > 100) {
+          cornerLumSum += (0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
+          cornerCount++;
+        }
+      }
+    }
+  }
+
+  const paperLum = cornerCount > 0 ? (cornerLumSum / cornerCount) : 220;
+  // Umbral inteligente: adaptado a la iluminación real de la foto
+  const effThreshold = Math.min(threshold, Math.max(120, Math.round(paperLum - 24)));
+
   // Analizar color de tinta solicitado
   const isOriginalInk = !inkColor || inkColor === 'original';
+  const isBicBlue = inkColor === '#0033aa' || inkColor === 'caneta_azul';
   let rTarget = 0, gTarget = 51, bTarget = 170; // #0033aa por defecto
-  if (!isOriginalInk) {
+  if (!isOriginalInk && !isBicBlue) {
     const hex = inkColor.replace('#', '');
     rTarget = parseInt(hex.substring(0, 2), 16) || 0;
     gTarget = parseInt(hex.substring(2, 4), 16) || 0;
     bTarget = parseInt(hex.substring(4, 6), 16) || 0;
+  }
+
+  // Matriz booleana de tinta para análisis de línea base y filtrado de motas
+  const inkMask = new Uint8Array(cropW * cropH);
+  const rowInkCounts = new Int32Array(cropH);
+
+  for (let py = 0; py < cropH; py++) {
+    for (let px = 0; px < cropW; px++) {
+      const idx = (py * cropW + px) * 4;
+      const a = data[idx + 3];
+      if (a < 35) continue;
+
+      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+      const isInk = invert ? (lum >= effThreshold) : (lum <= effThreshold);
+
+      if (isInk) {
+        inkMask[py * cropW + px] = 1;
+        rowInkCounts[py]++;
+      }
+    }
+  }
+
+  // Detección y atenuación de línea guía horizontal impresa (ej: línea "Firma del titular")
+  // Una línea de formulario típicamente ocupa > 60% del ancho del recuadro con grosor de 1 a 2px
+  const isGuideRow = new Uint8Array(cropH);
+  for (let y = 1; y < cropH - 1; y++) {
+    if (rowInkCounts[y] > cropW * 0.62 && rowInkCounts[y - 1] < cropW * 0.35 && rowInkCounts[y + 1] < cropW * 0.35) {
+      isGuideRow[y] = 1;
+    }
   }
 
   let minX = cropW;
@@ -128,28 +186,40 @@ export function processSignatureImage(image, pixelCrop, options = {}) {
   let maxY = 0;
   let inkCount = 0;
 
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const a = data[i + 3];
+  for (let py = 0; py < cropH; py++) {
+    for (let px = 0; px < cropW; px++) {
+      const pIdx = py * cropW + px;
+      const i = pIdx * 4;
 
-    // Ignorar píxeles transparentes previos
-    if (a < 35) {
-      data[i + 3] = 0;
-      continue;
-    }
+      if (!inkMask[pIdx]) {
+        data[i + 3] = 0; // Fondo transparente
+        continue;
+      }
 
-    // Luminancia percibida
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    const isBackground = invert ? (lum < threshold) : (lum > threshold);
+      // Si pertenece a una línea de guía horizontal continua impresa, borrar o atenuar
+      if (isGuideRow[py]) {
+        // Verificar si es un trazo vertical de la firma que cruza la línea
+        const hasVerticalNeighbors = (py > 1 && inkMask[(py - 1) * cropW + px] && inkMask[(py - 2) * cropW + px]) ||
+                                     (py < cropH - 2 && inkMask[(py + 1) * cropW + px] && inkMask[(py + 2) * cropW + px]);
+        if (!hasVerticalNeighbors) {
+          data[i + 3] = 0;
+          inkMask[pIdx] = 0;
+          continue;
+        }
+      }
 
-    if (isBackground) {
-      data[i + 3] = 0; // Fondo transparente
-    } else {
-      const pixelIndex = i / 4;
-      const px = pixelIndex % cropW;
-      const py = Math.floor(pixelIndex / cropW);
+      // Filtro de motas / ruido aislado (Despeckle): si un píxel no tiene vecinos de tinta, se descarta
+      let neighborCount = 0;
+      if (px > 0 && inkMask[pIdx - 1]) neighborCount++;
+      if (px < cropW - 1 && inkMask[pIdx + 1]) neighborCount++;
+      if (py > 0 && inkMask[pIdx - cropW]) neighborCount++;
+      if (py < cropH - 1 && inkMask[pIdx + cropW]) neighborCount++;
+
+      if (neighborCount === 0 && !enhanceThinLines) {
+        data[i + 3] = 0;
+        inkMask[pIdx] = 0;
+        continue;
+      }
 
       if (px < minX) minX = px;
       if (px > maxX) maxX = px;
@@ -157,22 +227,46 @@ export function processSignatureImage(image, pixelCrop, options = {}) {
       if (py > maxY) maxY = py;
       inkCount++;
 
-      // Intensidad de trazo: entre más oscuro el pixel original, más opaco
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+
+      // Intensidad de trazo proporcional a la presión física de la punta
       let intensity = invert
         ? (lum / 255)
-        : (1 - (lum / Math.max(1, threshold)));
+        : (1 - (lum / Math.max(1, effThreshold)));
 
       if (enhanceThinLines) {
-        intensity = Math.pow(Math.max(0.1, intensity), 0.75);
+        intensity = Math.pow(Math.max(0.14, intensity), 0.70);
       }
 
       if (!isOriginalInk) {
-        data[i] = rTarget;
-        data[i + 1] = gTarget;
-        data[i + 2] = bTarget;
+        if (isBicBlue) {
+          // Modelado fotorrealista de tinta azul Bic Cristal (3 niveles de presión):
+          // 1. Núcleo denso por presión: Azul marino profundo real
+          // 2. Cuerpo del trazo: Azul zafiro brillante Bic
+          // 3. Cola y bordes suavizados: Azul eléctrico translúcido
+          if (intensity > 0.65) {
+            data[i] = 0;
+            data[i + 1] = Math.round(26 + (1 - intensity) * 18);
+            data[i + 2] = 135;
+          } else if (intensity > 0.32) {
+            data[i] = Math.round(4 * (1 - intensity));
+            data[i + 1] = Math.round(48 + (1 - intensity) * 30);
+            data[i + 2] = Math.round(180 + intensity * 20);
+          } else {
+            data[i] = 16;
+            data[i + 1] = 85;
+            data[i + 2] = 235;
+          }
+        } else {
+          data[i] = rTarget;
+          data[i + 1] = gTarget;
+          data[i + 2] = bTarget;
+        }
       }
-      // Suavizado de bordes anti-aliasing
-      data[i + 3] = Math.min(255, Math.floor(Math.max(0.25, intensity) * 255 * (enhanceThinLines ? 1.4 : 1.15)));
+
+      // Suavizado anti-aliasing de calidad cartorial
+      const alphaMultiplier = enhanceThinLines ? 1.35 : 1.15;
+      data[i + 3] = Math.min(255, Math.floor(Math.max(0.35, intensity) * 255 * alphaMultiplier));
     }
   }
 
@@ -190,7 +284,7 @@ export function processSignatureImage(image, pixelCrop, options = {}) {
 
   // Recorte automático de márgenes transparentes (Autotrim)
   if (autoTrim && maxX >= minX && maxY >= minY) {
-    const pad = 12; // 12px de margen de seguridad
+    const pad = 10; // 10px de margen perimetral de seguridad
     const trimX = Math.max(0, minX - pad);
     const trimY = Math.max(0, minY - pad);
     const trimW = Math.min(cropW - trimX, (maxX - minX) + pad * 2);

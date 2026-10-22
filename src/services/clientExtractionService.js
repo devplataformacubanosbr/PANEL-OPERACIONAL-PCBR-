@@ -102,6 +102,11 @@ export const AI_FIELD_MAP = {
   'FECHA_EMISION_PASAPORTE': 'fecha_emision_pasaporte',
   'FECHA_VENCIMIENTO_PASAPORTE': 'fecha_vencimiento_pasaporte',
   'FECHA_VENCIMIENTO_REFUGIO': 'fecha_vencimiento_refugio',
+  'FECHA_VENCIMIENTO_RNM': 'fecha_vencimiento_rnm',
+  'FECHA_EMISION_RNM': 'fecha_emision_rnm',
+
+  'MRZ_LINEA_1': 'mrz_linea_1',
+  'MRZ_LINEA_2': 'mrz_linea_2',
 
   'FECHA_ENTRADA_BRASIL': 'fecha_entrada_brasil',
   'FECHA_ENTRADA': 'fecha_entrada_brasil',
@@ -122,6 +127,8 @@ const AI_DATE_KEYS = new Set([
   'FECHA_EMISION_PASAPORTE',
   'FECHA_VENCIMIENTO_PASAPORTE',
   'FECHA_VENCIMIENTO_REFUGIO',
+  'FECHA_VENCIMIENTO_RNM',
+  'FECHA_EMISION_RNM',
   'FECHA_ENTRADA_BRASIL',
   'FECHA_ENTRADA',
   'FECHA_EXPEDICION',
@@ -318,21 +325,38 @@ export async function applyExtractedDataToClient({
   return { applied };
 }
 
-const normalizeName = (name) => (name || '')
-  .toLowerCase()
-  .normalize('NFD')
-  .replace(/[̀-ͯ]/g, '')
-  .trim();
+function areWordsFuzzyEqual(a, b) {
+  if (a === b) return true;
+  if ((a === 'miguel' && b === 'miquel') || (a === 'miquel' && b === 'miguel')) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let diff = 0;
+  for (let i = 0, j = 0; i < a.length && j < b.length;) {
+    if (a[i] === b[j]) {
+      i++; j++;
+    } else {
+      diff++;
+      if (diff > 1) return false;
+      if (a.length > b.length) i++;
+      else if (b.length > a.length) j++;
+      else { i++; j++; }
+    }
+  }
+  return true;
+}
 
 /**
  * Heurística de "documento extraviado": ¿el nombre/CPF que la IA extrajo de
  * un documento pertenece claramente a otra persona, distinta del dueño de la
- * cuenta? Portada de ClientViewExtractionModal.isDifferent() para poder
- * correr el mismo chequeo de forma automática (sin esperar a que un
- * operacional abra el modal de revisión).
+ * cuenta?
  */
 export function detectPersonMismatch(currentCliente, extractedData) {
   if (!currentCliente || !extractedData) return false;
+
+  // Un comprobante de residencia o pago no debe crear un cliente nuevo si el titular de factura es un locador
+  const tipoDoc = (extractedData.TIPO_DOCUMENTO || '').toUpperCase();
+  if (tipoDoc.includes('RESIDENCIA') || tipoDoc.includes('PIX') || tipoDoc.includes('PAGO')) {
+    return false;
+  }
 
   // Si ambos tienen CPF de 11 dígitos, el CPF es la fuente de verdad definitiva
   const cleanExtractedCpf = (extractedData.CPF || '').replace(/\D/g, '');
@@ -352,9 +376,11 @@ export function detectPersonMismatch(currentCliente, extractedData) {
   const w2 = extractedName.split(/\s+/).filter(w => w.length > 2);
   if (w1.length === 0 || w2.length === 0) return false;
 
-  const firstNamesMatch = w1[0] === w2[0];
-  const sharedWords = w1.filter(w => w2.includes(w)).length;
-  const nameIsDifferent = sharedWords === 0 || (sharedWords === 1 && !firstNamesMatch);
+  const sharedWords = w1.filter(a => w2.some(b => areWordsFuzzyEqual(a, b))).length;
+  const anyFirstNameMatches = areWordsFuzzyEqual(w1[0], w2[0]) ||
+                              w1.some(a => w2.includes(a));
+
+  const nameIsDifferent = sharedWords === 0 || (sharedWords === 1 && !anyFirstNameMatches);
 
   return nameIsDifferent;
 }

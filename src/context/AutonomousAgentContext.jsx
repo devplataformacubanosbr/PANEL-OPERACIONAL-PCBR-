@@ -14,7 +14,8 @@ const DEFAULT_SETTINGS = {
   autoExtractSignatures: true,
   autoDetectFamilies: true,
   autoHarvestChats: true,
-  cycleIntervalSecs: 35
+  continuousMode: true,
+  cycleIntervalSecs: 15
 };
 
 export const AutonomousAgentProvider = ({ children }) => {
@@ -220,18 +221,24 @@ export const AutonomousAgentProvider = ({ children }) => {
       setIsProcessingNow(false);
       inCycleRef.current = false;
       setCurrentActivity(null);
-      setCountdown(settings.cycleIntervalSecs || 35);
+
+      // Si se procesó un documento con éxito y el agente sigue activo, disparar el siguiente casi de inmediato (2s)
+      if (cycleResult && cycleResult.task !== 'idle' && (settings.continuousMode !== false)) {
+        setCountdown(2);
+      } else {
+        setCountdown(settings.cycleIntervalSecs || 15);
+      }
     }
 
     return cycleResult;
   }, [settings, addLog, refreshQueue, isProcessingNow]);
 
   // ── EJECUTAR UN LOTE BAJO DEMANDA ("PROCESAR AHORA") ───────────────────────
-  const runBatchNow = async (count = 5) => {
+  const runBatchNow = async (count = 10) => {
     if (isProcessingNow) return;
     addLog({
       type: 'info',
-      message: `⚡ Iniciando lote manual de ${count} tareas prioritarias con IA...`
+      message: `⚡ Iniciando lote seguido de ${count} tareas prioritarias con IA...`
     });
 
     let processed = 0;
@@ -240,9 +247,9 @@ export const AutonomousAgentProvider = ({ children }) => {
         const res = await executeCycle();
         if (res && res.task !== 'idle') {
           processed++;
-          await new Promise(r => setTimeout(r, 1800));
+          await new Promise(r => setTimeout(r, 1200));
         } else {
-          addLog({ type: 'info', message: '✨ No hay más tareas pendientes por procesar en este momento.' });
+          addLog({ type: 'info', message: '✨ Cola vacía: no hay más documentos pendientes por procesar.' });
           break;
         }
       } catch (err) {
@@ -250,7 +257,7 @@ export const AutonomousAgentProvider = ({ children }) => {
       }
     }
 
-    toast.success(`Lote completado: ${processed} tareas procesadas exitosamente.`);
+    toast.success(`Lote completado: ${processed} tareas procesadas con éxito.`);
   };
 
   // ── INICIALIZACIÓN Y COUNTDOWN ──────────────────────────────────────────────
@@ -260,7 +267,7 @@ export const AutonomousAgentProvider = ({ children }) => {
 
   useEffect(() => {
     if (!isAgentRunning) {
-      setCountdown(settings.cycleIntervalSecs || 35);
+      setCountdown(settings.cycleIntervalSecs || 15);
       return;
     }
 
@@ -268,7 +275,7 @@ export const AutonomousAgentProvider = ({ children }) => {
       setCountdown(prev => {
         if (prev <= 1) {
           executeCycle();
-          return settings.cycleIntervalSecs || 35;
+          return settings.cycleIntervalSecs || 15;
         }
         return prev - 1;
       });
