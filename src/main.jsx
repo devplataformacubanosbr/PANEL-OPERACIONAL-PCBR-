@@ -3,13 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import GoogleAuthCallback from './features/auth/components/GoogleAuthCallback.jsx'
-import { verifyEnvironmentIntegrity } from './security/antiReplicationGuard.js'
-import { initAntiTamperEngine } from './security/antiTamperEngine.js'
-
-// ── BLINDAJE DE SEGURIDAD Y ANTI-REPLICACIÓN ─────────────────────────────────
-// Si la aplicación se ejecuta en un host no autorizado o clonado, aborta inmediatamente.
-verifyEnvironmentIntegrity();
-initAntiTamperEngine();
+import { checkLicenseIntegrity } from './security/licenseGuard.js'
 
 // Si esta ventana es el popup de callback de Google auth, renderizamos
 // solo la página de callback (no la app completa) para evitar conflictos
@@ -55,11 +49,13 @@ if (typeof Node === 'function' && Node.prototype) {
   };
 }
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    {IS_GOOGLE_CALLBACK ? <GoogleAuthCallback /> : <App />}
-  </StrictMode>,
-)
+if (checkLicenseIntegrity()) {
+  createRoot(document.getElementById('root')).render(
+    <StrictMode>
+      {IS_GOOGLE_CALLBACK ? <GoogleAuthCallback /> : <App />}
+    </StrictMode>,
+  )
+}
 
 // Si llegamos hasta acá es que el bundle actual cargó bien — liberar el flag
 // para que un preloadError de un futuro deploy también dispare su propio reload.
