@@ -30,10 +30,20 @@ export const AutonomousAgentProvider = ({ children }) => {
         signaturesExtracted: 0,
         familiesResolved: 0,
         chatsHarvested: 0,
+        blurryDocs: 0,
+        errorDocs: 0,
         totalTasksRun: 0
       };
     } catch {
-      return { docsOrganized: 0, signaturesExtracted: 0, familiesResolved: 0, chatsHarvested: 0, totalTasksRun: 0 };
+      return {
+        docsOrganized: 0,
+        signaturesExtracted: 0,
+        familiesResolved: 0,
+        chatsHarvested: 0,
+        blurryDocs: 0,
+        errorDocs: 0,
+        totalTasksRun: 0
+      };
     }
   });
 
@@ -75,13 +85,25 @@ export const AutonomousAgentProvider = ({ children }) => {
     // Actualizar contadores si aplica
     if (logEntry.type === 'success') {
       setStats(prev => {
-        const next = { ...prev, totalTasksRun: prev.totalTasksRun + 1 };
-        if (logEntry.message?.includes('Firma en Caneta Azul')) next.signaturesExtracted += 1;
-        else if (logEntry.message?.includes('familiar')) next.familiesResolved += 1;
-        else if (logEntry.message?.includes('clasificado') || logEntry.message?.includes('organizado')) next.docsOrganized += 1;
-        else if (logEntry.message?.includes('Chat')) next.chatsHarvested += 1;
+        const next = { ...prev, totalTasksRun: (prev.totalTasksRun || 0) + 1 };
+        if (logEntry.message?.includes('Firma en Caneta Azul')) next.signaturesExtracted = (next.signaturesExtracted || 0) + 1;
+        else if (logEntry.message?.includes('familiar')) next.familiesResolved = (next.familiesResolved || 0) + 1;
+        else if (logEntry.message?.includes('clasificado') || logEntry.message?.includes('organizado')) next.docsOrganized = (next.docsOrganized || 0) + 1;
+        else if (logEntry.message?.includes('Chat')) next.chatsHarvested = (next.chatsHarvested || 0) + 1;
         return next;
       });
+    } else if (logEntry.type === 'warning' && (logEntry.motivo || logEntry.message?.includes('BORROSO'))) {
+      setStats(prev => ({
+        ...prev,
+        blurryDocs: (prev.blurryDocs || 0) + 1,
+        totalTasksRun: (prev.totalTasksRun || 0) + 1
+      }));
+    } else if (logEntry.type === 'error') {
+      setStats(prev => ({
+        ...prev,
+        errorDocs: (prev.errorDocs || 0) + 1,
+        totalTasksRun: (prev.totalTasksRun || 0) + 1
+      }));
     }
   }, []);
 

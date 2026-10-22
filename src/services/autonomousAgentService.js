@@ -24,6 +24,7 @@ import { validateAndFormatCpf, validateAndFormatEmail, parseBrazilianAddress } f
 
 // ── 1. PROCESAR SIGUIENTE DOCUMENTO PENDIENTE DE WHATSAPP / KOMMO ───────────
 export async function processNextPendingDocument(options = {}, logCallback = () => {}) {
+  let currentDoc = null;
   try {
     // Buscar el documento pendiente más reciente que aún no haya sido organizado
     const { data: candidates, error: fetchErr } = await supabase
@@ -32,7 +33,7 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
       .not('nombre_archivo', 'like', '% - %')
       .not('nombre_archivo', 'ilike', '%BORROSO%')
       .not('nombre_archivo', 'ilike', '%ERROR%')
-      .order('creado_en', { ascending: false })
+      .order('fecha_recepcion', { ascending: false })
       .limit(10);
 
     if (fetchErr) throw fetchErr;
@@ -51,6 +52,8 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
     if (!doc) {
       return { success: false, message: 'Los documentos en cola no son imágenes o PDFs legibles.' };
     }
+
+    currentDoc = doc;
 
     logCallback({
       type: 'info',
@@ -179,25 +182,25 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
     };
   } catch (err) {
     // Si falló sobre un documento específico, marcarlo como ERROR para no trabar el ciclo
-    if (doc?.id) {
-      const errorName = `🚨 ERROR - ${doc.nombre_archivo || 'Documento'}`;
-      await supabase.from('documentos_pendientes').update({ nombre_archivo: errorName }).eq('id', doc.id).catch(() => {});
+    if (currentDoc?.id) {
+      const errorName = `🚨 ERROR - ${currentDoc.nombre_archivo || 'Documento'}`;
+      await supabase.from('documentos_pendientes').update({ nombre_archivo: errorName }).eq('id', currentDoc.id).catch(() => {});
       try {
         await supabase.from('notificaciones_equipo').insert({
-          cliente_id: doc.cliente_id,
-          mensaje: `🚨 Revisión manual: Error en documento #${doc.id} (Cliente #${doc.cliente_id}): ${err.message}`
+          cliente_id: currentDoc.cliente_id,
+          mensaje: `🚨 Revisión manual: Error en documento #${currentDoc.id} (Cliente #${currentDoc.cliente_id}): ${err.message}`
         });
       } catch (_) {}
     }
 
     logCallback({
       type: 'error',
-      message: `❌ Error en documento #${doc?.id || 'desconocido'}: ${err.message}. Aislado para revisión manual humana.`,
-      clientId: doc?.cliente_id,
-      docId: doc?.id,
+      message: `❌ Error en documento #${currentDoc?.id || 'desconocido'}: ${err.message}. Aislado para revisión manual humana.`,
+      clientId: currentDoc?.cliente_id,
+      docId: currentDoc?.id,
       error: err.message
     });
-    return { success: false, error: err.message, docId: doc?.id, clientId: doc?.cliente_id };
+    return { success: false, error: err.message, docId: currentDoc?.id, clientId: currentDoc?.cliente_id };
   }
 }
 

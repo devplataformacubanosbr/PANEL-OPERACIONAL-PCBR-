@@ -16,8 +16,11 @@ import {
   Sparkles,
   AlertTriangle,
   RotateCw,
-  Loader2
+  Loader2,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useAutonomousAgent } from '../../context/AutonomousAgentContext';
 
 export default function AutonomousAgentModal() {
@@ -36,9 +39,21 @@ export default function AutonomousAgentModal() {
     clearLogs
   } = useAutonomousAgent();
 
-  const [activeTab, setActiveTab] = useState('monitor'); // 'monitor' | 'settings'
+  const [activeTab, setActiveTab] = useState('monitor'); // 'monitor' | 'exceptions' | 'settings'
+
+  // Filtrar casos que requieran atención manual del operador (borrosos o errores)
+  const exceptions = recentLogs.filter(
+    l => l.type === 'warning' || l.type === 'error' || l.motivo || l.suggestedMessage
+  );
+  const totalExceptions = (stats.blurryDocs || 0) + (stats.errorDocs || 0);
 
   if (!isModalOpen) return null;
+
+  const handleOpenClient = (clientId) => {
+    if (!clientId) return;
+    closeControlCenter();
+    window.dispatchEvent(new CustomEvent('navigateToClient', { detail: { clientId } }));
+  };
 
   return (
     <div style={{
@@ -151,7 +166,7 @@ export default function AutonomousAgentModal() {
 
         {/* ── METRICS TELEMETRY CARDS ────────────────────────────────────────── */}
         <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
           gap: '0.75rem', padding: '1rem 1.75rem',
           background: 'rgba(255, 255, 255, 0.02)',
           borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
@@ -160,25 +175,33 @@ export default function AutonomousAgentModal() {
             icon={<FileText size={18} color="#3b82f6" />}
             value={stats.docsOrganized || 0}
             label="Documentos Organizados"
-            badge="IA Visión"
+            badge="100% Auto"
           />
           <StatCard
             icon={<PenTool size={18} color="#0055ff" />}
             value={stats.signaturesExtracted || 0}
             label="Firmas en Caneta Azul"
-            badge="Auto-recorte"
+            badge="100% Auto"
           />
           <StatCard
             icon={<Users size={18} color="#10b981" />}
             value={stats.familiesResolved || 0}
             label="Familiares Vinculados"
-            badge="Auto-fichas"
+            badge="100% Auto"
           />
           <StatCard
             icon={<MessageSquare size={18} color="#a855f7" />}
             value={stats.chatsHarvested || 0}
             label="Entidades de Chat"
-            badge="CPF Mod 11"
+            badge="100% Auto"
+          />
+          <StatCard
+            icon={<AlertTriangle size={18} color={totalExceptions > 0 ? "#f59e0b" : "#6e7681"} />}
+            value={totalExceptions}
+            label="Casos para Revisión"
+            badge={totalExceptions > 0 ? "⚠️ Atención Manual" : "0 Casos"}
+            onClick={() => setActiveTab('exceptions')}
+            highlight={totalExceptions > 0}
           />
         </div>
 
@@ -202,6 +225,21 @@ export default function AutonomousAgentModal() {
               <RotateCw size={14} className={isProcessingNow ? 'animate-spin' : ''} />
               Monitor en Vivo ({recentLogs.length})
             </button>
+
+            <button
+              onClick={() => setActiveTab('exceptions')}
+              style={{
+                background: activeTab === 'exceptions' ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
+                color: activeTab === 'exceptions' ? '#fbbf24' : '#8b949e',
+                border: activeTab === 'exceptions' ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid transparent',
+                borderRadius: '6px', padding: '0.35rem 0.8rem', fontSize: '0.8rem', fontWeight: 600,
+                display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
+              }}
+            >
+              <AlertTriangle size={14} className={exceptions.length > 0 ? 'text-amber-400' : ''} />
+              ⚠️ Solo Casos Borrosos y Errores ({exceptions.length})
+            </button>
+
             <button
               onClick={() => setActiveTab('settings')}
               style={{
@@ -319,6 +357,112 @@ export default function AutonomousAgentModal() {
                 )}
               </div>
             </div>
+          ) : activeTab === 'exceptions' ? (
+            /* Pestaña: Casos que requieren atención humana (Borrosos / Errores) */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#f8fafc', margin: '0 0 0.25rem' }}>
+                  Bandeja de Casos para Revisión Manual ({exceptions.length})
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: '#8b949e', margin: 0 }}>
+                  Todo lo normal se procesa 100% solo. Aquí solo aparecen fotos borrosas, reflejos o archivos con error que requieren contacto con el cliente.
+                </p>
+              </div>
+
+              {exceptions.length === 0 ? (
+                <div style={{
+                  background: 'rgba(16, 185, 129, 0.05)',
+                  border: '1px solid rgba(16, 185, 129, 0.2)',
+                  borderRadius: '12px', padding: '2.5rem', textAlign: 'center',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem'
+                }}>
+                  <CheckCircle2 size={36} color="#34d399" />
+                  <span style={{ fontSize: '0.95rem', fontWeight: 600, color: '#f8fafc' }}>
+                    ¡Excelente! Cero casos pendientes de revisión
+                  </span>
+                  <span style={{ fontSize: '0.8rem', color: '#94a3b8', maxWidth: '440px' }}>
+                    El agente no ha encontrado documentos borrosos ni errores. Todo el flujo se mantiene automatizado sin intervención manual.
+                  </span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {exceptions.map(item => (
+                    <div key={item.id} style={{
+                      background: item.type === 'error' ? 'rgba(239, 68, 68, 0.06)' : 'rgba(245, 158, 11, 0.06)',
+                      border: item.type === 'error' ? '1px solid rgba(239, 68, 68, 0.25)' : '1px solid rgba(245, 158, 11, 0.25)',
+                      borderRadius: '10px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{
+                            fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
+                            background: item.type === 'error' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                            color: item.type === 'error' ? '#f87171' : '#fbbf24'
+                          }}>
+                            {item.type === 'error' ? '🚨 ERROR DE LECTURA' : '⚠️ FOTO BORROSA'}
+                          </span>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc' }}>
+                            {item.clientName || `Cliente #${item.clientId || ''}`}
+                          </span>
+                          {item.docId && (
+                            <span style={{ fontSize: '0.7rem', color: '#6e7681' }}>
+                              (Doc #{item.docId})
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: '0.75rem', color: '#6e7681' }}>{item.timestamp}</span>
+                      </div>
+
+                      <div style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>
+                        <span style={{ color: '#94a3b8' }}>Diagnóstico de IA:</span> {item.motivo || item.message}
+                      </div>
+
+                      {item.suggestedMessage && (
+                        <div style={{
+                          background: 'rgba(0, 0, 0, 0.35)', borderRadius: '6px', padding: '0.65rem 0.85rem',
+                          border: '1px dashed rgba(255, 255, 255, 0.1)', display: 'flex', flexDirection: 'column', gap: '6px'
+                        }}>
+                          <span style={{ fontSize: '0.7rem', color: '#8b949e', fontWeight: 600 }}>
+                            Mensaje sugerido para responder por WhatsApp:
+                          </span>
+                          <p style={{ fontSize: '0.78rem', color: '#93c5fd', margin: 0, fontStyle: 'italic' }}>
+                            "{item.suggestedMessage}"
+                          </p>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(item.suggestedMessage);
+                                toast.success('¡Mensaje de WhatsApp copiado al portapapeles!');
+                              }}
+                              style={{
+                                background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.4)',
+                                color: '#60a5fa', fontSize: '0.72rem', padding: '4px 9px', borderRadius: '4px',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px'
+                              }}
+                            >
+                              <Copy size={12} /> Copiar Mensaje
+                            </button>
+
+                            {item.clientId && (
+                              <button
+                                onClick={() => handleOpenClient(item.clientId)}
+                                style={{
+                                  background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.15)',
+                                  color: '#fff', fontSize: '0.72rem', padding: '4px 9px', borderRadius: '4px',
+                                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px'
+                                }}
+                              >
+                                <ExternalLink size={12} /> Abrir Ficha del Cliente
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             /* Pestaña: Configuración y Reglas del Agente */
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '680px' }}>
@@ -392,24 +536,37 @@ export default function AutonomousAgentModal() {
   );
 }
 
-function StatCard({ icon, value, label, badge }) {
+function StatCard({ icon, value, label, badge, onClick, highlight }) {
   return (
-    <div style={{
-      background: 'rgba(255, 255, 255, 0.03)',
-      border: '1px solid rgba(255, 255, 255, 0.07)',
-      borderRadius: '10px',
-      padding: '0.85rem 1rem',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '4px'
-    }}>
+    <div
+      onClick={onClick}
+      style={{
+        background: highlight ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255, 255, 255, 0.03)',
+        border: highlight ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255, 255, 255, 0.07)',
+        borderRadius: '10px',
+        padding: '0.85rem 1rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'all 0.15s ease'
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         {icon}
-        <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', color: '#94a3b8' }}>
+        <span style={{
+          fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px',
+          background: highlight ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255,255,255,0.06)',
+          color: highlight ? '#fbbf24' : '#94a3b8'
+        }}>
           {badge}
         </span>
       </div>
-      <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#f8fafc', marginTop: '2px' }}>
+      <div style={{
+        fontSize: '1.4rem', fontWeight: 700,
+        color: highlight ? '#fbbf24' : '#f8fafc',
+        marginTop: '2px'
+      }}>
         {value}
       </div>
       <div style={{ fontSize: '0.75rem', color: '#8b949e' }}>
