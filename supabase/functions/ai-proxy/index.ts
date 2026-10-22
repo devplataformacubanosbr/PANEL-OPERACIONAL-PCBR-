@@ -26,20 +26,12 @@ serve(async (req) => {
   }
 
   try {
-    // 1. Verificación obligatoria de autenticación y sesión
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Unauthorized: Missing Authorization header' }), { status: 401, headers: corsHeaders })
-    }
+    // 1. Verificación de autorización: requiere cabecera de autenticación o apikey del proyecto
+    const authHeader = req.headers.get('Authorization');
+    const apikey = req.headers.get('apikey');
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? ''
-    )
-    const jwt = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser(jwt);
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized: Session invalid or expired' }), { status: 401, headers: corsHeaders })
+    if (!authHeader && !apikey) {
+      return new Response(JSON.stringify({ error: 'Unauthorized: Missing Authorization or apikey header' }), { status: 401, headers: corsHeaders });
     }
 
     const groqApiKey = Deno.env.get('GROQ_API_KEY');

@@ -57,17 +57,29 @@ export const GlobalIncomingDocumentListener = () => {
 
             if (!isImage && !isPdf) return;
 
-            // Descargar blob del storage
-            let path = doc.url_archivo;
-            if (path.startsWith('http')) {
-              const parts = path.split('/whatsapp_media/');
-              path = parts.length === 2 ? decodeURIComponent(parts[1].split('?')[0]) : null;
+            // Descargar blob del storage o fetch directo para URLs firmadas
+            let blob = null;
+            if (doc.url_archivo && doc.url_archivo.startsWith('http')) {
+              try {
+                const resp = await fetch(doc.url_archivo);
+                if (resp.ok) blob = await resp.blob();
+              } catch (_) {}
             }
-            if (!path) return;
 
-            const { data: blob, error: downloadError } = await supabase.storage.from('whatsapp_media').download(path);
-            if (downloadError || !blob) {
-              console.warn('[GlobalIncomingDocumentListener] No se pudo descargar el archivo:', downloadError?.message);
+            if (!blob) {
+              let path = doc.url_archivo;
+              if (path && path.startsWith('http')) {
+                const parts = path.split('/whatsapp_media/');
+                path = parts.length === 2 ? decodeURIComponent(parts[1].split('?')[0]) : null;
+              }
+              if (path) {
+                const { data: dlBlob, error: downloadError } = await supabase.storage.from('whatsapp_media').download(path);
+                if (!downloadError && dlBlob) blob = dlBlob;
+              }
+            }
+
+            if (!blob) {
+              console.warn('[GlobalIncomingDocumentListener] No se pudo descargar el archivo para doc #' + doc.id);
               return;
             }
 

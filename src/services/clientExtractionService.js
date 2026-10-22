@@ -561,6 +561,13 @@ export async function resolvePersonAndApplyData({ currentCliente, extractedData,
 }
 
 async function downloadDocBlob(doc) {
+  if (doc?.url_archivo?.startsWith('http')) {
+    try {
+      const resp = await fetch(doc.url_archivo);
+      if (resp.ok) return await resp.blob();
+    } catch (_) {}
+  }
+
   const isPendiente = typeof doc.id === 'string' && doc.id.includes('-');
   const bucket = isPendiente ? 'whatsapp_media' : 'documentos_operacionales';
   let path = doc.url_archivo;

@@ -65,18 +65,34 @@ export async function processNextPendingDocument(options = {}, logCallback = () 
     const currentCliente = await getCliente(doc.cliente_id).catch(() => null);
     const clientName = currentCliente?.nombre || `Cliente #${doc.cliente_id}`;
 
-    // Resolver ruta en storage
-    let path = doc.url_archivo;
-    if (path.startsWith('http')) {
-      const parts = path.split('/whatsapp_media/');
-      path = parts.length === 2 ? decodeURIComponent(parts[1].split('?')[0]) : null;
-    }
-    if (!path) {
-      throw new Error(`Ruta de archivo inválida para el documento #${doc.id}`);
+    // Descargar archivo: soportar URLs firmadas de WhatsApp/Kommo vía fetch directo con fallback a Storage
+    let blob = null;
+    if (doc.url_archivo && doc.url_archivo.startsWith('http')) {
+      try {
+        const resp = await fetch(doc.url_archivo);
+        if (resp.ok) {
+          blob = await resp.blob();
+        }
+      } catch (fErr) {
+        console.warn('[autonomousAgentService] Fetch directo falló, intentando Storage download:', fErr.message);
+      }
     }
 
-    const { data: blob, error: dlErr } = await supabase.storage.from('whatsapp_media').download(path);
-    if (dlErr || !blob) throw new Error(dlErr?.message || 'Error al descargar archivo');
+    if (!blob) {
+      let path = doc.url_archivo;
+      if (path && path.startsWith('http')) {
+        const parts = path.split('/whatsapp_media/');
+        path = parts.length === 2 ? decodeURIComponent(parts[1].split('?')[0]) : null;
+      }
+      if (path) {
+        const { data: dlBlob, error: dlErr } = await supabase.storage.from('whatsapp_media').download(path);
+        if (!dlErr && dlBlob) blob = dlBlob;
+      }
+    }
+
+    if (!blob) {
+      throw new Error(`No se pudo descargar el archivo del documento #${doc.id}`);
+    }
 
     const isPdf = doc.tipo_contenido === 'application/pdf' || (doc.nombre_archivo || '').toLowerCase().endsWith('.pdf');
     let fileOrBase64 = blob;
