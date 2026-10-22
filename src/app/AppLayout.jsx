@@ -42,7 +42,7 @@ const TeamChat = lazy(() => import('../components/TeamChat'));
 const TeamManagement = lazy(() => import('../components/TeamManagement'));
 const SettingsView = lazy(() => import('../components/SettingsView'));
 const DirectoryView = lazy(() => import('../components/directory/DirectoryView'));
-
+const AutonomousAgentModal = lazy(() => import('../components/agent/AutonomousAgentModal'));
 
 import '../App.css';
 
@@ -272,6 +272,9 @@ export default function AppLayout() {
         <GlobalDocumentoUnicoListener />
         <GlobalIncomingDocumentListener />
         <GlobalAiChat isVisible={currentView !== 'client'} currentView={currentView} onNavigateToClient={navigateToClientTracked} />
+        <Suspense fallback={null}>
+          <AutonomousAgentModal />
+        </Suspense>
       </div>
     </GlobalAiChatProvider>
   );

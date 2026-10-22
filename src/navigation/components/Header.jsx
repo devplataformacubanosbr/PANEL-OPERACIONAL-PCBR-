@@ -16,10 +16,12 @@ import {
   BookOpen,
   Shield,
   ChevronRight,
-  Command
+  Command,
+  Bot
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useNotifications } from '../../features/notifications/context/NotificationContext';
+import { useAutonomousAgent } from '../../context/AutonomousAgentContext';
 import Button from '../../components/ui/Button';
 
 export default function Header({
@@ -41,6 +43,7 @@ export default function Header({
 }) {
   const { theme, toggleTheme } = useTheme();
   const { notificaciones, showNotifMenu, toggleNotifMenu, markNotifAsRead } = useNotifications();
+  const { isAgentRunning, isProcessingNow, openControlCenter } = useAutonomousAgent();
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchInputRef = useRef(null);
 
@@ -260,8 +263,32 @@ export default function Header({
         )}
       </div>
 
-      {/* ── DERECHA: ACCIONES RÁPIDAS (TEMA, NOTIFICACIONES, NUEVO CLIENTE) ─── */}
+      {/* ── DERECHA: ACCIONES RÁPIDAS (PILOTO IA, TEMA, NOTIFICACIONES, NUEVO CLIENTE) ─── */}
       <div className="flex flex-1 items-center justify-end gap-2">
+        {/* Piloto Automático IA */}
+        <button
+          onClick={openControlCenter}
+          className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all duration-200 ${
+            isProcessingNow
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.25)] animate-pulse'
+              : isAgentRunning
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.2)] hover:bg-emerald-500/25'
+                : 'bg-chrome-bg-raised/70 border-chrome-border text-chrome-text hover:text-white hover:border-chrome-accent/50'
+          }`}
+          title="Centro de Control del Piloto Automático IA"
+        >
+          <span className="relative flex h-2 w-2">
+            {isAgentRunning && (
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isProcessingNow ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+            )}
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${isProcessingNow ? 'bg-amber-400' : isAgentRunning ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
+          </span>
+          <Bot size={15} className={isProcessingNow ? 'animate-bounce text-amber-300' : isAgentRunning ? 'text-emerald-300' : 'text-chrome-text'} />
+          <span className="hidden md:inline font-mono text-[11px] font-bold tracking-tight">
+            {isProcessingNow ? 'IA Trabajando...' : isAgentRunning ? 'PILOTO ON' : 'PILOTO OFF'}
+          </span>
+        </button>
+
         {/* Selector de Tema */}
         <button
           onClick={toggleTheme}

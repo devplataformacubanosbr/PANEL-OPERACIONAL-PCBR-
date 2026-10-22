@@ -7,6 +7,8 @@ import { OrganizationProvider } from '../context/OrganizationContext';
 import { NotificationProvider } from '../features/notifications/context/NotificationContext';
 import { ErrorBoundary } from '../shared/components/ui/ErrorBoundary';
 
+import { AutonomousAgentProvider } from '../context/AutonomousAgentContext';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -28,7 +30,8 @@ const queryClient = new QueryClient({
  *  3. AuthProvider (sesión + perfil)
  *  4. OrganizationProvider (config/branding de la empresa)
  *  5. NotificationProvider (notificaciones en tiempo real)
- *  6. ErrorBoundary (captura de errores global)
+ *  6. AutonomousAgentProvider (piloto automático y telemetría)
+ *  7. ErrorBoundary (captura de errores global)
  */
 export default function AppProviders({ children }) {
   return (
@@ -37,10 +40,12 @@ export default function AppProviders({ children }) {
         <AuthProvider>
           <OrganizationProvider>
             <NotificationProvider>
-              <ErrorBoundary>
-                {children}
-                <Toaster position="top-right" />
-              </ErrorBoundary>
+              <AutonomousAgentProvider>
+                <ErrorBoundary>
+                  {children}
+                  <Toaster position="top-right" />
+                </ErrorBoundary>
+              </AutonomousAgentProvider>
             </NotificationProvider>
           </OrganizationProvider>
         </AuthProvider>

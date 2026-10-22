@@ -10,11 +10,13 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
-  Sparkles
+  Sparkles,
+  Bot
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '../../features/auth/context/AuthContext';
 import { useOrganization } from '../../context/OrganizationContext';
+import { useAutonomousAgent } from '../../context/AutonomousAgentContext';
 
 const orgInitials = (name) => {
   const clean = String(name || '').trim();
@@ -38,6 +40,7 @@ export default function Sidebar({
 }) {
   const { userProfile, logout, isAdmin } = useAuth();
   const { organizationName, logoUrl } = useOrganization();
+  const { isAgentRunning, isProcessingNow, openControlCenter, isModalOpen } = useAutonomousAgent();
 
   // Estado de expansión persistido en localStorage
   const [isExpanded, setIsExpanded] = useState(() => {
@@ -132,6 +135,35 @@ export default function Sidebar({
             </span>
           )}
           <SidebarNavItem
+            icon={
+              <Bot
+                size={19}
+                className={cn(
+                  'transition-transform',
+                  isProcessingNow ? 'text-amber-400 animate-pulse' : isAgentRunning ? 'text-emerald-400' : ''
+                )}
+              />
+            }
+            label="Piloto Automático"
+            active={isModalOpen}
+            isExpanded={isExpanded}
+            onClick={openControlCenter}
+            badge={
+              <span
+                className={cn(
+                  'text-[9px] font-bold px-1.5 py-0.5 rounded-full border leading-none',
+                  isProcessingNow
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                    : isAgentRunning
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                )}
+              >
+                {isProcessingNow ? 'ACTIVO' : isAgentRunning ? 'ON' : 'OFF'}
+              </span>
+            }
+          />
+          <SidebarNavItem
             icon={<MessageSquare size={19} />}
             label="Mensajes"
             active={currentView === 'team-chat'}
@@ -224,7 +256,7 @@ export default function Sidebar({
 }
 
 // ── COMPONENTE INDIVIDUAL DE BOTÓN EN EL SIDEBAR ──────────────────────────────
-function SidebarNavItem({ icon, label, active, isExpanded, onClick }) {
+function SidebarNavItem({ icon, label, active, isExpanded, onClick, badge }) {
   return (
     <button
       onClick={onClick}
@@ -250,9 +282,14 @@ function SidebarNavItem({ icon, label, active, isExpanded, onClick }) {
 
       {/* Etiqueta textual (solo cuando está expandido) */}
       {isExpanded && (
-        <span className="truncate text-sm tracking-tight text-left">
+        <span className="truncate text-sm tracking-tight text-left flex-1">
           {label}
         </span>
+      )}
+
+      {/* Badge opcional cuando está expandido */}
+      {isExpanded && badge && (
+        <span className="shrink-0">{badge}</span>
       )}
 
       {/* Tooltip flotante instantáneo en modo colapsado */}
